@@ -91,26 +91,29 @@ jobs:
 
       - name: Build x86_64 system dependencies from source
         # No x86_64 Homebrew on ARM runners — build everything for x86_64 via cmake.
+        # MACOSX_DEPLOYMENT_TARGET=12.0 eliminates @available() runtime calls
+        # (___isPlatformVersionAtLeast) in SDL3's ObjC code by making the checks
+        # statically true at compile time.
         run: |
           PREFIX=/tmp/deps-x86
+          COMMON="-DCMAKE_BUILD_TYPE=Release -G Ninja -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"
 
           git clone --depth 1 https://github.com/libsdl-org/SDL.git
-          cmake -S SDL -B SDL/build -DCMAKE_BUILD_TYPE=Release -G Ninja \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX \
-            -DSDL_SHARED=OFF -DSDL_STATIC=ON
+          cmake -S SDL -B SDL/build $COMMON \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+            -DSDL_JOYSTICK=OFF -DSDL_HAPTIC=OFF -DSDL_SENSOR=OFF
           cmake --build SDL/build
           cmake --install SDL/build
 
           git clone --depth 1 https://github.com/freetype/freetype.git
-          cmake -S freetype -B freetype/build -DCMAKE_BUILD_TYPE=Release -G Ninja \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX \
-            -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_BROTLI=ON
+          cmake -S freetype -B freetype/build $COMMON \
+            -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BZIP2=ON \
+            -DFT_DISABLE_BROTLI=ON -DFT_DISABLE_PNG=ON
           cmake --build freetype/build
           cmake --install freetype/build
 
           git clone --depth 1 https://github.com/PCRE2Project/pcre2.git
-          cmake -S pcre2 -B pcre2/build -DCMAKE_BUILD_TYPE=Release -G Ninja \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX \
+          cmake -S pcre2 -B pcre2/build $COMMON \
             -DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_BUILD_PCRE2_16=OFF \
             -DPCRE2_BUILD_PCRE2_32=OFF -DPCRE2_BUILD_TESTS=OFF \
             -DBUILD_SHARED_LIBS=OFF
@@ -127,6 +130,10 @@ jobs:
         env:
           PKG_CONFIG_PATH: /tmp/deps-x86/lib/pkgconfig
           PKG_CONFIG_ALLOW_CROSS: "1"
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
+          # UniformTypeIdentifiers (UTType for clipboard) is not emitted by SDL3's
+          # static pkg-config Libs.private on all cmake versions; add it explicitly.
+          RUSTFLAGS: "-C link-arg=-framework -C link-arg=UniformTypeIdentifiers"
         run: cargo build --release --target x86_64-apple-darwin
 
       - name: Create .app bundle
