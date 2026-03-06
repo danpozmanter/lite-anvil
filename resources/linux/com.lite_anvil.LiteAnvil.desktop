@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lite-Anvil
+Comment=A lightweight text editor written in Lua with a Rust core
+Exec=lite-anvil %F
+Icon=lite-anvil
+Terminal=false
+StartupWMClass=lite-anvil
+Categories=Development;IDE;
+MimeType=text/plain;inode/directory;

@@ -1,0 +1,207 @@
+name: Build Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libfreetype6-dev libpcre2-dev
+          git clone --depth 1 https://github.com/libsdl-org/SDL.git
+          cmake -S SDL -B SDL/build -DCMAKE_BUILD_TYPE=Release -G Ninja
+          cmake --build SDL/build
+          sudo cmake --install SDL/build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          mkdir lite-anvil-linux-x86_64
+          cp target/release/lite-anvil lite-anvil-linux-x86_64/
+          cp -r data lite-anvil-linux-x86_64/
+          tar -czf lite-anvil-linux-x86_64.tar.gz lite-anvil-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lite-anvil-linux-x86_64
+          path: lite-anvil-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          choco install pkgconfiglite -y
+          vcpkg install sdl3:x64-windows freetype:x64-windows pcre2:x64-windows
+          echo "PKG_CONFIG_PATH=C:\vcpkg\installed\x64-windows\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Name lite-anvil-windows-x86_64
+          Copy-Item target\release\lite-anvil.exe lite-anvil-windows-x86_64\
+          Copy-Item -Recurse data lite-anvil-windows-x86_64\
+          Compress-Archive -Path lite-anvil-windows-x86_64 -DestinationPath lite-anvil-windows-x86_64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lite-anvil-windows-x86_64
+          path: lite-anvil-windows-x86_64.zip
+
+  build-macos-intel:
+    name: macOS Intel (x86_64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: brew install sdl3 freetype pcre2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create .app bundle
+        run: |
+          mkdir -p LiteAnvil.app/Contents/MacOS
+          cp target/x86_64-apple-darwin/release/lite-anvil LiteAnvil.app/Contents/MacOS/
+          cp -r data LiteAnvil.app/Contents/MacOS/
+          cat > LiteAnvil.app/Contents/Info.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>LiteAnvil</string>
+              <key>CFBundleDisplayName</key>
+              <string>Lite-Anvil</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.lite_anvil.LiteAnvil</string>
+              <key>CFBundleVersion</key>
+              <string>0.0.0</string>
+              <key>CFBundleExecutable</key>
+              <string>lite-anvil</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          zip -r lite-anvil-macos-x86_64.zip LiteAnvil.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lite-anvil-macos-x86_64
+          path: lite-anvil-macos-x86_64.zip
+
+  build-macos-arm:
+    name: macOS Apple Silicon (aarch64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: brew install sdl3 freetype pcre2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create .app bundle
+        run: |
+          mkdir -p LiteAnvil.app/Contents/MacOS
+          cp target/aarch64-apple-darwin/release/lite-anvil LiteAnvil.app/Contents/MacOS/
+          cp -r data LiteAnvil.app/Contents/MacOS/
+          cat > LiteAnvil.app/Contents/Info.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>LiteAnvil</string>
+              <key>CFBundleDisplayName</key>
+              <string>Lite-Anvil</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.lite_anvil.LiteAnvil</string>
+              <key>CFBundleVersion</key>
+              <string>0.0.0</string>
+              <key>CFBundleExecutable</key>
+              <string>lite-anvil</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          zip -r lite-anvil-macos-aarch64.zip LiteAnvil.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lite-anvil-macos-aarch64
+          path: lite-anvil-macos-aarch64.zip
+
+  release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos-intel, build-macos-arm]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Collect release files
+        run: |
+          mv artifacts/lite-anvil-linux-x86_64/lite-anvil-linux-x86_64.tar.gz artifacts/
+          mv artifacts/lite-anvil-windows-x86_64/lite-anvil-windows-x86_64.zip artifacts/
+          mv artifacts/lite-anvil-macos-x86_64/lite-anvil-macos-x86_64.zip artifacts/
+          mv artifacts/lite-anvil-macos-aarch64/lite-anvil-macos-aarch64.zip artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip

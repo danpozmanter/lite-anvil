@@ -1,0 +1,21 @@
+# Rust
+.cargo/
+
+# Rust build output — covers debug, release, docs, and all profiles.
+target/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Runtime logs and crash files
+error.txt
+.lite-debug.log
+
+# Packaged release artifacts
+*.tar.gz
+*.zip
+*.deb
+*.AppImage

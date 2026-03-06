@@ -1,0 +1,67 @@
+[package]
+name = "forge-core"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Lite-Anvil text editor — Rust core"
+license = "MIT"
+
+[package.metadata.deb]
+name = "lite-anvil"
+maintainer = "Lite-Anvil contributors"
+copyright = "MIT"
+extended-description = "A lightweight text editor written in Lua with a Rust core."
+depends = "libsdl3-0, libfreetype6, libpcre2-8-0"
+section = "editors"
+priority = "optional"
+assets = [
+    ["../target/release/lite-anvil", "usr/bin/", "755"],
+    ["../data/**/*",                 "usr/share/lite-anvil/", "644"],
+    ["../resources/linux/com.lite_anvil.LiteAnvil.desktop",
+                                     "usr/share/applications/lite-anvil.desktop", "644"],
+]
+
+[[bin]]
+name = "lite-anvil"
+path = "src/main.rs"
+
+[features]
+# SDL2 window and rendering — on by default.
+# Build without it via `cargo run --no-default-features` for headless/CI.
+default = ["sdl"]
+sdl = ["dep:sdl3-sys"]
+
+[dependencies]
+# Lua 5.4 VM — vendored so no system liblua5.4-dev is needed.
+mlua = { version = "0.11.6", features = ["lua54", "vendored", "send"] }
+
+# SDL3 window, input, and graphics — requires system libsdl3 (installed at /usr/local).
+# sdl3-sys provides raw FFI bindings; pkg-config locates the library.
+sdl3-sys = { version = "0.6", features = ["use-pkg-config"], optional = true }
+
+# Font rasterization — pure Rust, no system dep.
+fontdue = "0.9.3"
+
+# FreeType2 bindings — requires libfreetype6-dev.
+freetype = "0.7.2"
+
+# Cross-platform filesystem watching — replaces all 6 C dirmonitor backends.
+notify = "8.2.0"
+
+# PCRE2 regex — requires libpcre2-dev.
+pcre2 = "0.2.11"
+
+# PNG decoding for the window icon
+png = "0.17"
+
+# Utilities
+libc = "0.2.182"
+bitflags = "2.11.0"
+log = "0.4.29"
+env_logger = "0.11.9"
+thiserror = "2.0.18"
+anyhow = "1.0.102"
+once_cell = "1.21.3"
+parking_lot = "0.12.5"
+crossbeam-channel = "0.5.15"
+

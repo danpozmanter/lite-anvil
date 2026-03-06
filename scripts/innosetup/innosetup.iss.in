@@ -1,0 +1,199 @@
+#define MyAppName      "Lite-Anvil"
+#define MyAppVersion   "@PROJECT_VERSION@"
+#define MyAppPublisher "Lite-Anvil contributors"
+#define MyAppURL       "https://github.com/lite-xl/lite-anvil"
+#define MyAppExeName   "lite-anvil.exe"
+#define BuildDir       "@PROJECT_BUILD_DIR@"
+#define SourceDir      "@PROJECT_SOURCE_DIR@"
+
+; Use /dArch option to create a setup for a different architecture, e.g.:
+; iscc /dArch=x86 innosetup.iss
+#ifndef Arch
+  #define Arch "x64compatible"
+#endif
+
+[Setup]
+; NOTE: The value of AppId uniquely identifies this application.
+; Do not use the same AppId value in installers for other applications.
+; To generate a new GUID, click Tools | Generate GUID inside the InnoSetup IDE.
+AppId={{06761240-D97C-43DE-B9ED-C15F765A2D65}
+
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+;AppVerName={#MyAppName} {#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+
+#if Pos("x86", Arch) != 0
+  #define ArchInternal "i686"
+#else
+  ArchitecturesAllowed={#Arch}
+  ArchitecturesInstallIn64BitMode={#Arch}
+  #if Pos("x64", Arch) != 0
+    #define ArchInternal "x86_64"
+  #elif Pos("arm64", Arch) != 0
+    #define ArchInternal "aarch64"
+  #endif
+#endif
+
+AllowNoIcons=yes
+Compression=lzma2
+SolidCompression=yes
+DefaultDirName={autopf}/{#MyAppName}
+DefaultGroupName={#MyAppPublisher}
+UninstallFilesDir={app}
+WizardStyle=modern
+AlwaysShowDirOnReadyPage=yes
+
+; Uncomment the following line to run in non administrative install mode
+; (install for current user only.)
+;PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+
+; The [Icons] "quicklaunchicon" entry uses {userappdata}
+; but its [Tasks] entry has a proper IsAdminInstallMode Check.
+UsedUserAreasWarning=no
+
+OutputDir=.
+OutputBaseFilename=LiteAnvil-{#MyAppVersion}-{#ArchInternal}-setup
+DisableDirPage=no
+;DisableProgramGroupPage=yes
+
+LicenseFile={#SourceDir}/LICENSE
+SetupIconFile={#SourceDir}/resources/icons/icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}, 0
+
+; Get a list of icons for different DPIs
+#define WizardIconPath = SourceDir + "/scripts/innosetup/"
+#define FinalIconPath ""
+#define FindHandle
+#define FindResult
+#for {FindHandle = FindResult = FindFirst(WizardIconPath + "lite-anvil@*.bmp", 0); FindResult; FindResult = FindNext(FindHandle)} \
+  Insert(FinalIconPath, 0, WizardIconPath + FindGetFileName(FindHandle) + ",")
+#if FindHandle
+  #expr FindClose(FindHandle)
+#endif
+WizardSmallImageFile="{#FinalIconPath}"
+
+; Get a list of banners for different DPIs (FIXME: figure out how to reuse this code?)
+#define FinalBannerPath ""
+#for {FindHandle = FindResult = FindFirst(WizardIconPath + "lite-anvil-banner@*.bmp", 0); FindResult; FindResult = FindNext(FindHandle)} \
+  Insert(FinalBannerPath, 0, WizardIconPath + FindGetFileName(FindHandle) + ",")
+#if FindHandle
+  #expr FindClose(FindHandle)
+#endif
+WizardImageFile="{#FinalBannerPath}"
+
+; Required for the add to path option to refresh environment
+ChangesEnvironment=yes
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.2; Check: not IsAdminInstallMode
+Name: "portablemode"; Description: "Extract only, do not install"; Flags: unchecked
+Name: "envPath"; Description: "Add Lite-Anvil to PATH"; Flags: unchecked
+
+[Files]
+Source: "{#BuildDir}/lite-anvil/*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+
+[Icons]
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Check: not WizardIsTaskSelected('portablemode')
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; Check: not WizardIsTaskSelected('portablemode')
+Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon; Check: not WizardIsTaskSelected('portablemode')
+; Name: "{usersendto}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+
+[Registry]
+Root: "HKA"; Subkey: "Software\Classes\*\shell\{#MyAppName}"; ValueType: string; ValueName: ""; ValueData: "Open with {#MyAppName}"; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\*\shell\{#MyAppName}"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName}, 0"; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\*\shell\{#MyAppName}\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExename}""  ""%1"""; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\directory\shell\{#MyAppName}"; ValueType: string; ValueName: ""; ValueData: "Open with {#MyAppName}"; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\directory\shell\{#MyAppName}"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName}, 0"; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\directory\shell\{#MyAppName}\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExename}""  ""%1"""; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\directory\background\shell\{#MyAppName}"; ValueType: string; ValueName: ""; ValueData: "Open with {#MyAppName}"; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\directory\background\shell\{#MyAppName}"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName}, 0"; Flags: uninsdeletekey
+Root: "HKA"; Subkey: "Software\Classes\directory\background\shell\{#MyAppName}\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExename}""  ""%V"""; Flags: uninsdeletekey
+
+[Run]
+Filename: "{app}/{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Setup]
+Uninstallable=not WizardIsTaskSelected('portablemode')
+
+; Code to add installation path to environment taken from:
+; https://stackoverflow.com/a/46609047
+[Code]
+const SystemKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+const UserKey = 'Environment';
+const SystemHive = HKEY_LOCAL_MACHINE;
+const UserHive = HKEY_CURRENT_USER;
+
+procedure EnvAddPath(Path: string);
+var
+  SystemPath: string;
+  UserPath: string;
+  R: boolean;
+begin
+  { Retrieve user and system PATH }
+  if not RegQueryStringValue(SystemHive, SystemKey, 'Path', SystemPath)
+  then SystemPath := '';
+  if not RegQueryStringValue(UserHive, UserKey, 'Path', UserPath)
+  then UserPath := '';
+
+  { Skip if the string is found in user / system path }
+  if Pos(';' + Uppercase(Path) + ';', ';' + Uppercase(UserPath) + ';' + Uppercase(SystemPath) + ';') > 0 then exit;
+
+  { Add the environment variable to user or system PATH depending on installation mode }
+  if IsAdminInstallMode() then R := RegWriteStringValue(SystemHive, SystemKey, 'Path', SystemPath + ';' + Path + ';')
+  else R := RegWriteStringValue(UserHive, UserKey, 'Path', UserPath + ';' + Path + ';');
+
+  { Log any issues }
+  if R then Log(Path + ' is added to PATH')
+  else Log('Cannot add ' + Path + ' to PATH');
+end;
+
+procedure EnvRemovePath(Path: string);
+var
+  RegKeys: array of string;
+  RegHives: array of integer;
+  Paths: string;
+  I: integer;
+  P: integer;
+begin
+  { During uninstallation, we always have administrator privileges }
+  RegKeys := [SystemKey, UserKey];
+  RegHives := [SystemHive, UserHive];
+  { Remove the path from both user and system PATH }
+  for I := 0 to Length(RegKeys) - 1 do
+    begin
+      { Skip if registry key doesn't exist }
+      if not RegQueryStringValue(RegHives[I], RegKeys[I], 'Path', Paths) then continue;
+      { Skip if path is not in PATH }
+      P := Pos(';' + Uppercase(Path) + ';', ';' + Uppercase(Paths) + ';');
+      if p = 0 then continue;
+      { Remove string from PATH }
+      Delete(Paths, P - 1, Length(Path) + 1);
+      { Write to the environment variable }
+      if RegWriteStringValue(RegHives[I], RegKeys[I], 'Path', Paths)
+      then Log(Path + ' is removed from PATH')
+      else Log('Error removing ' + Path + ' from PATH');
+    end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('envPath')
+  then EnvAddPath(ExpandConstant('{app}'));
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall
+  then EnvRemovePath(ExpandConstant('{app}'));
+end;
