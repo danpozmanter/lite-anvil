@@ -89,11 +89,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install x86_64 system dependencies
-        # GitHub macOS ARM runners keep x86_64 Homebrew at /usr/local alongside
-        # the native ARM64 Homebrew at /opt/homebrew. Install the x86_64 variants
-        # so pkg-config finds the correct architecture libraries at link time.
-        run: arch -x86_64 /usr/local/bin/brew install sdl3 freetype pcre2
+      - name: Build x86_64 system dependencies from source
+        # No x86_64 Homebrew on ARM runners — build everything for x86_64 via cmake.
+        run: |
+          PREFIX=/tmp/deps-x86
+
+          git clone --depth 1 https://github.com/libsdl-org/SDL.git
+          cmake -S SDL -B SDL/build -DCMAKE_BUILD_TYPE=Release -G Ninja \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON
+          cmake --build SDL/build
+          cmake --install SDL/build
+
+          git clone --depth 1 https://github.com/freetype/freetype.git
+          cmake -S freetype -B freetype/build -DCMAKE_BUILD_TYPE=Release -G Ninja \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX \
+            -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_BROTLI=ON
+          cmake --build freetype/build
+          cmake --install freetype/build
+
+          git clone --depth 1 https://github.com/PCRE2Project/pcre2.git
+          cmake -S pcre2 -B pcre2/build -DCMAKE_BUILD_TYPE=Release -G Ninja \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX \
+            -DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_BUILD_PCRE2_16=OFF \
+            -DPCRE2_BUILD_PCRE2_32=OFF -DPCRE2_BUILD_TESTS=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build pcre2/build
+          cmake --install pcre2/build
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -103,7 +125,7 @@ jobs:
 
       - name: Build
         env:
-          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig
+          PKG_CONFIG_PATH: /tmp/deps-x86/lib/pkgconfig
           PKG_CONFIG_ALLOW_CROSS: "1"
         run: cargo build --release --target x86_64-apple-darwin
 
