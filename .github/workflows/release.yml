@@ -91,9 +91,6 @@ jobs:
 
       - name: Build x86_64 system dependencies from source
         # No x86_64 Homebrew on ARM runners — build everything for x86_64 via cmake.
-        # MACOSX_DEPLOYMENT_TARGET=12.0 eliminates @available() runtime calls
-        # (___isPlatformVersionAtLeast) in SDL3's ObjC code by making the checks
-        # statically true at compile time.
         run: |
           PREFIX=/tmp/deps-x86
           COMMON="-DCMAKE_BUILD_TYPE=Release -G Ninja -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"
@@ -101,7 +98,8 @@ jobs:
           git clone --depth 1 https://github.com/libsdl-org/SDL.git
           cmake -S SDL -B SDL/build $COMMON \
             -DSDL_SHARED=OFF -DSDL_STATIC=ON \
-            -DSDL_JOYSTICK=OFF -DSDL_HAPTIC=OFF -DSDL_SENSOR=OFF
+            -DSDL_JOYSTICK=OFF -DSDL_HAPTIC=OFF -DSDL_SENSOR=OFF \
+            -DSDL_CAMERA=OFF
           cmake --build SDL/build
           cmake --install SDL/build
 
@@ -131,10 +129,13 @@ jobs:
           PKG_CONFIG_PATH: /tmp/deps-x86/lib/pkgconfig
           PKG_CONFIG_ALLOW_CROSS: "1"
           MACOSX_DEPLOYMENT_TARGET: "12.0"
-          # UniformTypeIdentifiers (UTType for clipboard) is not emitted by SDL3's
-          # static pkg-config Libs.private on all cmake versions; add it explicitly.
-          RUSTFLAGS: "-C link-arg=-framework -C link-arg=UniformTypeIdentifiers"
-        run: cargo build --release --target x86_64-apple-darwin
+        run: |
+          # ___isPlatformVersionAtLeast lives in libclang_rt.osx.a, which Rust's
+          # -nodefaultlibs drops. Find it for the x86_64 slice and pass it directly.
+          CLANG_RT=$(clang -arch x86_64 -print-file-name=libclang_rt.osx.a)
+          export RUSTFLAGS="-C link-arg=$CLANG_RT \
+            -C link-arg=-framework -C link-arg=UniformTypeIdentifiers"
+          cargo build --release --target x86_64-apple-darwin
 
       - name: Create .app bundle
         run: |
