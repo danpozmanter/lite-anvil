@@ -65,6 +65,21 @@ make install          # installs to /usr/local by default
 make install PREFIX=/usr
 ```
 
+### macOS notes
+
+If macOS reports `Code Signature Invalid` after install, re-sign the app bundle
+locally with an ad hoc signature:
+
+```bash
+sudo codesign --force --deep --sign - --timestamp=none /Applications/LiteAnvil.app
+```
+
+If the app was quarantined by Gatekeeper, remove the quarantine attribute:
+
+```bash
+sudo xattr -dr com.apple.quarantine /Applications/LiteAnvil.app
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

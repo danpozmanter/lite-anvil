@@ -1,5 +1,7 @@
 # Change Log
 
+## [0.2.2] - 2026-03-10 — Mac OS display bug fix.
+
 ## [0.2.1] - 2026-03-10 — Fixing Mac OS bundling bug.
 
 ## [0.2.0] - 2026-03-10 — Adding markdown preview.

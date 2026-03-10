@@ -233,7 +233,7 @@ install_macos() {
     <key>CFBundleIdentifier</key>
     <string>com.lite_anvil.LiteAnvil</string>
     <key>CFBundleVersion</key>
-    <string>0.2.1</string>
+    <string>0.2.2</string>
     <key>CFBundleExecutable</key>
     <string>lite-anvil</string>
     <key>CFBundlePackageType</key>

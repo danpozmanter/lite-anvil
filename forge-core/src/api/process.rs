@@ -574,9 +574,13 @@ fn fork_exec(
 /// Read the current errno value. Async-signal-safe.
 fn get_errno() -> c_int {
     #[cfg(target_os = "linux")]
-    unsafe { *libc::__errno_location() }
+    unsafe {
+        *libc::__errno_location()
+    }
     #[cfg(not(target_os = "linux"))]
-    unsafe { *libc::__error() }
+    unsafe {
+        *libc::__error()
+    }
 }
 
 /// Close all still-valid FDs in the pipe/control arrays (error-path cleanup).

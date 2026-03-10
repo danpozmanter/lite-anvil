@@ -110,15 +110,17 @@ pub fn make_renderer(lua: &Lua) -> LuaResult<LuaTable> {
     // Instance methods — self is the font table, inner userdata at [1].
     font_tbl.set(
         "get_width",
-        lua.create_function(|_, (tbl, text, opts): (LuaTable, String, Option<LuaTable>)| {
-            let tab_offset = opts
-                .as_ref()
-                .and_then(|t| t.get::<Option<f32>>("tab_offset").ok().flatten())
-                .unwrap_or(0.0);
-            let ud = ud_from_font_tbl(&tbl)?;
-            let rf = ud.borrow::<RenFont>()?;
-            Ok(rf.get_width(&text, tab_offset))
-        })?,
+        lua.create_function(
+            |_, (tbl, text, opts): (LuaTable, String, Option<LuaTable>)| {
+                let tab_offset = opts
+                    .as_ref()
+                    .and_then(|t| t.get::<Option<f32>>("tab_offset").ok().flatten())
+                    .unwrap_or(0.0);
+                let ud = ud_from_font_tbl(&tbl)?;
+                let rf = ud.borrow::<RenFont>()?;
+                Ok(rf.get_width(&text, tab_offset))
+            },
+        )?,
     )?;
     font_tbl.set(
         "get_height",

@@ -33,6 +33,34 @@ impl SdlWindow {
     fn flags(&self) -> SDL_WindowFlags {
         unsafe { SDL_GetWindowFlags(self.raw) }
     }
+
+    fn logical_size_from_pixels(&self, pixel_w: i32, pixel_h: i32) -> (i32, i32) {
+        let logical_w = if self.scale_x > 0.0 {
+            (pixel_w as f32 / self.scale_x).round() as i32
+        } else {
+            pixel_w
+        };
+        let logical_h = if self.scale_y > 0.0 {
+            (pixel_h as f32 / self.scale_y).round() as i32
+        } else {
+            pixel_h
+        };
+        (logical_w.max(1), logical_h.max(1))
+    }
+
+    fn logical_position_from_pixels(&self, pixel_x: i32, pixel_y: i32) -> (i32, i32) {
+        let logical_x = if self.scale_x > 0.0 {
+            (pixel_x as f32 / self.scale_x).round() as i32
+        } else {
+            pixel_x
+        };
+        let logical_y = if self.scale_y > 0.0 {
+            (pixel_y as f32 / self.scale_y).round() as i32
+        } else {
+            pixel_y
+        };
+        (logical_x, logical_y)
+    }
 }
 
 struct SdlState {
@@ -69,7 +97,7 @@ pub fn init() -> Result<()> {
     unsafe {
         SDL_SetAppMetadata(
             c"Lite Anvil".as_ptr(),
-            c"0.1.1".as_ptr(),
+            c"0.2.2".as_ptr(),
             c"com.lite_anvil.LiteAnvil".as_ptr(),
         );
     }
@@ -119,8 +147,7 @@ pub fn prepare_restart() {
 
 /// Decode the embedded PNG and set it as the SDL window icon.
 fn set_window_icon(win: *mut SDL_Window) {
-    const ICON_BYTES: &[u8] =
-        include_bytes!("../../resources/icons/lite-anvil.png");
+    const ICON_BYTES: &[u8] = include_bytes!("../../resources/icons/lite-anvil.png");
 
     let decoder = png::Decoder::new(std::io::Cursor::new(ICON_BYTES));
     let mut reader = match decoder.read_info() {
@@ -275,22 +302,27 @@ pub fn show_if_hidden() {
     });
 }
 
-/// Returns `(w, h, x, y)` — logical size and screen position. Matches C backend.
+/// Returns `(w, h, x, y)` in window pixels and screen pixels. Matches C backend.
 pub fn get_window_size() -> (i32, i32, i32, i32) {
     SDL.with(|s| {
         s.borrow()
             .as_ref()
             .and_then(|st| st.window.as_ref())
             .map(|w| {
-                let mut lw = 0i32;
-                let mut lh = 0i32;
+                let mut pw = 0i32;
+                let mut ph = 0i32;
                 let mut x = 0i32;
                 let mut y = 0i32;
                 unsafe {
-                    SDL_GetWindowSize(w.raw, &mut lw, &mut lh);
+                    SDL_GetWindowSizeInPixels(w.raw, &mut pw, &mut ph);
                     SDL_GetWindowPosition(w.raw, &mut x, &mut y);
                 }
-                (lw, lh, x, y)
+                (
+                    pw,
+                    ph,
+                    (x as f32 * w.scale_x).round() as i32,
+                    (y as f32 * w.scale_y).round() as i32,
+                )
             })
             .unwrap_or((800, 600, 0, 0))
     })
@@ -300,10 +332,16 @@ pub fn set_window_size(w: i32, h: i32, x: i32, y: i32) {
     SDL.with(|s| {
         if let Some(ref mut st) = *s.borrow_mut() {
             if let Some(ref mut win) = st.window {
+                let (logical_w, logical_h) = win.logical_size_from_pixels(w.max(1), h.max(1));
+                let (logical_x, logical_y) = if x != -1 || y != -1 {
+                    win.logical_position_from_pixels(x, y)
+                } else {
+                    (x, y)
+                };
                 unsafe {
-                    SDL_SetWindowSize(win.raw, w.max(1), h.max(1));
+                    SDL_SetWindowSize(win.raw, logical_w, logical_h);
                     if x != -1 || y != -1 {
-                        SDL_SetWindowPosition(win.raw, x, y);
+                        SDL_SetWindowPosition(win.raw, logical_x, logical_y);
                     }
                 }
                 win.update_scale();
@@ -391,12 +429,12 @@ pub fn window_has_focus() -> bool {
     })
 }
 
-/// Returns `(w, h)` of the primary display in points.
+/// Returns `(w, h)` of the primary display in pixels.
 pub fn get_screen_size() -> (i32, i32) {
     SDL.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|_| {
+            .map(|st| {
                 let mut bounds = SDL_Rect {
                     x: 0,
                     y: 0,
@@ -407,7 +445,15 @@ pub fn get_screen_size() -> (i32, i32) {
                     let disp = SDL_GetPrimaryDisplay();
                     SDL_GetDisplayBounds(disp, &mut bounds);
                 }
-                (bounds.w, bounds.h)
+                let (scale_x, scale_y) = st
+                    .window
+                    .as_ref()
+                    .map(|w| (w.scale_x, w.scale_y))
+                    .unwrap_or((1.0, 1.0));
+                (
+                    (bounds.w as f32 * scale_x).round() as i32,
+                    (bounds.h as f32 * scale_y).round() as i32,
+                )
             })
             .unwrap_or((1920, 1080))
     })
@@ -679,7 +725,8 @@ fn translate_event(state: &mut SdlState, event: SDL_Event) -> PollResult {
     }
 
     if t == SDL_EVENT_TEXT_EDITING {
-        let (text_ptr, start, length) = unsafe { (event.edit.text, event.edit.start, event.edit.length) };
+        let (text_ptr, start, length) =
+            unsafe { (event.edit.text, event.edit.start, event.edit.length) };
         let text = if text_ptr.is_null() {
             std::string::String::new()
         } else {
@@ -750,18 +797,13 @@ fn translate_event(state: &mut SdlState, event: SDL_Event) -> PollResult {
 
     if t == SDL_EVENT_MOUSE_WHEEL {
         // Match C backend: vertical first (positive = up), horizontal negated (positive = left).
-        let (wx, wy, dir) =
-            unsafe { (event.wheel.x, event.wheel.y, event.wheel.direction) };
+        let (wx, wy, dir) = unsafe { (event.wheel.x, event.wheel.y, event.wheel.direction) };
         let (vy, vx) = if dir == SDL_MouseWheelDirection::FLIPPED {
             (-wy, -wx)
         } else {
             (wy, wx)
         };
-        return PollResult::Event(vec![
-            Str("mousewheel"),
-            Float(vy as f64),
-            Float(-vx as f64),
-        ]);
+        return PollResult::Event(vec![Str("mousewheel"), Float(vy as f64), Float(-vx as f64)]);
     }
 
     if t == SDL_EVENT_DROP_FILE {
@@ -785,18 +827,18 @@ fn translate_event(state: &mut SdlState, event: SDL_Event) -> PollResult {
 /// 1. Numpad scancode + NumLock off → positional name from NUMPAD table.
 /// 2. kc < 128 or kc has SDLK_SCANCODE_MASK → SDL_GetKeyName (lowercased).
 /// 3. Non-Latin kc → SDL_GetScancodeName (lowercased).
-fn key_name(
-    keycode: SDL_Keycode,
-    scancode: SDL_Scancode,
-    keymod: SDL_Keymod,
-) -> Option<String> {
+fn key_name(keycode: SDL_Keycode, scancode: SDL_Scancode, keymod: SDL_Keymod) -> Option<String> {
     // Step 1: numpad when NumLock is off.
     if keymod.0 & SDL_KMOD_NUM.0 == 0 {
         let sc_val = scancode.0;
         let kp1 = SDL_SCANCODE_KP_1.0;
         if (kp1..=kp1 + 10).contains(&sc_val) {
             let nm = NUMPAD[(sc_val - kp1) as usize];
-            return if nm.is_empty() { None } else { Some(nm.to_string()) };
+            return if nm.is_empty() {
+                None
+            } else {
+                Some(nm.to_string())
+            };
         }
     }
 

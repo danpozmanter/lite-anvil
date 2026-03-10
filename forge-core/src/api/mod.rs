@@ -261,7 +261,10 @@ fn make_system(lua: &Lua) -> LuaResult<LuaTable> {
                             "dir"
                         } else if ftype.map(|t| t.is_symlink()).unwrap_or(false) {
                             // follow symlink to distinguish dir symlinks
-                            if std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false) {
+                            if std::fs::metadata(entry.path())
+                                .map(|m| m.is_dir())
+                                .unwrap_or(false)
+                            {
                                 "dir"
                             } else {
                                 "file"
@@ -920,8 +923,8 @@ fn make_window_handle(lua: &Lua) -> LuaResult<LuaTable> {
         "get_content_scale",
         lua.create_function(|_, _: LuaMultiValue| -> LuaResult<f32> {
             let (pw, _ph) = crate::window::get_drawable_size();
-            let (lw, _lh, _x, _y) = crate::window::get_window_size();
-            Ok(if lw > 0 { pw as f32 / lw as f32 } else { 1.0 })
+            let (ww, _wh, _x, _y) = crate::window::get_window_size();
+            Ok(if ww > 0 { pw as f32 / ww as f32 } else { 1.0 })
         })?,
     )?;
     t.set(

@@ -1,5 +1,5 @@
-use sdl3_sys::everything::*;
 use super::font::{FontRef, GlyphInfo, is_whitespace};
+use sdl3_sys::everything::*;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

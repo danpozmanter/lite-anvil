@@ -1,14 +1,15 @@
 use mlua::prelude::*;
-use pulldown_cmark::{
-    Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
-};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Build the `markdown` Lua table exposing `markdown.parse(text) -> blocks`.
 pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     let t = lua.create_table()?;
-    t.set("parse", lua.create_function(|lua, text: String| parse_markdown(lua, &text))?)?;
+    t.set(
+        "parse",
+        lua.create_function(|lua, text: String| parse_markdown(lua, &text))?,
+    )?;
     Ok(t)
 }
 
@@ -59,28 +60,64 @@ impl Span {
 
 /// A document block.
 enum Block {
-    Heading { level: u8, inlines: Vec<Span> },
-    Paragraph { inlines: Vec<Span> },
-    Code { lang: Option<String>, text: String },
+    Heading {
+        level: u8,
+        inlines: Vec<Span>,
+    },
+    Paragraph {
+        inlines: Vec<Span>,
+    },
+    Code {
+        lang: Option<String>,
+        text: String,
+    },
     Rule,
-    Quote { blocks: Vec<Block> },
-    List { ordered: bool, start: u64, items: Vec<Vec<Span>> },
+    Quote {
+        blocks: Vec<Block>,
+    },
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<Vec<Span>>,
+    },
     /// head: header-row cells; rows: body rows → cells → spans.
-    Table { alignments: Vec<String>, head: Vec<Vec<Span>>, rows: Vec<Vec<Vec<Span>>> },
+    Table {
+        alignments: Vec<String>,
+        head: Vec<Vec<Span>>,
+        rows: Vec<Vec<Vec<Span>>>,
+    },
 }
 
 // ── Parser state ──────────────────────────────────────────────────────────────
 
 /// A frame on the block-building stack.
 enum Frame {
-    Root { blocks: Vec<Block> },
-    Heading { level: u8, spans: Vec<Span> },
-    Paragraph { spans: Vec<Span> },
-    CodeBlock { lang: Option<String>, text: String },
-    Quote { blocks: Vec<Block> },
-    List { ordered: bool, start: u64, items: Vec<Vec<Span>> },
+    Root {
+        blocks: Vec<Block>,
+    },
+    Heading {
+        level: u8,
+        spans: Vec<Span>,
+    },
+    Paragraph {
+        spans: Vec<Span>,
+    },
+    CodeBlock {
+        lang: Option<String>,
+        text: String,
+    },
+    Quote {
+        blocks: Vec<Block>,
+    },
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<Vec<Span>>,
+    },
     /// Simplified: collect only inline spans from the item (first-paragraph flatten).
-    Item { spans: Vec<Span> },
+    Item {
+        spans: Vec<Span>,
+    },
 }
 
 /// State while parsing a table (separate because tables have 3-level nesting).
@@ -122,7 +159,11 @@ fn parse_markdown(lua: &Lua, text: &str) -> LuaResult<LuaTable> {
                 push_span(&mut stack, &mut table, Span::from_text(" ", style));
             }
             Event::HardBreak => {
-                push_span(&mut stack, &mut table, Span::from_text("\n", &Style::default()));
+                push_span(
+                    &mut stack,
+                    &mut table,
+                    Span::from_text("\n", &Style::default()),
+                );
             }
             Event::Rule => push_block(&mut stack, Block::Rule),
             _ => {}
@@ -136,10 +177,18 @@ fn parse_markdown(lua: &Lua, text: &str) -> LuaResult<LuaTable> {
     blocks_to_lua(lua, blocks)
 }
 
-fn handle_start(tag: Tag, stack: &mut Vec<Frame>, style_stack: &mut Vec<Style>, table: &mut Option<TableState>) {
+fn handle_start(
+    tag: Tag,
+    stack: &mut Vec<Frame>,
+    style_stack: &mut Vec<Style>,
+    table: &mut Option<TableState>,
+) {
     match tag {
         Tag::Heading { level, .. } => {
-            stack.push(Frame::Heading { level: level_u8(level), spans: vec![] });
+            stack.push(Frame::Heading {
+                level: level_u8(level),
+                spans: vec![],
+            });
         }
         Tag::Paragraph => {
             // Inside a list item we collect spans directly; no separate Paragraph frame needed.
@@ -155,20 +204,30 @@ fn handle_start(tag: Tag, stack: &mut Vec<Frame>, style_stack: &mut Vec<Style>, 
                 }
                 CodeBlockKind::Indented => None,
             };
-            stack.push(Frame::CodeBlock { lang, text: String::new() });
+            stack.push(Frame::CodeBlock {
+                lang,
+                text: String::new(),
+            });
         }
         Tag::BlockQuote(_) => {
             stack.push(Frame::Quote { blocks: vec![] });
         }
         Tag::List(start) => {
-            stack.push(Frame::List { ordered: start.is_some(), start: start.unwrap_or(1), items: vec![] });
+            stack.push(Frame::List {
+                ordered: start.is_some(),
+                start: start.unwrap_or(1),
+                items: vec![],
+            });
         }
         Tag::Item => {
             stack.push(Frame::Item { spans: vec![] });
         }
         Tag::Table(alignments) => {
             *table = Some(TableState {
-                alignments: alignments.iter().map(|a| alignment_str(*a).to_string()).collect(),
+                alignments: alignments
+                    .iter()
+                    .map(|a| alignment_str(*a).to_string())
+                    .collect(),
                 in_head: false,
                 head: vec![],
                 rows: vec![],
@@ -177,7 +236,9 @@ fn handle_start(tag: Tag, stack: &mut Vec<Frame>, style_stack: &mut Vec<Style>, 
             });
         }
         Tag::TableHead => {
-            if let Some(t) = table.as_mut() { t.in_head = true; }
+            if let Some(t) = table.as_mut() {
+                t.in_head = true;
+            }
         }
         Tag::TableRow | Tag::TableCell => {} // cell/row reset happens in handle_end
         Tag::Emphasis => {
@@ -204,11 +265,22 @@ fn handle_start(tag: Tag, stack: &mut Vec<Frame>, style_stack: &mut Vec<Style>, 
     }
 }
 
-fn handle_end(tag: TagEnd, stack: &mut Vec<Frame>, style_stack: &mut Vec<Style>, table: &mut Option<TableState>) {
+fn handle_end(
+    tag: TagEnd,
+    stack: &mut Vec<Frame>,
+    style_stack: &mut Vec<Style>,
+    table: &mut Option<TableState>,
+) {
     match tag {
         TagEnd::Heading(_) => {
             if let Some(Frame::Heading { level, spans }) = stack.pop() {
-                push_block(stack, Block::Heading { level, inlines: spans });
+                push_block(
+                    stack,
+                    Block::Heading {
+                        level,
+                        inlines: spans,
+                    },
+                );
             }
         }
         TagEnd::Paragraph => {
@@ -232,8 +304,20 @@ fn handle_end(tag: TagEnd, stack: &mut Vec<Frame>, style_stack: &mut Vec<Style>,
             }
         }
         TagEnd::List(_) => {
-            if let Some(Frame::List { ordered, start, items }) = stack.pop() {
-                push_block(stack, Block::List { ordered, start, items });
+            if let Some(Frame::List {
+                ordered,
+                start,
+                items,
+            }) = stack.pop()
+            {
+                push_block(
+                    stack,
+                    Block::List {
+                        ordered,
+                        start,
+                        items,
+                    },
+                );
             }
         }
         TagEnd::Item => {
@@ -262,20 +346,30 @@ fn handle_end(tag: TagEnd, stack: &mut Vec<Frame>, style_stack: &mut Vec<Style>,
             }
         }
         TagEnd::TableHead => {
-            if let Some(t) = table.as_mut() { t.in_head = false; }
+            if let Some(t) = table.as_mut() {
+                t.in_head = false;
+            }
         }
         TagEnd::Table => {
             if let Some(ts) = table.take() {
-                push_block(stack, Block::Table {
-                    alignments: ts.alignments,
-                    head: ts.head,
-                    rows: ts.rows,
-                });
+                push_block(
+                    stack,
+                    Block::Table {
+                        alignments: ts.alignments,
+                        head: ts.head,
+                        rows: ts.rows,
+                    },
+                );
             }
         }
-        TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough
-        | TagEnd::Link | TagEnd::Image => {
-            if style_stack.len() > 1 { style_stack.pop(); }
+        TagEnd::Emphasis
+        | TagEnd::Strong
+        | TagEnd::Strikethrough
+        | TagEnd::Link
+        | TagEnd::Image => {
+            if style_stack.len() > 1 {
+                style_stack.pop();
+            }
         }
         _ => {}
     }
@@ -395,7 +489,11 @@ fn block_to_lua(lua: &Lua, block: Block) -> LuaResult<LuaTable> {
             t.set("type", "blockquote")?;
             t.set("blocks", blocks_to_lua(lua, blocks)?)?;
         }
-        Block::List { ordered, start, items } => {
+        Block::List {
+            ordered,
+            start,
+            items,
+        } => {
             t.set("type", "list")?;
             t.set("ordered", ordered)?;
             t.set("start", start)?;
@@ -405,7 +503,11 @@ fn block_to_lua(lua: &Lua, block: Block) -> LuaResult<LuaTable> {
             }
             t.set("items", items_lua)?;
         }
-        Block::Table { alignments, head, rows } => {
+        Block::Table {
+            alignments,
+            head,
+            rows,
+        } => {
             t.set("type", "table")?;
             let aligns_lua = lua.create_table_with_capacity(alignments.len(), 0)?;
             for (i, a) in alignments.iter().enumerate() {
