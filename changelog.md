@@ -1,5 +1,7 @@
 # Change Log
 
+## [0.2.4] - 2026-03-10 — Mac + minor fixes.
+
 ## [0.2.3] - 2026-03-10 — Lua fixes.
 
 ## [0.2.2] - 2026-03-10 — Fixes / polishing:

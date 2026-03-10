@@ -133,7 +133,7 @@ fn platform_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "Windows"
     } else if cfg!(target_os = "macos") {
-        "macOS"
+        "Mac OS X"
     } else if cfg!(target_os = "linux") {
         "Linux"
     } else if cfg!(target_os = "freebsd") {

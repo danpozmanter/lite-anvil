@@ -174,7 +174,7 @@ end
 
 local function open_shortcuts_help_doc()
   local doc = Doc()
-  doc:set_filename("Shortcuts.txt")
+  doc:set_filename("Shortcuts")
   doc:insert(1, 1, shortcuts_help_message())
   doc.new_file = false
   doc:clean()
