@@ -3,6 +3,8 @@ local core   = require "core"
 
 local syntax = {}
 syntax.items = {}
+syntax.lazy_items = {}
+syntax.lazy_loaded = {}
 
 syntax.plain_text_syntax = { name = "Plain Text", patterns = {}, symbols = {} }
 
@@ -91,10 +93,80 @@ local function find(string, field)
   return best_syntax
 end
 
+local function extract_match_list(source, field)
+  local list = {}
+  local block = source:match(field .. "%s*=%s*%b{}")
+  if not block then
+    return list
+  end
+
+  for quote, text in block:gmatch("(['\"])(.-)%1") do
+    list[#list + 1] = text
+  end
+
+  return list
+end
+
+local function should_load_lazy_plugin(entry, filename, header)
+  return (filename and common.match_pattern(filename, entry.files))
+      or (header and common.match_pattern(header, entry.headers))
+end
+
+local function load_lazy_plugin(entry)
+  if syntax.lazy_loaded[entry.name] then
+    return true
+  end
+
+  syntax.lazy_loaded[entry.name] = true
+  local ok, res = core.try(entry.load, entry.plugin)
+  if ok then
+    return res
+  end
+  return nil
+end
+
+function syntax.register_lazy_plugin(plugin)
+  local file = io.open(plugin.file, "r")
+  if not file then
+    return
+  end
+
+  local source = file:read("*a")
+  file:close()
+
+  local files = extract_match_list(source, "files")
+  local headers = extract_match_list(source, "headers")
+
+  syntax.lazy_items[#syntax.lazy_items + 1] = {
+    name = plugin.name,
+    plugin = plugin,
+    load = plugin.load,
+    files = files,
+    headers = headers,
+  }
+end
+
 function syntax.get(filename, header)
-  return (filename and find(filename, "files"))
+  local loaded = (filename and find(filename, "files"))
       or (header and find(header, "headers"))
-      or syntax.plain_text_syntax
+  if loaded then
+    return loaded
+  end
+
+  for i = #syntax.lazy_items, 1, -1 do
+    local entry = syntax.lazy_items[i]
+    if should_load_lazy_plugin(entry, filename, header) then
+      table.remove(syntax.lazy_items, i)
+      load_lazy_plugin(entry)
+      local lazy_loaded = (filename and find(filename, "files"))
+          or (header and find(header, "headers"))
+      if lazy_loaded then
+        return lazy_loaded
+      end
+    end
+  end
+
+  return syntax.plain_text_syntax
 end
 
 

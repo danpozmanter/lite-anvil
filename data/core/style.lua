@@ -8,6 +8,7 @@ style.syntax = {}
 style.syntax_fonts = {}
 style.log = {}
 style.lint = style.lint or {}
+style._lazy_font_specs = {}
 
 local default_ui = {
   divider_size = 1,
@@ -147,6 +148,29 @@ local function load_font_from_spec(spec, fallback)
 end
 
 
+local function get_lazy_font(name)
+  local spec = style._lazy_font_specs[name]
+  if not spec then
+    return style[name]
+  end
+
+  local font = load_font_from_spec(spec.spec, spec.fallback)
+  style[name] = font
+  style._lazy_font_specs[name] = nil
+  return font
+end
+
+
+function style.get_big_font()
+  return get_lazy_font("big_font")
+end
+
+
+function style.get_icon_big_font()
+  return get_lazy_font("icon_big_font")
+end
+
+
 function style.register_theme(name, palette)
   style.themes[name] = palette
 end
@@ -179,9 +203,17 @@ function style.apply_config()
   local fonts = merge_tables(default_fonts, config.fonts)
   style.font = load_font_from_spec(fonts.ui, default_fonts.ui)
   style.code_font = load_font_from_spec(fonts.code, default_fonts.code)
-  style.big_font = load_font_from_spec(fonts.big, fonts.ui)
   style.icon_font = load_font_from_spec(fonts.icon, default_fonts.icon)
-  style.icon_big_font = load_font_from_spec(fonts.icon_big, fonts.icon)
+  style.big_font = nil
+  style.icon_big_font = nil
+  style._lazy_font_specs.big_font = {
+    spec = fonts.big,
+    fallback = fonts.ui,
+  }
+  style._lazy_font_specs.icon_big_font = {
+    spec = fonts.icon_big,
+    fallback = fonts.icon,
+  }
 
   for token, font_spec in pairs(fonts.syntax or {}) do
     style.syntax_fonts[token] = load_font_from_spec(font_spec, fonts.code)

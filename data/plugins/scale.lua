@@ -55,8 +55,16 @@ local function set_scale(scale)
     style.tab_width               = style.tab_width               * s
   end
 
+  local font_getters = {
+    font = function() return style.font end,
+    big_font = function() return style.get_big_font() end,
+    icon_font = function() return style.icon_font end,
+    icon_big_font = function() return style.get_icon_big_font() end,
+    code_font = function() return style.code_font end,
+  }
   for _, name in ipairs {"font", "big_font", "icon_font", "icon_big_font", "code_font"} do
-    style[name]:set_size(s * style[name]:get_size())
+    local font = font_getters[name]()
+    font:set_size(s * font:get_size())
   end
 
   for name, font in pairs(style.syntax_fonts) do

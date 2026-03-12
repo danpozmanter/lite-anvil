@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 // ── PCRE2 match-time option constants ────────────────────────────────────────
 
-const ANCHORED: u32 = 0x80000000;
-const ENDANCHORED: u32 = 0x20000000;
-const NOTBOL: u32 = 0x00000001;
-const NOTEOL: u32 = 0x00000002;
-const NOTEMPTY: u32 = 0x00000004;
-const NOTEMPTY_ATSTART: u32 = 0x00000008;
+pub(crate) const ANCHORED: u32 = 0x80000000;
+pub(crate) const ENDANCHORED: u32 = 0x20000000;
+pub(crate) const NOTBOL: u32 = 0x00000001;
+pub(crate) const NOTEOL: u32 = 0x00000002;
+pub(crate) const NOTEMPTY: u32 = 0x00000004;
+pub(crate) const NOTEMPTY_ATSTART: u32 = 0x00000008;
 
 // ── UserData wrapper ──────────────────────────────────────────────────────────
 

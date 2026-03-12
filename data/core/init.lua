@@ -645,9 +645,21 @@ function core.parse_plugin_details(path, file, mod_version_regex, priority_regex
 end
 
 
-local mod_version_regex =
-  regex.compile([[--.*mod-version:(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:$|\s)]])
-local priority_regex = regex.compile([[\-\-.*priority\s*:\s*(\-?[\d\.]+)]])
+local mod_version_regex
+local priority_regex
+
+local function get_mod_version_regex()
+  mod_version_regex = mod_version_regex
+    or regex.compile([[--.*mod-version:(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:$|\s)]])
+  return mod_version_regex
+end
+
+local function get_priority_regex()
+  priority_regex = priority_regex
+    or regex.compile([[\-\-.*priority\s*:\s*(\-?[\d\.]+)]])
+  return priority_regex
+end
+
 function core.get_plugin_details(path)
   local info = system.get_file_info(path)
   local file = path
@@ -655,7 +667,12 @@ function core.get_plugin_details(path)
     file = path .. PATHSEP .. "init.lua"
     info = system.get_file_info(file)
   end
-  local details = info and core.parse_plugin_details(path:gsub("%.lua$", ""), file, mod_version_regex, priority_regex)
+  local details = info and core.parse_plugin_details(
+    path:gsub("%.lua$", ""),
+    file,
+    get_mod_version_regex(),
+    get_priority_regex()
+  )
   if details then details.load = require_lua_plugin end
   return details
 end
@@ -673,6 +690,96 @@ function core.add_plugins(plugins)
     end
     return a.name < b.name
   end)
+end
+
+
+local lazy_command_plugins = {
+  markdown_preview = {
+    predicate = "core.docview",
+    commands = {
+      "markdown-preview:toggle",
+    },
+  },
+  projectsearch = {
+    commands = {
+      "project-search:find",
+      "project-search:find-regex",
+      "project-search:fuzzy-find",
+    },
+  },
+  projectreplace = {
+    commands = {
+      "project-search:replace",
+      "project-search:replace-regex",
+    },
+  },
+  remotessh = {
+    commands = {
+      "remote-ssh:open-project",
+      "remote-ssh:add-project",
+    },
+  },
+}
+
+local lazy_command_handlers = {}
+local lazy_command_loaded = {}
+
+local function load_lazy_command_plugin(plugin)
+  if lazy_command_loaded[plugin.name] then
+    return true
+  end
+
+  lazy_command_loaded[plugin.name] = true
+  local start = system.get_time()
+  local ok, loaded_plugin = core.try(plugin.load, plugin)
+  if not ok then
+    return false
+  end
+
+  core.log_quiet(
+    "Lazy-loaded plugin %q from %s in %.1fms",
+    plugin.name,
+    common.dirname(plugin.file),
+    (system.get_time() - start) * 1000
+  )
+  if config.plugins[plugin.name].onload then
+    core.try(config.plugins[plugin.name].onload, loaded_plugin)
+  end
+  return true
+end
+
+local function register_lazy_command_plugin(plugin)
+  local spec = lazy_command_plugins[plugin.name]
+  if not spec then
+    return false
+  end
+
+  local map = {}
+  for _, command_name in ipairs(spec.commands) do
+    local function lazy_handler(...)
+      if not load_lazy_command_plugin(plugin) then
+        return
+      end
+
+      local loaded_command = command.map[command_name]
+      if loaded_command and loaded_command.perform ~= lazy_command_handlers[command_name] then
+        return command.perform(command_name, ...)
+      end
+
+      core.warn("Lazy command %q did not register after loading plugin %q", command_name, plugin.name)
+    end
+
+    lazy_command_handlers[command_name] = lazy_handler
+    map[command_name] = lazy_handler
+  end
+
+  command.add(spec.predicate, map)
+  core.log_quiet(
+    "Registered lazy command plugin %q from %s",
+    plugin.name,
+    common.dirname(plugin.file)
+  )
+  return true
 end
 
 
@@ -714,6 +821,19 @@ function core.load_plugins()
         and 'userdir' or 'datadir'
       table.insert(refused_list[rlist].plugins, plugin)
     elseif config.plugins[plugin.name] ~= false then
+      if plugin.name:match("^language_") then
+        require("core.syntax").register_lazy_plugin(plugin)
+        core.log_quiet(
+          "Registered lazy language plugin %q from %s",
+          plugin.name,
+          common.dirname(plugin.file)
+        )
+        goto continue
+      end
+      if register_lazy_command_plugin(plugin) then
+        goto continue
+      end
+
       local start = system.get_time()
       local ok, loaded_plugin = core.try(plugin.load, plugin)
       if ok then
@@ -735,6 +855,7 @@ function core.load_plugins()
         no_errors = false
       end
     end
+    ::continue::
   end
   core.log_quiet(
     "Loaded all plugins in %.1fms",

@@ -13,7 +13,7 @@ syntax.add {
     { pattern = { "/%*", "%*/" },                    type = "comment"  },
     { pattern = { 'r#+"', '"#+' },                   type = "string"   },
     { pattern = { 'b?"', '"', '\\' },                type = "string"   },
-    { pattern = { "b?'", "'", '\\' },                type = "string"   },
+    { pattern = "b?'\\?.'",                    type = "string"   },
     { pattern = "'[%a_][%w_]*",                      type = "keyword2" },
     { pattern = "#!?%[.-%]",                         type = "keyword"  },
     { pattern = "[%a_][%w_]*!",                      type = "keyword"  },

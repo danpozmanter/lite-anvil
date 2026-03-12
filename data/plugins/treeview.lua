@@ -603,8 +603,7 @@ function TreeView:on_context_menu()
   } }, self
 end
 
-local projectsearch = pcall(require, "plugins.projectsearch")
-if projectsearch then
+if config.plugins.projectsearch ~= false then
   command.add(function(active_view)
     return view.hovered_item and view.hovered_item.type == "dir"
       and (active_view or core.active_view) == view
@@ -664,7 +663,7 @@ end, {
   end,
 
   ["treeview:rename"] = function(item)
-    local old_filename = core.normalize_to_project_dir(item.abs_filename)
+    local old_filename = item.project:normalize_path(item.abs_filename)
     local old_abs_filename = item.abs_filename
     core.command_view:enter("Rename", {
       text = old_filename,
@@ -756,7 +755,7 @@ command.add(TreeView, {
         if core.last_active_view and core.active_view == view then
           core.set_active_view(core.last_active_view)
         end
-        view:open_doc(core.normalize_to_project_dir(item.abs_filename))
+        view:open_doc(item.project:normalize_path(item.abs_filename))
       end)
     end
   end,

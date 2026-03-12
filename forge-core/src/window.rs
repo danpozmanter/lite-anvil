@@ -9,6 +9,12 @@ static NUMPAD: [&str; 11] = [
     "end", "down", "pagedown", "left", "", "right", "home", "up", "pageup", "ins", "delete",
 ];
 
+const DEFAULT_WINDOW_SCALE_NUM: i32 = 4;
+const DEFAULT_WINDOW_SCALE_DEN: i32 = 5;
+const DEFAULT_WINDOW_MIN_W: i32 = 400;
+const DEFAULT_WINDOW_MIN_H: i32 = 300;
+const MAX_STARTUP_BACKBUFFER_PIXELS: i64 = 2560 * 1440;
+
 struct SdlWindow {
     raw: *mut SDL_Window,
     /// Pixel-to-point ratio for HiDPI content scaling.
@@ -97,7 +103,7 @@ pub fn init() -> Result<()> {
     unsafe {
         SDL_SetAppMetadata(
             c"Lite Anvil".as_ptr(),
-            c"0.3.1".as_ptr(),
+            c"0.4.0".as_ptr(),
             c"com.lite_anvil.LiteAnvil".as_ptr(),
         );
     }
@@ -208,6 +214,30 @@ fn set_window_icon(win: *mut SDL_Window) {
     }
 }
 
+fn clamp_startup_backbuffer(win: &mut SdlWindow) {
+    let mut pw = 0i32;
+    let mut ph = 0i32;
+    unsafe {
+        SDL_GetWindowSizeInPixels(win.raw, &mut pw, &mut ph);
+    }
+    let area = i64::from(pw.max(1)) * i64::from(ph.max(1));
+    if area <= MAX_STARTUP_BACKBUFFER_PIXELS {
+        return;
+    }
+
+    let scale = (MAX_STARTUP_BACKBUFFER_PIXELS as f64 / area as f64).sqrt();
+    let target_pw = ((pw as f64) * scale).floor() as i32;
+    let target_ph = ((ph as f64) * scale).floor() as i32;
+    let (logical_w, logical_h) = win.logical_size_from_pixels(
+        target_pw.max(DEFAULT_WINDOW_MIN_W),
+        target_ph.max(DEFAULT_WINDOW_MIN_H),
+    );
+    unsafe {
+        SDL_SetWindowSize(win.raw, logical_w, logical_h);
+    }
+    win.update_scale();
+}
+
 /// Create the SDL3 window and store it. Called from `renwindow.create()`.
 pub fn create_window(title: &str) -> Result<()> {
     SDL.with(|s| -> Result<()> {
@@ -222,10 +252,14 @@ pub fn create_window(title: &str) -> Result<()> {
         };
         unsafe {
             let disp = SDL_GetPrimaryDisplay();
-            SDL_GetDisplayBounds(disp, &mut bounds);
+            if !SDL_GetDisplayUsableBounds(disp, &mut bounds) {
+                SDL_GetDisplayBounds(disp, &mut bounds);
+            }
         }
-        let width = (bounds.w * 80 / 100).max(400);
-        let height = (bounds.h * 80 / 100).max(300);
+        let width = (bounds.w * DEFAULT_WINDOW_SCALE_NUM / DEFAULT_WINDOW_SCALE_DEN)
+            .max(DEFAULT_WINDOW_MIN_W);
+        let height = (bounds.h * DEFAULT_WINDOW_SCALE_NUM / DEFAULT_WINDOW_SCALE_DEN)
+            .max(DEFAULT_WINDOW_MIN_H);
 
         let title_cstr = CString::new(title).unwrap_or_default();
         let flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
@@ -248,11 +282,13 @@ pub fn create_window(title: &str) -> Result<()> {
         let scale_x = if lw > 0 { pw as f32 / lw as f32 } else { 1.0 };
         let scale_y = if lh > 0 { ph as f32 / lh as f32 } else { 1.0 };
 
-        state.window = Some(SdlWindow {
+        let mut window = SdlWindow {
             raw: win,
             scale_x,
             scale_y,
-        });
+        };
+        clamp_startup_backbuffer(&mut window);
+        state.window = Some(window);
         Ok(())
     })
 }

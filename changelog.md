@@ -1,5 +1,15 @@
 # Change Log
 
+## [0.4.0] - 2026-03-12 — Startup loading optimizations, SDL tuning, and fixes.
+
+* Load `language_*.lua` syntax plugins lazily on first matching file/header instead of at editor startup.
+* Lazy-load selected command-driven plugins on first use instead of at startup, including Markdown preview, project search, project replace, and remote SSH.
+* Delay loading of large display-only fonts until they are first used by the welcome screen or toolbar.
+* Lazy-initialize native `regex` and `markdown` modules, and defer plugin metadata regex compilation until plugin scanning actually needs it.
+* Reduce the default startup window/backbuffer footprint by using usable display bounds and clamping oversized initial HiDPI backbuffers.
+* Remove internal uses of deprecated project-path helper functions to avoid deprecation warnings in normal editor workflows.
+* Fix Rust lifetime highlighting so `&'static str` is no longer tokenized as a quoted string.
+
 ## [0.3.1] - 2026-03-11 — Release binary size optimization.
 
 ## [0.3.0] - 2026-03-11 — Config + editing upgrades and language support.

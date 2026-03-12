@@ -15,7 +15,7 @@ function ToolbarView:new()
   self.visible = true
   self.init_size = true
   self.tooltip = false
-  self.toolbar_font = style.icon_big_font
+  self.toolbar_font = style.get_icon_big_font()
   self.toolbar_commands = {
     {symbol = "f", command = "core:new-doc"},
     {symbol = "D", command = "core:open-file"},

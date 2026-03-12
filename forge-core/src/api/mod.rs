@@ -6,6 +6,8 @@ mod regex;
 mod utf8extra;
 
 use mlua::prelude::*;
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 // ── Fuzzy match ───────────────────────────────────────────────────────────────
@@ -188,7 +190,7 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
     let dm = dirmonitor::make_module(lua)?;
     insert(&globals, &pkg_loaded, "dirmonitor", dm)?;
 
-    let md = markdown::make_module(lua)?;
+    let md = make_markdown(lua)?;
     insert(&globals, &pkg_loaded, "markdown", md)?;
 
     Ok(())
@@ -200,6 +202,37 @@ fn insert(globals: &LuaTable, pkg_loaded: &LuaTable, name: &str, table: LuaTable
     globals.set(name, table.clone())?;
     pkg_loaded.set(name, table)?;
     Ok(())
+}
+
+type LazyModuleFactory = fn(&Lua) -> LuaResult<LuaTable>;
+
+fn ensure_lazy_module(
+    lua: &Lua,
+    slot: &Arc<Mutex<Option<LuaRegistryKey>>>,
+    factory: LazyModuleFactory,
+) -> LuaResult<LuaTable> {
+    let mut guard = slot.lock();
+    if guard.is_none() {
+        let module = factory(lua)?;
+        *guard = Some(lua.create_registry_value(module.clone())?);
+        return Ok(module);
+    }
+    lua.registry_value(guard.as_ref().unwrap())
+}
+
+fn make_lazy_dispatch(
+    lua: &Lua,
+    slot: Arc<Mutex<Option<LuaRegistryKey>>>,
+    factory: LazyModuleFactory,
+    method: &'static str,
+) -> LuaResult<LuaFunction> {
+    lua.create_function(
+        move |lua, args: LuaMultiValue| -> LuaResult<LuaMultiValue> {
+            let module = ensure_lazy_module(lua, &slot, factory)?;
+            let func: LuaFunction = module.get(method)?;
+            func.call(args)
+        },
+    )
 }
 
 // ── system module ─────────────────────────────────────────────────────────────
@@ -839,7 +872,53 @@ return r
 // ── regex module ──────────────────────────────────────────────────────────────
 
 fn make_regex(lua: &Lua) -> LuaResult<LuaTable> {
-    regex::make_module(lua)
+    let t = lua.create_table()?;
+    let slot = Arc::new(Mutex::new(None));
+
+    t.set("ANCHORED", regex::ANCHORED)?;
+    t.set("ENDANCHORED", regex::ENDANCHORED)?;
+    t.set("NOTBOL", regex::NOTBOL)?;
+    t.set("NOTEOL", regex::NOTEOL)?;
+    t.set("NOTEMPTY", regex::NOTEMPTY)?;
+    t.set("NOTEMPTY_ATSTART", regex::NOTEMPTY_ATSTART)?;
+
+    let t_key = lua.create_registry_value(t.clone())?;
+    let compile_slot = Arc::clone(&slot);
+    t.set(
+        "compile",
+        lua.create_function(move |lua, args: LuaMultiValue| {
+            let module = ensure_lazy_module(lua, &compile_slot, regex::make_module)?;
+            let func: LuaFunction = module.get("compile")?;
+            let compiled: LuaTable = func.call(args)?;
+            let public: LuaTable = lua.registry_value(&t_key)?;
+            compiled.set_metatable(Some(public))?;
+            Ok(compiled)
+        })?,
+    )?;
+    t.set(
+        "cmatch",
+        make_lazy_dispatch(lua, Arc::clone(&slot), regex::make_module, "cmatch")?,
+    )?;
+    t.set(
+        "gmatch",
+        make_lazy_dispatch(lua, Arc::clone(&slot), regex::make_module, "gmatch")?,
+    )?;
+    t.set(
+        "gsub",
+        make_lazy_dispatch(lua, slot, regex::make_module, "gsub")?,
+    )?;
+
+    Ok(t)
+}
+
+fn make_markdown(lua: &Lua) -> LuaResult<LuaTable> {
+    let t = lua.create_table()?;
+    let slot = Arc::new(Mutex::new(None));
+    t.set(
+        "parse",
+        make_lazy_dispatch(lua, slot, markdown::make_module, "parse")?,
+    )?;
+    Ok(t)
 }
 
 // ── renwindow module ──────────────────────────────────────────────────────────
