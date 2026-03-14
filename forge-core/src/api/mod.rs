@@ -1,7 +1,10 @@
 mod dirmonitor;
+mod doc_native;
 mod markdown;
 #[cfg(unix)]
 mod process;
+mod project_fs;
+mod project_search;
 #[cfg(unix)]
 mod terminal;
 mod regex;
@@ -201,6 +204,15 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
 
     let tokenizer = tokenizer::make_module(lua)?;
     insert(&globals, &pkg_loaded, "native_tokenizer", tokenizer)?;
+
+    let project_fs = project_fs::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "project_fs", project_fs)?;
+
+    let project_search = project_search::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "project_search", project_search)?;
+
+    let doc_native = doc_native::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "doc_native", doc_native)?;
 
     Ok(())
 }

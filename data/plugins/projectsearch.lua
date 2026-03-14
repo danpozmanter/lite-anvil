@@ -3,8 +3,18 @@ local core = require "core"
 local common = require "core.common"
 local keymap = require "core.keymap"
 local command = require "core.command"
+local config = require "core.config"
 local style = require "core.style"
 local View = require "core.view"
+local native_project_search = nil
+local native_project_fs = nil
+
+do
+  local ok, mod = pcall(require, "project_search")
+  if ok then native_project_search = mod end
+  ok, mod = pcall(require, "project_fs")
+  if ok then native_project_fs = mod end
+end
 
 ---@class plugins.projectsearch.resultsview : core.view
 local ResultsView = View:extend()
@@ -53,13 +63,13 @@ local function path_matches_glob(filename, path_glob)
   return filename:gsub("\\", "/"):match(pattern) ~= nil
 end
 
-function ResultsView:new(path, text, fn, path_glob)
+function ResultsView:new(path, text, fn, path_glob, search_opts)
   ResultsView.super.new(self)
   self.scrollable = true
   self.brightness = 0
   self.max_h_scroll = 0
   self.display_results = {}
-  self:begin_search(path, text, fn, path_glob)
+  self:begin_search(path, text, fn, path_glob, search_opts)
 end
 
 
@@ -113,14 +123,94 @@ function ResultsView:rebuild_display_results()
 end
 
 
-function ResultsView:begin_search(path, text, fn, path_glob)
-  self.search_args = { path, text, fn, path_glob }
+local function collect_roots(path)
+  if path then
+    local info = system.get_file_info(path)
+    if info and info.type == "dir" then
+      return { path }
+    end
+  end
+  local roots = {}
+  for _, project in ipairs(core.projects) do
+    roots[#roots + 1] = project.path
+  end
+  return roots
+end
+
+local function collect_native_files(path, path_glob)
+  if not native_project_search then
+    return nil
+  end
+  local roots = collect_roots(path)
+  local files = native_project_search.collect_files(roots, {
+    show_hidden = false,
+    max_size_bytes = config.file_size_limit * 1e6,
+    path_glob = path_glob,
+  })
+  if path and (not system.get_file_info(path) or system.get_file_info(path).type ~= "dir") then
+    local filtered = {}
+    for _, file in ipairs(files) do
+      if file:find(path, 1, true) == 1 then
+        filtered[#filtered + 1] = file
+      end
+    end
+    files = filtered
+  end
+  return files
+end
+
+function ResultsView:begin_search(path, text, fn, path_glob, search_opts)
+  self.search_args = { path, text, fn, path_glob, search_opts }
   self.results = {}
   self.last_file_idx = 1
   self.query = text
   self.path_glob = path_glob
   self.searching = true
   self.selected_idx = 0
+  self.search_opts = search_opts
+
+  if native_project_search and search_opts then
+    local files = collect_native_files(path, path_glob) or {}
+    self.last_file_idx = #files
+    local handle = native_project_search.search({
+      files = files,
+      query = search_opts.query,
+      mode = search_opts.mode,
+      no_case = search_opts.no_case,
+    })
+    core.add_thread(function()
+      while true do
+        local polled = native_project_search.poll(handle, 128)
+        if polled and polled.error then
+          core.error("%s", polled.error)
+          self.searching = false
+          break
+        end
+        if polled and polled.results then
+          for _, item in ipairs(polled.results) do
+            self.results[#self.results + 1] = {
+              file = item.file,
+              text = item.text,
+              line = item.line,
+              col = item.col,
+            }
+          end
+          self:rebuild_display_results()
+          core.redraw = true
+        end
+        if polled and polled.done then
+          self.searching = false
+          self.brightness = 100
+          self:rebuild_display_results()
+          core.redraw = true
+          break
+        end
+        coroutine.yield(0.01)
+      end
+    end, self.results)
+    self.scroll.to.y = 0
+    return
+  end
 
   core.add_thread(function()
     local i = 1
@@ -331,12 +421,12 @@ end
 ---@param text string
 ---@param fn fun(line_text:string):...
 ---@return plugins.projectsearch.resultsview?
-local function begin_search(path, text, fn, path_glob)
+local function begin_search(path, text, fn, path_glob, search_opts)
   if text == "" then
     core.error("Expected non-empty string")
     return
   end
-  local rv = ResultsView(path, text, fn, path_glob)
+  local rv = ResultsView(path, text, fn, path_glob, search_opts)
   core.root_view:get_active_node_default():add_view(rv)
   return rv
 end
@@ -361,14 +451,17 @@ projectsearch.ResultsView = ResultsView
 ---@param insensitive? boolean
 ---@return plugins.projectsearch.resultsview?
 function projectsearch.search_plain(text, path, insensitive)
-  if insensitive then text = text:lower() end
   return begin_search(path, text, function(line_text)
     if insensitive then
-      return line_text:lower():find(text, nil, true)
+      return line_text:lower():find(text:lower(), nil, true)
     else
       return line_text:find(text, nil, true)
     end
-  end, projectsearch.pending_path_glob)
+  end, projectsearch.pending_path_glob, {
+    query = text,
+    mode = "plain",
+    no_case = insensitive and true or false,
+  })
 end
 
 ---@param text string
@@ -385,7 +478,11 @@ function projectsearch.search_regex(text, path, insensitive)
   if not re then core.log("%s", errmsg) return end
   return begin_search(path, text, function(line_text)
     return regex.cmatch(re, line_text)
-  end, projectsearch.pending_path_glob)
+  end, projectsearch.pending_path_glob, {
+    query = text,
+    mode = "regex",
+    no_case = insensitive and true or false,
+  })
 end
 
 ---@param text string
@@ -393,14 +490,17 @@ end
 ---@param insensitive? boolean
 ---@return plugins.projectsearch.resultsview?
 function projectsearch.search_fuzzy(text, path, insensitive)
-  if insensitive then text = text:lower() end
   return begin_search(path, text, function(line_text)
     if insensitive then
-      return common.fuzzy_match(line_text:lower(), text) and 1
+      return common.fuzzy_match(line_text:lower(), text:lower()) and 1
     else
       return common.fuzzy_match(line_text, text) and 1
     end
-  end, projectsearch.pending_path_glob)
+  end, projectsearch.pending_path_glob, {
+    query = text,
+    mode = "fuzzy",
+    no_case = insensitive and true or false,
+  })
 end
 
 

@@ -11,6 +11,12 @@ local RootView = require "core.rootview"
 local CommandView = require "core.commandview"
 local DocView = require "core.docview"
 local Dirwatch = require "core.dirwatch"
+local native_project_fs = nil
+
+do
+  local ok, mod = pcall(require, "project_fs")
+  if ok then native_project_fs = mod end
+end
 
 config.plugins.treeview = common.merge({
   -- Default treeview width
@@ -120,21 +126,37 @@ function TreeView:get_cached(project, path)
   end
   if t.expanded and t.type == "dir" and not t.files then
     t.files = {}
-    for i, file in ipairs(system.list_dir(path)) do
-      local l = path .. PATHSEP .. file
-      local f
-      if self.show_ignored then
-        f = system.get_file_info(l)
-      else
-        f = project:get_file_info(l)
+    if native_project_fs then
+      for _, entry in ipairs(native_project_fs.list_dir(path, { show_hidden = self.show_hidden })) do
+        local f = {
+          name = entry.name,
+          abs_filename = entry.abs_filename,
+          type = entry.type,
+          size = entry.size,
+          ignored = self.show_ignored and project:is_ignored({ type = entry.type, size = entry.size }, entry.abs_filename)
+        }
+        if self.show_ignored or not f.ignored then
+          table.insert(t.files, f)
+        end
+        self.cache[entry.abs_filename] = nil
       end
-      if f and f.type then
-        f.name = file
-        f.abs_filename = l
-        f.ignored = self.show_ignored and project:is_ignored(f, l)
-        table.insert(t.files, f)
+    else
+      for i, file in ipairs(system.list_dir(path)) do
+        local l = path .. PATHSEP .. file
+        local f
+        if self.show_ignored then
+          f = system.get_file_info(l)
+        else
+          f = project:get_file_info(l)
+        end
+        if f and f.type then
+          f.name = file
+          f.abs_filename = l
+          f.ignored = self.show_ignored and project:is_ignored(f, l)
+          table.insert(t.files, f)
+        end
+        self.cache[l] = nil
       end
-      self.cache[l] = nil
     end
     table.sort(t.files, function(a, b) return system.path_compare(a.name, a.type, b.name, b.type) end)
   end

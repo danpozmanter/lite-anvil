@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.7.0] - 2026-03-14 — Native search, tree, and document/buffer functionality.
+
+* Moved tree directory listing into the Rust core.
+* Added Rust file & project search, replace, and offset helper.
+* Moved some document/buffer functions to Rust.
+
 ## [0.6.0] - 2026-03-14 — Native tokenizer, swap.
 
 * Moved tokenization from Lua to Rust.

@@ -6,6 +6,12 @@ local command = require "core.command"
 local config  = require "core.config"
 local style   = require "core.style"
 local View    = require "core.view"
+local native_project_search = nil
+
+do
+  local ok, mod = pcall(require, "project_search")
+  if ok then native_project_search = mod end
+end
 
 config.plugins.projectreplace = common.merge({
   backup_originals = true,
@@ -17,7 +23,7 @@ function ReplaceView:__tostring() return "ReplaceView" end
 
 ReplaceView.context = "session"
 
-function ReplaceView:new(path, search, replace, fn_find, fn_apply, path_glob)
+function ReplaceView:new(path, search, replace, fn_find, fn_apply, path_glob, native_search_opts, native_replace_opts)
   ReplaceView.super.new(self)
   self.scrollable    = true
   self.max_h_scroll  = 0
@@ -35,6 +41,8 @@ function ReplaceView:new(path, search, replace, fn_find, fn_apply, path_glob)
   self.replaced_count = 0
   self.replaced_files = 0
   self.operation      = "replace"
+  self.native_search_opts = native_search_opts
+  self.native_replace_opts = native_replace_opts
   self:begin_scan()
 end
 
@@ -109,6 +117,41 @@ function ReplaceView:begin_scan()
   self.phase         = "scanning"
   self.last_file_idx = 1
 
+  if native_project_search and self.native_search_opts then
+    local handle = native_project_search.search(self.native_search_opts)
+    self.last_file_idx = #(self.native_search_opts.files or {})
+    core.add_thread(function()
+      while true do
+        local polled = native_project_search.poll(handle, 128)
+        if polled and polled.error then
+          core.error("%s", polled.error)
+          self.phase = "confirming"
+          break
+        end
+        if polled and polled.results then
+          for _, item in ipairs(polled.results) do
+            self.results[#self.results + 1] = {
+              file = item.file,
+              text = item.text,
+              line = item.line,
+              col = item.col,
+            }
+          end
+          core.redraw = true
+        end
+        if polled and polled.done then
+          self.phase = "confirming"
+          self.brightness = 100
+          core.redraw = true
+          break
+        end
+        coroutine.yield(0.01)
+      end
+    end, self.results)
+    self.scroll.to.y = 0
+    return
+  end
+
   core.add_thread(function()
     local i = 1
     for _, project in ipairs(core.projects) do
@@ -137,6 +180,16 @@ function ReplaceView:apply_replace()
   core.redraw = true
 
   core.add_thread(function()
+    if native_project_search and self.native_replace_opts then
+      local stats = native_project_search.replace(self.native_replace_opts)
+      self.replaced_count = stats.replaced_count or 0
+      self.replaced_files = stats.replaced_files or 0
+      self.phase = "done"
+      self.brightness = 100
+      core.redraw = true
+      return
+    end
+
     local files = {}
     local seen  = {}
     for _, item in ipairs(self.results) do
@@ -479,15 +532,48 @@ local function get_selected_text()
   end
 end
 
-local function open_replace_view(path, search, replace, fn_find, fn_apply, path_glob, operation)
+local function open_replace_view(path, search, replace, fn_find, fn_apply, path_glob, operation, native_search_opts, native_replace_opts)
   if search == "" then
     core.error("Expected non-empty search string")
     return
   end
-  local rv = ReplaceView(path, search, replace, fn_find, fn_apply, path_glob)
+  local rv = ReplaceView(path, search, replace, fn_find, fn_apply, path_glob, native_search_opts, native_replace_opts)
   rv.operation = operation or "replace"
   core.root_view:get_active_node_default():add_view(rv)
   return rv
+end
+
+local function collect_native_files(path, path_glob)
+  if not native_project_search then
+    return nil
+  end
+  local roots = {}
+  if path then
+    local info = system.get_file_info(path)
+    if info and info.type == "dir" then
+      roots[1] = path
+    end
+  end
+  if #roots == 0 then
+    for _, project in ipairs(core.projects) do
+      roots[#roots + 1] = project.path
+    end
+  end
+  local files = native_project_search.collect_files(roots, {
+    show_hidden = false,
+    max_size_bytes = config.file_size_limit * 1e6,
+    path_glob = path_glob,
+  })
+  if path and (not system.get_file_info(path) or system.get_file_info(path).type ~= "dir") then
+    local filtered = {}
+    for _, file in ipairs(files) do
+      if file:find(path, 1, true) == 1 then
+        filtered[#filtered + 1] = file
+      end
+    end
+    files = filtered
+  end
+  return files
 end
 
 local function prompt_path_glob(submit)
@@ -576,7 +662,21 @@ command.add(nil, {
                   return plain_replace(content, search, replace)
                 end,
                 path_glob,
-                "replace"
+                "replace",
+                native_project_search and {
+                  files = collect_native_files(path, path_glob) or {},
+                  query = search,
+                  mode = "plain",
+                  no_case = false,
+                } or nil,
+                native_project_search and {
+                  files = collect_native_files(path, path_glob) or {},
+                  mode = "plain",
+                  query = search,
+                  replace = replace,
+                  no_case = false,
+                  backup_originals = config.plugins.projectreplace.backup_originals ~= false,
+                } or nil
               )
             end
           })
@@ -601,7 +701,21 @@ command.add(nil, {
                   return regex_replace(content, re, replace)
                 end,
                 path_glob,
-                "replace"
+                "replace",
+                native_project_search and {
+                  files = collect_native_files(path, path_glob) or {},
+                  query = search,
+                  mode = "regex",
+                  no_case = false,
+                } or nil,
+                native_project_search and {
+                  files = collect_native_files(path, path_glob) or {},
+                  mode = "regex",
+                  query = search,
+                  replace = replace,
+                  no_case = false,
+                  backup_originals = config.plugins.projectreplace.backup_originals ~= false,
+                } or nil
               )
             end
           })
@@ -654,7 +768,20 @@ command.add(nil, {
                   return swap_replace(content, matcher_a, matcher_b, opts.text_a, opts.text_b)
                 end,
                 opts.path_glob,
-                "swap"
+                "swap",
+                nil,
+                native_project_search and {
+                  files = collect_native_files(opts.path, opts.path_glob) or {},
+                  mode = "swap",
+                  query = opts.text_a,
+                  replace = opts.text_b,
+                  no_case = not opts.a_case,
+                  backup_originals = config.plugins.projectreplace.backup_originals ~= false,
+                  query_b = opts.text_b,
+                  query_b_regex = opts.b_regex,
+                  query_b_case = opts.b_case,
+                  query_a_regex = opts.a_regex,
+                } or nil
               )
             end)
           end

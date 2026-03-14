@@ -7,6 +7,14 @@ local style = require "core.style"
 local DocView = require "core.docview"
 local CommandView = require "core.commandview"
 local StatusView = require "core.statusview"
+local doc_native = nil
+
+do
+  local ok, mod = pcall(require, "doc_native")
+  if ok then
+    doc_native = mod
+  end
+end
 
 local last_view, last_fn, last_text, last_sel
 
@@ -136,6 +144,16 @@ local function replace(kind, default, fn)
   })
 end
 
+local function native_replace_text(text, old, new, regex_mode)
+  if not doc_native then
+    return nil
+  end
+  local result = doc_native.replace(text, old, new, {
+    regex = regex_mode and true or false,
+  })
+  return result.text, result.count
+end
+
 local function has_selection()
   return core.active_view:is(DocView) and core.active_view.doc:has_selection()
 end
@@ -252,7 +270,15 @@ local function find_replace(in_selection)
   end
   replace("Text", l1 == l2 and selected_text or "", function(text, old, new)
     if not find_regex then
+      local native_text, native_count = native_replace_text(text, old, new, false)
+      if native_text ~= nil then
+        return native_text, native_count
+      end
       return text:gsub(old:gsub("%W", "%%%1"), new:gsub("%%", "%%%%"), nil)
+    end
+    local native_text, native_count = native_replace_text(text, old, new, true)
+    if native_text ~= nil then
+      return native_text, native_count
     end
     local result, matches = regex.gsub(regex.compile(old, "m"), text, new)
     return result, matches

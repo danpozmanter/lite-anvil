@@ -1,4 +1,12 @@
 local search = {}
+local doc_native = nil
+
+do
+  local ok, mod = pcall(require, "doc_native")
+  if ok then
+    doc_native = mod
+  end
+end
 
 local default_opt = {}
 
@@ -43,6 +51,21 @@ end
 
 function search.find(doc, line, col, text, opt)
   doc, line, col, text, opt = init_args(doc, line, col, text, opt)
+  if doc_native and not opt.pattern and not opt.reverse then
+    local l1, c1, l2, c2 = doc_native.find(doc.lines, line, col, text, {
+      no_case = opt.no_case and true or false,
+      regex = opt.regex and true or false,
+    })
+    if l1 then
+      return l1, c1, l2, c2
+    end
+    if opt.wrap then
+      return doc_native.find(doc.lines, 1, 1, text, {
+        no_case = opt.no_case and true or false,
+        regex = opt.regex and true or false,
+      })
+    end
+  end
   local plain = not opt.pattern
   local pattern = text
   local search_func = string.find

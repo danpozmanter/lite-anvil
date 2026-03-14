@@ -5,6 +5,14 @@ local core = require "core"
 local syntax = require "core.syntax"
 local config = require "core.config"
 local common = require "core.common"
+local doc_native = nil
+
+do
+  local ok, mod = pcall(require, "doc_native")
+  if ok then
+    doc_native = mod
+  end
+end
 
 ---@class core.doc : core.object
 local Doc = Object:extend()
@@ -315,6 +323,9 @@ end
 
 
 local function position_offset_byte(self, line, col, offset)
+  if doc_native then
+    return doc_native.position_offset(self.lines, line, col, offset)
+  end
   line, col = self:sanitize_position(line, col)
   col = col + offset
   while line > 1 and col < 1 do
