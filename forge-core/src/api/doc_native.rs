@@ -1,5 +1,9 @@
 use mlua::prelude::*;
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use pcre2::bytes::Regex;
+use std::collections::HashMap;
+use std::fs;
 
 #[derive(Clone)]
 struct EditRecord {
@@ -9,6 +13,36 @@ struct EditRecord {
     line2: usize,
     col2: usize,
     text: String,
+}
+
+struct BufferState {
+    lines: Vec<String>,
+    selections: Vec<usize>,
+    undo: Vec<Vec<u8>>,
+    redo: Vec<Vec<u8>>,
+    change_id: i64,
+    crlf: bool,
+}
+
+static BUFFERS: Lazy<Mutex<HashMap<u64, BufferState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static NEXT_BUFFER_ID: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(1));
+
+fn next_buffer_id() -> u64 {
+    let mut next = NEXT_BUFFER_ID.lock();
+    let id = *next;
+    *next += 1;
+    id
+}
+
+fn default_buffer_state() -> BufferState {
+    BufferState {
+        lines: vec!["\n".to_string()],
+        selections: vec![1, 1, 1, 1],
+        undo: Vec::new(),
+        redo: Vec::new(),
+        change_id: 1,
+        crlf: false,
+    }
 }
 
 fn get_lines(lines: LuaTable) -> LuaResult<Vec<String>> {
@@ -41,6 +75,26 @@ fn set_selections(lua: &Lua, selections: &[usize]) -> LuaResult<LuaTable> {
         out.raw_set((idx + 1) as i64, *value)?;
     }
     Ok(out)
+}
+
+fn buffer_snapshot(lua: &Lua, state: &BufferState) -> LuaResult<LuaTable> {
+    let out = lua.create_table()?;
+    out.set("lines", set_lines(lua, &state.lines)?)?;
+    out.set("selections", set_selections(lua, &state.selections)?)?;
+    out.set("change_id", state.change_id)?;
+    out.set("crlf", state.crlf)?;
+    Ok(out)
+}
+
+fn with_buffer_mut<T, F>(buffer_id: u64, f: F) -> LuaResult<T>
+where
+    F: FnOnce(&mut BufferState) -> LuaResult<T>,
+{
+    let mut buffers = BUFFERS.lock();
+    let state = buffers
+        .get_mut(&buffer_id)
+        .ok_or_else(|| LuaError::RuntimeError("unknown native doc buffer".to_string()))?;
+    f(state)
 }
 
 fn split_lines(text: &str) -> Vec<String> {
@@ -625,6 +679,178 @@ fn apply_packed_result(
     )
 }
 
+fn clamp_history(history: &mut Vec<Vec<u8>>) {
+    const MAX_UNDOS: usize = 10_000;
+    if history.len() > MAX_UNDOS {
+        let drop_count = history.len() - MAX_UNDOS;
+        history.drain(0..drop_count);
+    }
+}
+
+fn apply_record_to_state(state: &mut BufferState, packed: &[u8], push_redo: bool) -> LuaResult<()> {
+    let (selection_restore, edits) = unpack_record(packed)?;
+    let current_selection = state.selections.clone();
+    let mut inverse = Vec::new();
+    for edit in &edits {
+        inverse.push(apply_single_edit(&mut state.lines, &mut state.selections, edit));
+    }
+    inverse.reverse();
+    let mut restored = selection_restore;
+    sanitize_selections(&state.lines, &mut restored);
+    state.selections = restored;
+    if push_redo {
+        state.redo.push(pack_record(&current_selection, &inverse));
+        clamp_history(&mut state.redo);
+        state.change_id -= 1;
+    } else {
+        state.undo.push(pack_record(&current_selection, &inverse));
+        clamp_history(&mut state.undo);
+        state.change_id += 1;
+    }
+    Ok(())
+}
+
+fn apply_insert_to_buffer(state: &mut BufferState, line: usize, col: usize, text: &str) -> isize {
+    let selection_restore = state.selections.clone();
+    let before_len = state.lines.len() as isize;
+    apply_insert_internal(&mut state.lines, &mut state.selections, line, col, text);
+    sanitize_selections(&state.lines, &mut state.selections);
+    let (line2, col2) = position_offset(&state.lines, line, col, text.len() as isize);
+    state.undo.push(pack_record(
+        &selection_restore,
+        &[EditRecord {
+            kind: b'r',
+            line1: line,
+            col1: col,
+            line2,
+            col2,
+            text: String::new(),
+        }],
+    ));
+    clamp_history(&mut state.undo);
+    state.redo.clear();
+    state.change_id += 1;
+    state.lines.len() as isize - before_len
+}
+
+fn apply_remove_to_buffer(
+    state: &mut BufferState,
+    line1: usize,
+    col1: usize,
+    line2: usize,
+    col2: usize,
+) -> isize {
+    let selection_restore = state.selections.clone();
+    let before_len = state.lines.len() as isize;
+    let removed = get_text(&state.lines, line1, col1, line2, col2, false);
+    apply_remove_internal(&mut state.lines, &mut state.selections, line1, col1, line2, col2);
+    sanitize_selections(&state.lines, &mut state.selections);
+    state.undo.push(pack_record(
+        &selection_restore,
+        &[EditRecord {
+            kind: b'i',
+            line1,
+            col1,
+            line2: line1,
+            col2: col1,
+            text: removed,
+        }],
+    ));
+    clamp_history(&mut state.undo);
+    state.redo.clear();
+    state.change_id += 1;
+    state.lines.len() as isize - before_len
+}
+
+fn apply_edits_to_buffer(state: &mut BufferState, edits: LuaTable) -> LuaResult<isize> {
+    let selection_restore = state.selections.clone();
+    let before_len = state.lines.len() as isize;
+    let mut inverse = Vec::new();
+    for value in edits.sequence_values::<LuaTable>() {
+        let edit = value?;
+        let line1 = edit.get::<usize>("line1")?;
+        let col1 = edit.get::<usize>("col1")?;
+        let line2 = edit.get::<usize>("line2")?;
+        let col2 = edit.get::<usize>("col2")?;
+        let text = edit.get::<Option<String>>("text")?.unwrap_or_default();
+        if line1 != line2 || col1 != col2 {
+            let removed = get_text(&state.lines, line1, col1, line2, col2, false);
+            apply_remove_internal(&mut state.lines, &mut state.selections, line1, col1, line2, col2);
+            inverse.push(EditRecord {
+                kind: b'i',
+                line1,
+                col1,
+                line2: line1,
+                col2: col1,
+                text: removed,
+            });
+        }
+        if !text.is_empty() {
+            apply_insert_internal(&mut state.lines, &mut state.selections, line1, col1, &text);
+            let (end_line, end_col) = position_offset(&state.lines, line1, col1, text.len() as isize);
+            inverse.push(EditRecord {
+                kind: b'r',
+                line1,
+                col1,
+                line2: end_line,
+                col2: end_col,
+                text: String::new(),
+            });
+        }
+    }
+    inverse.reverse();
+    sanitize_selections(&state.lines, &mut state.selections);
+    state.undo.push(pack_record(&selection_restore, &inverse));
+    clamp_history(&mut state.undo);
+    state.redo.clear();
+    state.change_id += 1;
+    Ok(state.lines.len() as isize - before_len)
+}
+
+fn load_file_into_state(state: &mut BufferState, filename: &str) -> LuaResult<()> {
+    let bytes = fs::read(filename).map_err(|e| LuaError::RuntimeError(e.to_string()))?;
+    let content = String::from_utf8_lossy(&bytes).to_string();
+    state.lines.clear();
+    state.crlf = content.contains("\r\n");
+    if content.is_empty() {
+        state.lines.push("\n".to_string());
+    } else {
+        for line in content.split_inclusive('\n') {
+            let line = if line.ends_with("\r\n") {
+                format!("{}\n", &line[..line.len() - 2])
+            } else {
+                line.to_string()
+            };
+            state.lines.push(line);
+        }
+        if !content.ends_with('\n') {
+            if let Some(last) = state.lines.last_mut() {
+                last.push('\n');
+            }
+        }
+        if state.lines.is_empty() {
+            state.lines.push("\n".to_string());
+        }
+    }
+    state.selections = vec![1, 1, 1, 1];
+    state.undo.clear();
+    state.redo.clear();
+    state.change_id = 1;
+    Ok(())
+}
+
+fn save_state_to_file(state: &BufferState, filename: &str, crlf: bool) -> LuaResult<()> {
+    let mut text = String::new();
+    for line in &state.lines {
+        if crlf {
+            text.push_str(&line.replace('\n', "\r\n"));
+        } else {
+            text.push_str(line);
+        }
+    }
+    fs::write(filename, text).map_err(|e| LuaError::RuntimeError(e.to_string()))
+}
+
 pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     let module = lua.create_table()?;
 
@@ -766,6 +992,152 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
         )?,
     )?;
 
+    module.set(
+        "buffer_new",
+        lua.create_function(|_, ()| {
+            let id = next_buffer_id();
+            BUFFERS.lock().insert(id, default_buffer_state());
+            Ok(id)
+        })?,
+    )?;
+
+    module.set(
+        "buffer_reset",
+        lua.create_function(|lua, buffer_id: u64| {
+            with_buffer_mut(buffer_id, |state| {
+                *state = default_buffer_state();
+                buffer_snapshot(lua, state)
+            })
+        })?,
+    )?;
+
+    module.set(
+        "buffer_free",
+        lua.create_function(|_, buffer_id: u64| Ok(BUFFERS.lock().remove(&buffer_id).is_some()))?,
+    )?;
+
+    module.set(
+        "buffer_snapshot",
+        lua.create_function(|lua, buffer_id: u64| {
+            with_buffer_mut(buffer_id, |state| buffer_snapshot(lua, state))
+        })?,
+    )?;
+
+    module.set(
+        "buffer_set_selections",
+        lua.create_function(|_, (buffer_id, selections): (u64, LuaTable)| {
+            with_buffer_mut(buffer_id, |state| {
+                state.selections = get_selections(selections)?;
+                sanitize_selections(&state.lines, &mut state.selections);
+                Ok(true)
+            })
+        })?,
+    )?;
+
+    module.set(
+        "buffer_position_offset",
+        lua.create_function(|_, (buffer_id, line, col, offset): (u64, usize, usize, isize)| {
+            with_buffer_mut(buffer_id, |state| Ok(position_offset(&state.lines, line, col, offset)))
+        })?,
+    )?;
+
+    module.set(
+        "buffer_get_text",
+        lua.create_function(
+            |_, (buffer_id, line1, col1, line2, col2, inclusive): (u64, usize, usize, usize, usize, Option<bool>)| {
+                with_buffer_mut(buffer_id, |state| {
+                    Ok(get_text(&state.lines, line1, col1, line2, col2, inclusive.unwrap_or(false)))
+                })
+            },
+        )?,
+    )?;
+
+    module.set(
+        "buffer_get_change_id",
+        lua.create_function(|_, buffer_id: u64| {
+            with_buffer_mut(buffer_id, |state| Ok(state.change_id))
+        })?,
+    )?;
+
+    module.set(
+        "buffer_load",
+        lua.create_function(|lua, (buffer_id, filename): (u64, String)| {
+            with_buffer_mut(buffer_id, |state| {
+                load_file_into_state(state, &filename)?;
+                buffer_snapshot(lua, state)
+            })
+        })?,
+    )?;
+
+    module.set(
+        "buffer_save",
+        lua.create_function(|_, (buffer_id, filename, crlf): (u64, String, bool)| {
+            with_buffer_mut(buffer_id, |state| save_state_to_file(state, &filename, crlf).map(|_| true))
+        })?,
+    )?;
+
+    module.set(
+        "buffer_apply_insert",
+        lua.create_function(|lua, (buffer_id, line, col, text): (u64, usize, usize, String)| {
+            with_buffer_mut(buffer_id, |state| {
+                let line_delta = apply_insert_to_buffer(state, line, col, &text);
+                let out = buffer_snapshot(lua, state)?;
+                out.set("line_delta", line_delta)?;
+                Ok(out)
+            })
+        })?,
+    )?;
+
+    module.set(
+        "buffer_apply_remove",
+        lua.create_function(
+            |lua, (buffer_id, line1, col1, line2, col2): (u64, usize, usize, usize, usize)| {
+                with_buffer_mut(buffer_id, |state| {
+                    let line_delta = apply_remove_to_buffer(state, line1, col1, line2, col2);
+                    let out = buffer_snapshot(lua, state)?;
+                    out.set("line_delta", line_delta)?;
+                    Ok(out)
+                })
+            },
+        )?,
+    )?;
+
+    module.set(
+        "buffer_apply_edits",
+        lua.create_function(|lua, (buffer_id, edits): (u64, LuaTable)| {
+            with_buffer_mut(buffer_id, |state| {
+                let line_delta = apply_edits_to_buffer(state, edits)?;
+                let out = buffer_snapshot(lua, state)?;
+                out.set("line_delta", line_delta)?;
+                Ok(out)
+            })
+        })?,
+    )?;
+
+    module.set(
+        "buffer_undo",
+        lua.create_function(|lua, buffer_id: u64| {
+            with_buffer_mut(buffer_id, |state| {
+                if let Some(record) = state.undo.pop() {
+                    apply_record_to_state(state, &record, true)?;
+                }
+                buffer_snapshot(lua, state)
+            })
+        })?,
+    )?;
+
+    module.set(
+        "buffer_redo",
+        lua.create_function(|lua, buffer_id: u64| {
+            with_buffer_mut(buffer_id, |state| {
+                if let Some(record) = state.redo.pop() {
+                    apply_record_to_state(state, &record, false)?;
+                }
+                buffer_snapshot(lua, state)
+            })
+        })?,
+    )?;
+
     Ok(module)
 }
 
@@ -815,5 +1187,40 @@ mod tests {
         let (_, reverse_edits) = unpack_record(&reverse).unwrap();
         apply_single_edit(&mut lines, &mut selections, &reverse_edits[0]);
         assert_eq!(lines, original_lines);
+    }
+
+    #[test]
+    fn buffer_undo_and_redo_round_trip() {
+        let mut state = default_buffer_state();
+        apply_insert_to_buffer(&mut state, 1, 1, "abc");
+        assert_eq!(state.lines, vec!["abc\n".to_string()]);
+        assert_eq!(state.change_id, 2);
+
+        let record = state.undo.pop().unwrap();
+        apply_record_to_state(&mut state, &record, true).unwrap();
+        assert_eq!(state.lines, vec!["\n".to_string()]);
+        assert_eq!(state.change_id, 1);
+
+        let redo = state.redo.pop().unwrap();
+        apply_record_to_state(&mut state, &redo, false).unwrap();
+        assert_eq!(state.lines, vec!["abc\n".to_string()]);
+        assert_eq!(state.change_id, 2);
+    }
+
+    #[test]
+    fn buffer_load_and_save_round_trip() {
+        let path = std::env::temp_dir().join("lite_anvil_doc_native_test.txt");
+        std::fs::write(&path, "one\r\ntwo\r\n").unwrap();
+
+        let mut state = default_buffer_state();
+        load_file_into_state(&mut state, path.to_str().unwrap()).unwrap();
+        assert_eq!(state.lines, vec!["one\n".to_string(), "two\n".to_string()]);
+        assert!(state.crlf);
+
+        save_state_to_file(&state, path.to_str().unwrap(), true).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(saved, "one\r\ntwo\r\n");
+
+        let _ = std::fs::remove_file(path);
     }
 }

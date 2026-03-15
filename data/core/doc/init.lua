@@ -27,6 +27,29 @@ local function split_lines(text)
   return res
 end
 
+local function ensure_native_buffer(self)
+  if doc_native and not self.buffer_id then
+    self.buffer_id = doc_native.buffer_new()
+  end
+end
+
+local function sync_native_selections(self)
+  if doc_native and self.buffer_id then
+    doc_native.buffer_set_selections(self.buffer_id, self.selections)
+  end
+end
+
+local function apply_native_snapshot(self, snapshot)
+  if not snapshot then
+    return
+  end
+  self.lines = snapshot.lines
+  self.selections = snapshot.selections
+  self.undo_stack.idx = snapshot.change_id
+  self.redo_stack.idx = snapshot.change_id
+  self.crlf = snapshot.crlf or self.crlf
+end
+
 
 function Doc:new(filename, abs_filename, new_file)
   self.new_file = new_file
@@ -43,6 +66,7 @@ function Doc:new(filename, abs_filename, new_file)
 end
 
 function Doc:reset()
+  ensure_native_buffer(self)
   self.lines = { "\n" }
   self.selections = { 1, 1, 1, 1 }
   self.last_selection = 1
@@ -51,6 +75,9 @@ function Doc:reset()
   self.clean_change_id = 1
   self.highlighter = Highlighter(self)
   self.overwrite = false
+  if doc_native and self.buffer_id then
+    apply_native_snapshot(self, doc_native.buffer_reset(self.buffer_id))
+  end
   self:reset_syntax()
 end
 
@@ -80,6 +107,17 @@ function Doc:set_filename(filename, abs_filename)
 end
 
 function Doc:load(filename)
+  ensure_native_buffer(self)
+  if doc_native and self.buffer_id then
+    self:reset()
+    local snapshot = doc_native.buffer_load(self.buffer_id, filename)
+    apply_native_snapshot(self, snapshot)
+    for i = 1, #self.lines do
+      self.highlighter.lines[i] = false
+    end
+    self:reset_syntax()
+    return
+  end
   local fp = assert(io.open(filename, "rb"))
   self:reset()
   self.lines = {}
@@ -116,6 +154,14 @@ function Doc:save(filename, abs_filename)
     abs_filename = self.abs_filename
   else
     assert(self.filename or abs_filename, "calling save on unnamed doc without absolute path")
+  end
+
+  if doc_native and self.buffer_id then
+    doc_native.buffer_save(self.buffer_id, abs_filename, self.crlf)
+    self:set_filename(filename, abs_filename)
+    self.new_file = false
+    self:clean()
+    return
   end
 
   local fp
@@ -169,6 +215,9 @@ function Doc:get_indent_info()
 end
 
 function Doc:get_change_id()
+  if doc_native and self.buffer_id then
+    return doc_native.buffer_get_change_id(self.buffer_id)
+  end
   return self.undo_stack.idx
 end
 
@@ -243,6 +292,7 @@ function Doc:set_selections(idx, line1, col1, line2, col2, swap, rm)
   line1, col1 = self:sanitize_position(line1, col1)
   line2, col2 = self:sanitize_position(line2 or line1, col2 or col1)
   common.splice(self.selections, (idx - 1) * 4 + 1, rm == nil and 4 or rm, { line1, col1, line2, col2 })
+  sync_native_selections(self)
 end
 
 function Doc:add_selection(line1, col1, line2, col2, swap)
@@ -263,12 +313,14 @@ function Doc:remove_selection(idx)
     self.last_selection = self.last_selection - 1
   end
   common.splice(self.selections, (idx - 1) * 4 + 1, 4)
+  sync_native_selections(self)
 end
 
 function Doc:set_selection(line1, col1, line2, col2, swap)
   self.selections = {}
   self:set_selections(1, line1, col1, line2, col2, swap)
   self.last_selection = 1
+  sync_native_selections(self)
 end
 
 function Doc:merge_cursors(idx)
@@ -285,6 +337,7 @@ function Doc:merge_cursors(idx)
       end
     end
   end
+  sync_native_selections(self)
 end
 
 local function selection_iterator(invariant, idx)
@@ -323,8 +376,8 @@ end
 
 
 local function position_offset_byte(self, line, col, offset)
-  if doc_native then
-    return doc_native.position_offset(self.lines, line, col, offset)
+  if doc_native and self.buffer_id then
+    return doc_native.buffer_position_offset(self.buffer_id, line, col, offset)
   end
   line, col = self:sanitize_position(line, col)
   col = col + offset
@@ -368,6 +421,12 @@ end
 ---@param inclusive boolean? Whether or not to return the character at the last position
 ---@return string
 function Doc:get_text(line1, col1, line2, col2, inclusive)
+  if doc_native and self.buffer_id then
+    line1, col1 = self:sanitize_position(line1, col1)
+    line2, col2 = self:sanitize_position(line2, col2)
+    line1, col1, line2, col2 = sort_positions(line1, col1, line2, col2)
+    return doc_native.buffer_get_text(self.buffer_id, line1, col1, line2, col2, inclusive)
+  end
   line1, col1 = self:sanitize_position(line1, col1)
   line2, col2 = self:sanitize_position(line2, col2)
   line1, col1, line2, col2 = sort_positions(line1, col1, line2, col2)
@@ -399,9 +458,10 @@ local function apply_native_edit_result(self, result, undo_stack, time, line_hin
     return false
   end
   local old_lines = #self.lines
-  self.lines = result.lines
-  self.selections = result.selections
-  push_undo(undo_stack, time, "packed", result.undo)
+  apply_native_snapshot(self, result)
+  if result.undo and not self.buffer_id then
+    push_undo(undo_stack, time, "packed", result.undo)
+  end
   local line_delta = result.line_delta or (#self.lines - old_lines)
   if line_delta > 0 then
     self.highlighter:insert_notify(line_hint, line_delta)
@@ -455,8 +515,9 @@ end
 
 
 function Doc:raw_insert(line, col, text, undo_stack, time)
-  if doc_native then
-    local result = doc_native.apply_insert(self.lines, self.selections, line, col, text)
+  if doc_native and self.buffer_id then
+    sync_native_selections(self)
+    local result = doc_native.buffer_apply_insert(self.buffer_id, line, col, text)
     if apply_native_edit_result(self, result, undo_stack, time, line) then
       return
     end
@@ -496,8 +557,9 @@ function Doc:raw_insert(line, col, text, undo_stack, time)
 end
 
 function Doc:raw_remove(line1, col1, line2, col2, undo_stack, time)
-  if doc_native then
-    local result = doc_native.apply_remove(self.lines, self.selections, line1, col1, line2, col2)
+  if doc_native and self.buffer_id then
+    sync_native_selections(self)
+    local result = doc_native.buffer_apply_remove(self.buffer_id, line1, col1, line2, col2)
     if apply_native_edit_result(self, result, undo_stack, time, line1) then
       return
     end
@@ -581,22 +643,35 @@ function Doc:remove(line1, col1, line2, col2)
 end
 
 function Doc:undo()
+  if doc_native and self.buffer_id then
+    apply_native_snapshot(self, doc_native.buffer_undo(self.buffer_id))
+    self.highlighter:soft_reset()
+    self:on_text_change("undo")
+    return
+  end
   pop_undo(self, self.undo_stack, self.redo_stack, false)
 end
 
 function Doc:redo()
+  if doc_native and self.buffer_id then
+    apply_native_snapshot(self, doc_native.buffer_redo(self.buffer_id))
+    self.highlighter:soft_reset()
+    self:on_text_change("undo")
+    return
+  end
   pop_undo(self, self.redo_stack, self.undo_stack, false)
 end
 
 function Doc:apply_edits(edits)
-  if not doc_native or not edits or #edits == 0 then
+  if not doc_native or not self.buffer_id or not edits or #edits == 0 then
     return false
   end
   self.redo_stack = { idx = 1 }
   if self:get_change_id() < self.clean_change_id then
     self.clean_change_id = -1
   end
-  local result = doc_native.apply_edits(self.lines, self.selections, edits)
+  sync_native_selections(self)
+  local result = doc_native.buffer_apply_edits(self.buffer_id, edits)
   if not apply_native_edit_result(self, result, self.undo_stack, system.get_time(), edits[1].line1 or 1) then
     return false
   end
@@ -765,6 +840,10 @@ end
 
 -- For plugins to get notified when a document is closed
 function Doc:on_close()
+  if doc_native and self.buffer_id then
+    doc_native.buffer_free(self.buffer_id)
+    self.buffer_id = nil
+  end
   core.log_quiet("Closed doc \"%s\"", self:get_name())
 end
 

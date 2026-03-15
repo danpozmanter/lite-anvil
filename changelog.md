@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.9.0] - 2026-03-14 — Native text buffer core.
+
+* Moved the document text buffer core into Rust.
+* Moved document load/save, edit apply, and undo/redo into the native buffer path.
+* Kept the Lua `Doc` API as a thin wrapper over the native core for compatibility.
+
 ## [0.8.0] - 2026-03-14 — Native edit, autocomplete, and watch paths.
 
 * Moved document edits and packed undo records into the Rust core.
