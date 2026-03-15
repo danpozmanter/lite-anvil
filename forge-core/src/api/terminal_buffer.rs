@@ -90,9 +90,8 @@ impl TerminalBufferInner {
             let src_idx = old_rows - 1 - i;
             let dst_idx = rows - 1 - i;
             if let Some(src) = old_screen.get(src_idx) {
-                for col in 0..old_cols.min(cols) {
-                    self.screen[dst_idx][col] = src[col].clone();
-                }
+                let copy_len = old_cols.min(cols);
+                self.screen[dst_idx][..copy_len].clone_from_slice(&src[..copy_len]);
             }
         }
 
@@ -280,62 +279,97 @@ impl TerminalBufferInner {
         }
     }
 
-    fn process_output(&mut self, text: &str) {
-        for ch in text.chars() {
+    fn decode_utf8_char(bytes: &[u8], i: usize) -> (String, usize) {
+        let b = *bytes.get(i).unwrap_or(&0);
+        let end = if b < 0x80 {
+            i + 1
+        } else if b < 0xE0 {
+            (i + 2).min(bytes.len())
+        } else if b < 0xF0 {
+            (i + 3).min(bytes.len())
+        } else {
+            (i + 4).min(bytes.len())
+        };
+        (String::from_utf8_lossy(&bytes[i..end]).into_owned(), end)
+    }
+
+    fn process_output(&mut self, bytes: &[u8]) {
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
             match self.escape_state {
                 EscapeState::Osc => {
-                    if ch == '\u{7}' {
+                    if b == 7 {
                         self.escape_state = EscapeState::None;
-                    } else if ch == '\u{1b}' {
+                    } else if b == 27 {
                         self.osc_esc = true;
-                    } else if self.osc_esc && ch == '\\' {
+                    } else if self.osc_esc && b == 92 {
                         self.escape_state = EscapeState::None;
                         self.osc_esc = false;
                     } else {
                         self.osc_esc = false;
                     }
+                    i += 1;
                 }
                 EscapeState::Esc => {
-                    match ch {
-                        '[' => {
+                    match b {
+                        b'[' => {
                             self.escape_state = EscapeState::Csi;
                             self.escape_buffer.clear();
                         }
-                        ']' => {
+                        b']' => {
                             self.escape_state = EscapeState::Osc;
                             self.osc_esc = false;
                         }
-                        'c' => {
+                        b'c' => {
                             self.clear();
                             self.escape_state = EscapeState::None;
                         }
                         _ => self.escape_state = EscapeState::None,
                     }
+                    i += 1;
                 }
                 EscapeState::Csi => {
-                    self.escape_buffer.push(ch);
-                    if ('@'..='~').contains(&ch) {
+                    self.escape_buffer.push(b as char);
+                    if (b'@'..=b'~').contains(&b) {
                         let sequence = self.escape_buffer.clone();
                         self.execute_csi(&sequence);
                         self.escape_buffer.clear();
                         self.escape_state = EscapeState::None;
                     }
+                    i += 1;
                 }
-                EscapeState::None => match ch {
-                    '\u{1b}' => self.escape_state = EscapeState::Esc,
-                    '\r' => self.cursor_col = 1,
-                    '\n' => self.newline(),
-                    '\u{8}' => self.cursor_col = self.cursor_col.saturating_sub(1).max(1),
-                    '\t' => {
+                EscapeState::None => match b {
+                    27 => {
+                        self.escape_state = EscapeState::Esc;
+                        i += 1;
+                    }
+                    b'\r' => {
+                        self.cursor_col = 1;
+                        i += 1;
+                    }
+                    b'\n' => {
+                        self.newline();
+                        i += 1;
+                    }
+                    8 => {
+                        self.cursor_col = self.cursor_col.saturating_sub(1).max(1);
+                        i += 1;
+                    }
+                    b'\t' => {
                         let next_tab = (self.cursor_col + (8 - ((self.cursor_col - 1) % 8))).min(self.cols + 1);
                         while self.cursor_col < next_tab {
                             self.put_char(" ");
                         }
+                        i += 1;
                     }
-                    c if (c as u32) < 32 => {}
+                    0..=31 => {
+                        i += 1;
+                    }
                     _ => {
-                        let mut buf = [0u8; 4];
-                        self.put_char(ch.encode_utf8(&mut buf));
+                        let (ch, next) = Self::decode_utf8_char(bytes, i);
+                        self.put_char(&ch);
+                        i = next;
                     }
                 },
             }
@@ -419,8 +453,8 @@ impl LuaUserData for TerminalBuffer {
             this.0.lock().clear();
             Ok(true)
         });
-        methods.add_method("process_output", |_, this, text: String| {
-            this.0.lock().process_output(&text);
+        methods.add_method("process_output", |_, this, text: LuaString| {
+            this.0.lock().process_output(text.as_bytes().as_ref());
             Ok(true)
         });
         methods.add_method("set_palette", |_, this, (palette_table, default_fg): (LuaTable, LuaTable)| {
@@ -493,7 +527,7 @@ mod tests {
     #[test]
     fn processes_basic_output() {
         let mut buf = TerminalBufferInner::new(8, 2, 10, palette(), [255, 255, 255, 255]);
-        buf.process_output("abc");
+        buf.process_output(b"abc");
         assert_eq!(buf.screen[0][0].ch, "a");
         assert_eq!(buf.cursor_col, 4);
     }
@@ -501,14 +535,16 @@ mod tests {
     #[test]
     fn scrolls_into_history() {
         let mut buf = TerminalBufferInner::new(4, 1, 10, palette(), [255, 255, 255, 255]);
-        buf.process_output("one\ntwo\n");
+        buf.process_output(b"one\ntwo\n");
         assert!(!buf.history.is_empty());
     }
 
     #[test]
     fn applies_sgr_colors() {
-        let mut buf = TerminalBufferInner::new(4, 1, 10, palette(), [255, 255, 255, 255]);
-        buf.process_output("\u{1b}[31mx");
-        assert_eq!(buf.screen[0][0].fg, Some([255, 255, 255, 255]));
+        let mut colors = palette();
+        colors[1] = [255, 0, 0, 255];
+        let mut buf = TerminalBufferInner::new(4, 1, 10, colors, [255, 255, 255, 255]);
+        buf.process_output(b"\x1b[31mx");
+        assert_eq!(buf.screen[0][0].fg, Some([255, 0, 0, 255]));
     }
 }

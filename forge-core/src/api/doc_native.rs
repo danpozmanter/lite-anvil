@@ -193,8 +193,8 @@ fn get_text(
 
     let mut out = String::new();
     out.push_str(&lines[line1 - 1][col1 - 1..]);
-    for idx in line1..line2 - 1 {
-        out.push_str(&lines[idx]);
+    for line in lines.iter().take(line2 - 1).skip(line1) {
+        out.push_str(line);
     }
     out.push_str(&lines[line2 - 1][..col2.saturating_sub(col2_offset)]);
     out
@@ -835,8 +835,8 @@ fn load_file_into_state(state: &mut BufferState, filename: &str) -> LuaResult<()
         state.lines.push("\n".to_string());
     } else {
         for line in content.split_inclusive('\n') {
-            let line = if line.ends_with("\r\n") {
-                format!("{}\n", &line[..line.len() - 2])
+            let line = if let Some(stripped) = line.strip_suffix("\r\n") {
+                format!("{stripped}\n")
             } else {
                 line.to_string()
             };

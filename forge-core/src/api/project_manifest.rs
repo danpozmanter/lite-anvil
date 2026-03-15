@@ -25,15 +25,14 @@ fn normalize_root(root: &str) -> String {
 }
 
 fn build_files(root: &str, max_size_bytes: Option<u64>) -> Vec<String> {
-    let files = walk_files(
+    walk_files(
         &[root.to_string()],
         &WalkOptions {
             show_hidden: false,
             max_size_bytes,
             path_glob: None,
         },
-    );
-    files
+    )
 }
 
 fn ensure_manifest(root: &str, max_size_bytes: Option<u64>) -> LuaResult<()> {

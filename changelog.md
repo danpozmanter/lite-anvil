@@ -1,5 +1,10 @@
 # Change Log
 
+## [0.10.2] - 2026-03-15 — Terminal ANSI color fix & further fixes.
+
+* Fixed terminal ANSI color parsing by switching the native terminal parser back to byte-oriented processing.
+* Further fixes in terminal.
+
 ## [0.10.1] - 2026-03-14 — macOS terminal build fix & unsafe reduction.
 
 * Fixed the native terminal PTY build on macOS.

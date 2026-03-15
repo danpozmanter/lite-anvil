@@ -262,7 +262,14 @@ fn terminal_spawn(
     };
 
     let mut master_fd = INVALID_FD;
-    let pid = unsafe { libc::forkpty(&mut master_fd, std::ptr::null_mut(), std::ptr::null(), &winsz) };
+    let pid = unsafe {
+        libc::forkpty(
+            &mut master_fd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::from_ref(&winsz).cast_mut(),
+        )
+    };
     if pid < 0 {
         return Err(LuaError::RuntimeError(format!(
             "cannot create terminal pty: {}",

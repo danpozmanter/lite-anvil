@@ -147,7 +147,7 @@ fn allocate_syntax_id(registry: &mut SyntaxRegistry) -> usize {
     registry.next_id
 }
 
-fn compile_syntax_table(lua: &Lua, table: LuaTable) -> LuaResult<usize> {
+fn compile_syntax_table(table: LuaTable) -> LuaResult<usize> {
     let ptr = table.to_pointer() as usize;
     {
         let registry = REGISTRY.lock();
@@ -177,7 +177,7 @@ fn compile_syntax_table(lua: &Lua, table: LuaTable) -> LuaResult<usize> {
             let syntax_ref = match pattern.get::<LuaValue>("syntax")? {
                 LuaValue::Nil => None,
                 LuaValue::String(s) => Some(SyntaxRef::Selector(s.to_str()?.to_string())),
-                LuaValue::Table(t) => Some(SyntaxRef::Id(compile_syntax_table(lua, t)?)),
+                LuaValue::Table(t) => Some(SyntaxRef::Id(compile_syntax_table(t)?)),
                 _ => {
                     return Err(LuaError::RuntimeError(
                         "syntax reference must be a string or table".into(),
@@ -397,8 +397,8 @@ fn regex_find(
             let char_pos_2 = prefix_ulen(text, res[1]);
             res[0] = char_pos_1;
             res[1] = char_pos_2;
-            for idx in 2..res.len() {
-                res[idx] = prefix_ulen(text, res[idx].saturating_sub(1)) + 1;
+            for item in res.iter_mut().skip(2) {
+                *item = prefix_ulen(text, item.saturating_sub(1)) + 1;
             }
             Ok(res)
         }
@@ -408,7 +408,6 @@ fn regex_find(
 }
 
 fn find_text(
-    lua: &Lua,
     ctx: &NativeTokenizerCtx,
     text: &str,
     pattern: &PatternDef,
@@ -435,61 +434,95 @@ fn find_text(
         }
     };
 
-    loop {
-        if matcher.whole_line && offset > 1 {
-            return Ok(Vec::new());
-        }
-
-        let next = offset;
-        let anchored = at_start || matcher.whole_line;
-        let res = match &matcher.kind {
-            MatcherKind::LuaPattern { code } => {
-                let pattern_code = if anchored {
-                    format!("^{code}")
-                } else {
-                    code.clone()
-                };
-                parse_results(
-                    ctx.ufind
-                        .call::<LuaMultiValue>((text, pattern_code, next))?,
-                )?
-            }
-            MatcherKind::Regex { .. } => regex_find(matcher, text, next, anchored)?,
-        };
-
-        if res.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        if let Some(escape_byte) = escape_byte {
-            let mut count = 0usize;
-            let mut i = res[0].saturating_sub(1);
-            while i >= 1 {
-                let byte = text.as_bytes().get(i - 1).copied();
-                if byte != Some(escape_byte) {
-                    break;
-                }
-                count += 1;
-                if i == 1 {
-                    break;
-                }
-                i -= 1;
-            }
-            if count % 2 == 0 {
-                return Ok(res);
-            }
-            if at_start || !close {
-                return Ok(Vec::new());
-            }
-            let new_offset = res[0].saturating_add(1);
-            if new_offset <= offset {
-                return Ok(Vec::new());
-            }
-            return find_text(lua, ctx, text, pattern, new_offset, at_start, close);
-        }
-
-        return Ok(res);
+    if matcher.whole_line && offset > 1 {
+        return Ok(Vec::new());
     }
+
+    let next = offset;
+    let anchored = at_start || matcher.whole_line;
+    let res = match &matcher.kind {
+        MatcherKind::LuaPattern { code } => {
+            let pattern_code = if anchored {
+                format!("^{code}")
+            } else {
+                code.clone()
+            };
+            parse_results(ctx.ufind.call::<LuaMultiValue>((text, pattern_code, next))?)?
+        }
+        MatcherKind::Regex { .. } => regex_find(matcher, text, next, anchored)?,
+    };
+
+    if res.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if let Some(escape_byte) = escape_byte {
+        let mut count = 0usize;
+        let mut i = res[0].saturating_sub(1);
+        while i >= 1 {
+            let byte = text.as_bytes().get(i - 1).copied();
+            if byte != Some(escape_byte) {
+                break;
+            }
+            count += 1;
+            if i == 1 {
+                break;
+            }
+            i -= 1;
+        }
+        if count % 2 == 0 {
+            return Ok(res);
+        }
+        if at_start || !close {
+            return Ok(Vec::new());
+        }
+        let new_offset = res[0].saturating_add(1);
+        if new_offset <= offset {
+            return Ok(Vec::new());
+        }
+        return find_text(ctx, text, pattern, new_offset, at_start, close);
+    }
+
+    Ok(res)
+}
+
+type ResumeState = (Vec<(String, String)>, usize, Vec<u8>);
+
+fn tokens_from_lua(table: LuaTable) -> LuaResult<Vec<(String, String)>> {
+    let mut tokens = Vec::new();
+    let len = table.raw_len();
+    let mut idx = 1usize;
+    while idx < len {
+        let token_type: String = table.raw_get(idx)?;
+        let text: String = table.raw_get(idx + 1)?;
+        tokens.push((token_type, text));
+        idx += 2;
+    }
+    Ok(tokens)
+}
+
+fn resume_from_lua(value: Option<LuaValue>) -> LuaResult<Option<ResumeState>> {
+    let Some(LuaValue::Table(table)) = value else {
+        return Ok(None);
+    };
+
+    let tokens = tokens_from_lua(table.get("res")?)?;
+    let i = table.get::<usize>("i")?;
+    let state: LuaString = table.get("state")?;
+    Ok(Some((tokens, i, state.as_bytes().to_vec())))
+}
+
+fn resume_to_lua(
+    lua: &Lua,
+    tokens: &[(String, String)],
+    i: usize,
+    state: &[u8],
+) -> LuaResult<LuaTable> {
+    let out = lua.create_table()?;
+    out.set("res", tokens_to_lua(lua, tokens)?)?;
+    out.set("i", i)?;
+    out.set("state", lua.create_string(state)?)?;
+    Ok(out)
 }
 
 fn push_token(tokens: &mut Vec<(String, String)>, token_type: &str, text: &str) {
@@ -565,7 +598,7 @@ fn push_tokens(
 }
 
 fn resolve_syntax_id(
-    lua: &Lua,
+    _lua: &Lua,
     ctx: &NativeTokenizerCtx,
     syntax_ref: &SyntaxRef,
 ) -> LuaResult<usize> {
@@ -573,7 +606,7 @@ fn resolve_syntax_id(
         SyntaxRef::Id(id) => Ok(*id),
         SyntaxRef::Selector(selector) => {
             let table: LuaTable = ctx.syntax_get.call((selector.clone(), LuaValue::Nil))?;
-            compile_syntax_table(lua, table)
+            compile_syntax_table(table)
         }
     }
 }
@@ -647,44 +680,6 @@ fn tokens_to_lua(lua: &Lua, tokens: &[(String, String)]) -> LuaResult<LuaTable> 
     Ok(out)
 }
 
-fn tokens_from_lua(table: LuaTable) -> LuaResult<Vec<(String, String)>> {
-    let mut tokens = Vec::new();
-    let len = table.raw_len();
-    let mut idx = 1usize;
-    while idx + 1 <= len {
-        let token_type: String = table.raw_get(idx)?;
-        let text: String = table.raw_get(idx + 1)?;
-        tokens.push((token_type, text));
-        idx += 2;
-    }
-    Ok(tokens)
-}
-
-fn resume_from_lua(
-    value: Option<LuaValue>,
-) -> LuaResult<Option<(Vec<(String, String)>, usize, Vec<u8>)>> {
-    let Some(LuaValue::Table(table)) = value else {
-        return Ok(None);
-    };
-
-    let tokens = tokens_from_lua(table.get("res")?)?;
-    let i = table.get::<usize>("i")?;
-    let state: LuaString = table.get("state")?;
-    Ok(Some((tokens, i, state.as_bytes().to_vec())))
-}
-
-fn resume_to_lua(
-    lua: &Lua,
-    tokens: &[(String, String)],
-    i: usize,
-    state: &[u8],
-) -> LuaResult<LuaTable> {
-    let out = lua.create_table()?;
-    out.set("res", tokens_to_lua(lua, tokens)?)?;
-    out.set("i", i)?;
-    out.set("state", lua.create_string(state)?)?;
-    Ok(out)
-}
 
 fn tokenize_impl(
     lua: &Lua,
@@ -745,7 +740,7 @@ fn tokenize_impl(
             let current_syntax = get_syntax(syntax_state.current_syntax_id)?;
             let pattern_idx = syntax_state.current_pattern_idx - 1;
             if let Some(pattern) = current_syntax.patterns.get(pattern_idx) {
-                let find_results = find_text(lua, ctx, text, pattern, i, false, true)?;
+                let find_results = find_text(ctx, text, pattern, i, false, true)?;
                 let s = find_results.first().copied();
                 let e = find_results.get(1).copied();
                 let token_type = pattern
@@ -759,7 +754,7 @@ fn tokenize_impl(
                     let subsyntax_syntax = get_syntax(subsyntax_syntax_id)?;
                     if let Some(subsyntax_pattern) = subsyntax_syntax.patterns.get(sub_idx) {
                         let sub_find =
-                            find_text(lua, ctx, text, subsyntax_pattern, i, false, true)?;
+                            find_text(ctx, text, subsyntax_pattern, i, false, true)?;
                         let ss = sub_find.first().copied();
                         if let Some(ss) = ss {
                             if s.is_none() || ss < s.unwrap_or(usize::MAX) {
@@ -801,7 +796,7 @@ fn tokenize_impl(
             let Some(subsyntax_pattern) = subsyntax_syntax.patterns.get(sub_idx) else {
                 break;
             };
-            let find_results = find_text(lua, ctx, text, subsyntax_pattern, i, true, true)?;
+            let find_results = find_text(ctx, text, subsyntax_pattern, i, true, true)?;
             let s = find_results.first().copied();
             let e = find_results.get(1).copied();
             if let (Some(_), Some(e)) = (s, e) {
@@ -832,7 +827,7 @@ fn tokenize_impl(
         let current_syntax = get_syntax(syntax_state.current_syntax_id)?;
         let mut matched = false;
         for (n, pattern) in current_syntax.patterns.iter().enumerate() {
-            let find_results = find_text(lua, ctx, text, pattern, i, true, false)?;
+            let find_results = find_text(ctx, text, pattern, i, true, false)?;
             if !find_results.is_empty() {
                 if find_results[0] > find_results[1] {
                     continue;
@@ -902,7 +897,7 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     module.set(
         "register_syntax",
         lua.create_function(|lua, (name, spec): (String, LuaTable)| {
-            let id = compile_syntax_table(lua, spec)?;
+            let id = compile_syntax_table(spec)?;
             let syntax = get_syntax(id)?;
             let summary = summary_for_syntax(&syntax);
             REGISTRY.lock().roots.insert(name.clone(), id);
@@ -1022,7 +1017,7 @@ mod tests {
 
     fn register(lua: &Lua, name: &str, syntax_src: &str) -> LuaResult<usize> {
         let table: LuaTable = lua.load(syntax_src).eval()?;
-        let id = compile_syntax_table(lua, table.clone())?;
+        let id = compile_syntax_table(table.clone())?;
         REGISTRY.lock().roots.insert(name.to_string(), id);
         Ok(id)
     }
