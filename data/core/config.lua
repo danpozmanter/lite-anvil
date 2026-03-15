@@ -172,11 +172,12 @@ config.line_endings = PLATFORM == "Windows" and "crlf" or "lf"
 config.line_limit = 80
 
 ---Name of the built-in color theme to use.
----Available built-in themes are `default`, `fall`, `summer`, and `textadept`.
+---Available built-in themes include `dark_default`, `light_default`, `default`,
+---`fall`, `summer`, and `textadept`.
 ---
----Defaults to `default`.
+---Defaults to `dark_default`.
 ---@type string
-config.theme = "default"
+config.theme = "dark_default"
 
 ---Git ignore integration settings shared by project search and tree/file views.
 config.gitignore = {

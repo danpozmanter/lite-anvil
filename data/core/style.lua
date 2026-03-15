@@ -175,50 +175,7 @@ function style.register_theme(name, palette)
   style.themes[name] = palette
 end
 
-
-function style.apply_config()
-  local ui = merge_tables(default_ui, config.ui)
-  style.divider_size = common.round(ui.divider_size * SCALE)
-  style.scrollbar_size = common.round(ui.scrollbar_size * SCALE)
-  style.expanded_scrollbar_size = common.round(ui.expanded_scrollbar_size * SCALE)
-  style.minimum_thumb_size = common.round(ui.minimum_thumb_size * SCALE)
-  style.contracted_scrollbar_margin = common.round(ui.contracted_scrollbar_margin * SCALE)
-  style.expanded_scrollbar_margin = common.round(ui.expanded_scrollbar_margin * SCALE)
-  style.caret_width = common.round(ui.caret_width * SCALE)
-  style.tab_width = common.round(ui.tab_width * SCALE)
-
-  style.padding = {
-    x = common.round(ui.padding_x * SCALE),
-    y = common.round(ui.padding_y * SCALE),
-  }
-
-  style.margin = {
-    tab = {
-      top = common.round(
-        ((type(ui.tab_top_margin) == "number" and ui.tab_top_margin) or (-style.divider_size)) * SCALE
-      )
-    }
-  }
-
-  local fonts = merge_tables(default_fonts, config.fonts)
-  style.font = load_font_from_spec(fonts.ui, default_fonts.ui)
-  style.code_font = load_font_from_spec(fonts.code, default_fonts.code)
-  style.icon_font = load_font_from_spec(fonts.icon, default_fonts.icon)
-  style.big_font = nil
-  style.icon_big_font = nil
-  style._lazy_font_specs.big_font = {
-    spec = fonts.big,
-    fallback = fonts.ui,
-  }
-  style._lazy_font_specs.icon_big_font = {
-    spec = fonts.icon_big,
-    fallback = fonts.icon,
-  }
-
-  for token, font_spec in pairs(fonts.syntax or {}) do
-    style.syntax_fonts[token] = load_font_from_spec(font_spec, fonts.code)
-  end
-
+local function apply_theme_colors()
   local theme_name = config.theme or "default"
   if not style.themes[theme_name] and theme_name ~= "default" then
     pcall(require, "colors." .. theme_name)
@@ -268,6 +225,58 @@ function style.apply_config()
       }
     end
   end
+end
+
+function style.apply_theme()
+  apply_theme_colors()
+  return style
+end
+
+
+function style.apply_config()
+  local ui = merge_tables(default_ui, config.ui)
+  style.divider_size = common.round(ui.divider_size * SCALE)
+  style.scrollbar_size = common.round(ui.scrollbar_size * SCALE)
+  style.expanded_scrollbar_size = common.round(ui.expanded_scrollbar_size * SCALE)
+  style.minimum_thumb_size = common.round(ui.minimum_thumb_size * SCALE)
+  style.contracted_scrollbar_margin = common.round(ui.contracted_scrollbar_margin * SCALE)
+  style.expanded_scrollbar_margin = common.round(ui.expanded_scrollbar_margin * SCALE)
+  style.caret_width = common.round(ui.caret_width * SCALE)
+  style.tab_width = common.round(ui.tab_width * SCALE)
+
+  style.padding = {
+    x = common.round(ui.padding_x * SCALE),
+    y = common.round(ui.padding_y * SCALE),
+  }
+
+  style.margin = {
+    tab = {
+      top = common.round(
+        ((type(ui.tab_top_margin) == "number" and ui.tab_top_margin) or (-style.divider_size)) * SCALE
+      )
+    }
+  }
+
+  local fonts = merge_tables(default_fonts, config.fonts)
+  style.font = load_font_from_spec(fonts.ui, default_fonts.ui)
+  style.code_font = load_font_from_spec(fonts.code, default_fonts.code)
+  style.icon_font = load_font_from_spec(fonts.icon, default_fonts.icon)
+  style.big_font = nil
+  style.icon_big_font = nil
+  style._lazy_font_specs.big_font = {
+    spec = fonts.big,
+    fallback = fonts.ui,
+  }
+  style._lazy_font_specs.icon_big_font = {
+    spec = fonts.icon_big,
+    fallback = fonts.icon,
+  }
+
+  for token, font_spec in pairs(fonts.syntax or {}) do
+    style.syntax_fonts[token] = load_font_from_spec(font_spec, fonts.code)
+  end
+
+  apply_theme_colors()
 
   return style
 end

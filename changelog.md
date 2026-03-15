@@ -1,5 +1,10 @@
 # Change Log
 
+## [0.11.2] - 2026-03-15 — New default themes, light and dark mode toggle.
+
+* Adjusted default dark theme, and added light theme.
+* Added a bottom bar toggle for switching light and dark mode.
+
 ## [0.11.1] - 2026-03-15 — Windows build fix.
 
 * Fixed Windows MSVC SDL3 linking by wiring vcpkg library discovery into the build.
