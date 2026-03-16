@@ -16,6 +16,11 @@ use super::project_fs::{WalkOptions, walk_files};
 /// file-list rebuild. Prevents rapid-fire rebuilds during active builds.
 const REBUILD_DEBOUNCE: Duration = Duration::from_millis(500);
 
+#[cfg(feature = "sdl")]
+/// Maximum rate at which dirty-flag watcher events wake up the render loop.
+/// Prevents thousands of FSEvents callbacks per second from flooding SDL.
+const WAKEUP_RATE_LIMIT: Duration = Duration::from_millis(200);
+
 struct ProjectEntry {
     /// Current (possibly stale while rebuilding) file list.
     files: Arc<Mutex<Vec<String>>>,
@@ -29,6 +34,7 @@ struct ProjectEntry {
     _watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
     max_size_bytes: Option<u64>,
     max_files: Option<usize>,
+    exclude_dirs: Vec<String>,
 }
 
 static PROJECTS: Lazy<Mutex<HashMap<String, ProjectEntry>>> =
@@ -56,7 +62,12 @@ fn relative_to(root: &str, filename: &str) -> String {
         .unwrap_or_else(|| normalize_path(&filename.to_string_lossy()))
 }
 
-fn build_files(root: &str, max_size_bytes: Option<u64>, max_files: Option<usize>) -> Vec<String> {
+fn build_files(
+    root: &str,
+    max_size_bytes: Option<u64>,
+    max_files: Option<usize>,
+    exclude_dirs: &[String],
+) -> Vec<String> {
     walk_files(
         &[root.to_string()],
         &WalkOptions {
@@ -65,6 +76,7 @@ fn build_files(root: &str, max_size_bytes: Option<u64>, max_files: Option<usize>
             path_glob: None,
             max_files,
             max_entries: None,
+            exclude_dirs: exclude_dirs.to_vec(),
         },
     )
 }
@@ -78,6 +90,7 @@ fn ensure_project(
     root: &str,
     max_size_bytes: Option<u64>,
     max_files: Option<usize>,
+    exclude_dirs: Vec<String>,
 ) -> LuaResult<()> {
     let root = normalize_path(root);
 
@@ -86,6 +99,7 @@ fn ensure_project(
         Rebuild {
             files: Arc<Mutex<Vec<String>>>,
             rebuilding: Arc<AtomicBool>,
+            exclude_dirs: Vec<String>,
         },
         NewProject {
             files: Arc<Mutex<Vec<String>>>,
@@ -93,6 +107,7 @@ fn ensure_project(
             rebuilding: Arc<AtomicBool>,
             last_event: Arc<Mutex<Option<Instant>>>,
             watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
+            exclude_dirs: Vec<String>,
         },
     }
 
@@ -102,8 +117,9 @@ fn ensure_project(
         let mut projects = PROJECTS.lock();
         match projects.get_mut(&root) {
             Some(entry) => {
-                let config_changed =
-                    entry.max_size_bytes != max_size_bytes || entry.max_files != max_files;
+                let config_changed = entry.max_size_bytes != max_size_bytes
+                    || entry.max_files != max_files
+                    || entry.exclude_dirs != exclude_dirs;
                 let is_dirty = entry.dirty.load(Ordering::Relaxed);
 
                 if entry.rebuilding.load(Ordering::Relaxed) {
@@ -128,9 +144,12 @@ fn ensure_project(
                     entry.rebuilding.store(true, Ordering::Relaxed);
                     entry.max_size_bytes = max_size_bytes;
                     entry.max_files = max_files;
+                    let ed = exclude_dirs.clone();
+                    entry.exclude_dirs = exclude_dirs;
                     Work::Rebuild {
                         files: Arc::clone(&entry.files),
                         rebuilding: Arc::clone(&entry.rebuilding),
+                        exclude_dirs: ed,
                     }
                 }
             }
@@ -150,6 +169,7 @@ fn ensure_project(
                         _watcher: Arc::clone(&watcher),
                         max_size_bytes,
                         max_files,
+                        exclude_dirs: exclude_dirs.clone(),
                     },
                 );
                 Work::NewProject {
@@ -158,6 +178,7 @@ fn ensure_project(
                     rebuilding,
                     last_event,
                     watcher,
+                    exclude_dirs,
                 }
             }
         }
@@ -170,10 +191,11 @@ fn ensure_project(
         Work::Rebuild {
             files: files_arc,
             rebuilding: rebuilding_arc,
+            exclude_dirs,
         } => {
             let root_clone = root;
             std::thread::spawn(move || {
-                let new_files = build_files(&root_clone, max_size_bytes, max_files);
+                let new_files = build_files(&root_clone, max_size_bytes, max_files, &exclude_dirs);
                 *files_arc.lock() = new_files;
                 rebuilding_arc.store(false, Ordering::Relaxed);
                 #[cfg(feature = "sdl")]
@@ -187,14 +209,19 @@ fn ensure_project(
             rebuilding,
             last_event,
             watcher: watcher_holder,
+            exclude_dirs,
         } => {
             let dirty_for_cb = Arc::clone(&dirty);
             let last_event_for_cb = Arc::clone(&last_event);
+            #[cfg(feature = "sdl")]
+            let last_wakeup_for_cb: Arc<Mutex<Option<Instant>>> =
+                Arc::new(Mutex::new(None::<Instant>));
             let root_clone = root;
             std::thread::spawn(move || {
                 // Step 1: walk the project tree and populate the file list.
                 // The UI can show results as soon as this completes.
-                let new_files = build_files(&root_clone, max_size_bytes, max_files);
+                let new_files =
+                    build_files(&root_clone, max_size_bytes, max_files, &exclude_dirs);
                 *files.lock() = new_files;
                 rebuilding.store(false, Ordering::Relaxed);
                 #[cfg(feature = "sdl")]
@@ -207,10 +234,30 @@ fn ensure_project(
                     let mut w = RecommendedWatcher::new(
                         move |_res: notify::Result<notify::Event>| {
                             dirty_for_cb.store(true, Ordering::Relaxed);
-                            // Record event time for debounce in ensure_project.
                             *last_event_for_cb.lock() = Some(Instant::now());
+                            // Rate-limit wakeup pushes to avoid flooding the
+                            // render loop during active builds that generate
+                            // thousands of filesystem events per second.
                             #[cfg(feature = "sdl")]
-                            crate::window::push_wakeup_event();
+                            {
+                                let should_push = {
+                                    let mut guard = last_wakeup_for_cb.lock();
+                                    let now = Instant::now();
+                                    let elapsed = guard
+                                        .as_ref()
+                                        .map(|t| now.duration_since(*t))
+                                        .unwrap_or(Duration::MAX);
+                                    if elapsed >= WAKEUP_RATE_LIMIT {
+                                        *guard = Some(now);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if should_push {
+                                    crate::window::push_wakeup_event();
+                                }
+                            }
                         },
                         notify::Config::default(),
                     )?;
@@ -227,24 +274,35 @@ fn ensure_project(
     Ok(())
 }
 
+fn parse_exclude_dirs(opts: &LuaTable) -> LuaResult<Vec<String>> {
+    let mut dirs = Vec::new();
+    if let Some(table) = opts.get::<Option<LuaTable>>("exclude_dirs")? {
+        for dir in table.sequence_values::<String>() {
+            dirs.push(dir?);
+        }
+    }
+    Ok(dirs)
+}
+
 pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     let module = lua.create_table()?;
 
     module.set(
         "sync_roots",
         lua.create_function(|_, (roots, opts): (LuaTable, Option<LuaTable>)| {
-            let (max_size_bytes, max_files) = if let Some(opts) = opts {
+            let (max_size_bytes, max_files, exclude_dirs) = if let Some(ref opts) = opts {
                 (
                     opts.get::<Option<u64>>("max_size_bytes")?,
                     opts.get::<Option<usize>>("max_files")?,
+                    parse_exclude_dirs(opts)?,
                 )
             } else {
-                (None, None)
+                (None, None, Vec::new())
             };
             let mut keep = HashMap::new();
             for root in roots.sequence_values::<String>() {
                 let root = normalize_path(&root?);
-                ensure_project(&root, max_size_bytes, max_files)?;
+                ensure_project(&root, max_size_bytes, max_files, exclude_dirs.clone())?;
                 keep.insert(root, true);
             }
             PROJECTS.lock().retain(|root, _| keep.contains_key(root));
@@ -255,15 +313,16 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     module.set(
         "get_files",
         lua.create_function(|lua, (root, opts): (String, Option<LuaTable>)| {
-            let (max_size_bytes, max_files) = if let Some(opts) = opts {
+            let (max_size_bytes, max_files, exclude_dirs) = if let Some(ref opts) = opts {
                 (
                     opts.get::<Option<u64>>("max_size_bytes")?,
                     opts.get::<Option<usize>>("max_files")?,
+                    parse_exclude_dirs(opts)?,
                 )
             } else {
-                (None, None)
+                (None, None, Vec::new())
             };
-            ensure_project(&root, max_size_bytes, max_files)?;
+            ensure_project(&root, max_size_bytes, max_files, exclude_dirs)?;
             let root = normalize_path(&root);
             // Clone the Arc before releasing PROJECTS to avoid holding two
             // locks simultaneously (PROJECTS then files).
@@ -282,19 +341,20 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     module.set(
         "get_all_files",
         lua.create_function(|lua, (roots, opts): (LuaTable, Option<LuaTable>)| {
-            let (max_size_bytes, max_files) = if let Some(opts) = opts {
+            let (max_size_bytes, max_files, exclude_dirs) = if let Some(ref opts) = opts {
                 (
                     opts.get::<Option<u64>>("max_size_bytes")?,
                     opts.get::<Option<usize>>("max_files")?,
+                    parse_exclude_dirs(opts)?,
                 )
             } else {
-                (None, None)
+                (None, None, Vec::new())
             };
             let out = lua.create_table()?;
             let mut out_idx = 1i64;
             for root in roots.sequence_values::<String>() {
                 let root = root?;
-                ensure_project(&root, max_size_bytes, max_files)?;
+                ensure_project(&root, max_size_bytes, max_files, exclude_dirs.clone())?;
                 let normalized_root = normalize_path(&root);
                 let files_arc = PROJECTS
                     .lock()

@@ -19,6 +19,7 @@ mod symbol_index;
 #[cfg(unix)]
 mod terminal;
 mod terminal_buffer;
+mod tree_model;
 mod tokenizer;
 mod utf8extra;
 
@@ -251,6 +252,9 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
 
     let node_model = node_model::make_module(lua)?;
     insert(&globals, &pkg_loaded, "node_model", node_model)?;
+
+    let tree_model = tree_model::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "tree_model", tree_model)?;
 
     let lsp_manager = lsp_manager::make_module(lua)?;
     insert(&globals, &pkg_loaded, "lsp_manager", lsp_manager)?;

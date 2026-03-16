@@ -205,6 +205,12 @@ fn parse_fs_opts(opts: Option<LuaTable>) -> LuaResult<WalkOptions> {
         out.show_hidden = opts.get::<Option<bool>>("show_hidden")?.unwrap_or(false);
         out.max_size_bytes = opts.get::<Option<u64>>("max_size_bytes")?;
         out.path_glob = opts.get::<Option<String>>("path_glob")?;
+        out.max_files = opts.get::<Option<usize>>("max_files")?;
+        if let Some(dirs) = opts.get::<Option<LuaTable>>("exclude_dirs")? {
+            for dir in dirs.sequence_values::<String>() {
+                out.exclude_dirs.push(dir?);
+            }
+        }
     }
     Ok(out)
 }

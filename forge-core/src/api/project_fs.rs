@@ -24,6 +24,8 @@ pub(crate) struct WalkOptions {
     pub path_glob: Option<String>,
     pub max_files: Option<usize>,
     pub max_entries: Option<usize>,
+    /// Directory basenames to skip entirely during traversal.
+    pub exclude_dirs: Vec<String>,
 }
 
 fn next_watch_id() -> u64 {
@@ -155,6 +157,15 @@ pub(crate) fn walk_files(roots: &[String], opts: &WalkOptions) -> Vec<String> {
         for entry in entries {
             let entry_path = PathBuf::from(&entry.abs_path);
             if entry.kind == "dir" {
+                if !opts.exclude_dirs.is_empty() {
+                    let basename = entry_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    if opts.exclude_dirs.iter().any(|d| d == basename) {
+                        continue;
+                    }
+                }
                 stack.push((root.clone(), entry_path));
                 continue;
             }
@@ -187,6 +198,11 @@ fn parse_walk_opts(opts: Option<LuaTable>) -> LuaResult<WalkOptions> {
         out.path_glob = opts.get::<Option<String>>("path_glob")?;
         out.max_files = opts.get::<Option<usize>>("max_files")?;
         out.max_entries = opts.get::<Option<usize>>("max_entries")?;
+        if let Some(dirs) = opts.get::<Option<LuaTable>>("exclude_dirs")? {
+            for dir in dirs.sequence_values::<String>() {
+                out.exclude_dirs.push(dir?);
+            }
+        }
     }
     Ok(out)
 }
@@ -242,8 +258,6 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
                         if queue.len() >= MAX_QUEUED_CHANGES {
                             queue.clear();
                             queue.push_back(root_path.clone());
-                            #[cfg(feature = "sdl")]
-                            crate::window::push_wakeup_event();
                             return;
                         }
                         for path in event.paths {
@@ -255,8 +269,6 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
                             }
                         }
                     }
-                    #[cfg(feature = "sdl")]
-                    crate::window::push_wakeup_event();
                 },
                 notify::Config::default(),
             )
@@ -384,10 +396,41 @@ mod tests {
                 path_glob: Some("**/*.md".to_string()),
                 max_files: Some(1),
                 max_entries: None,
+                exclude_dirs: vec![],
             },
         );
 
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("nested/keep.md"));
+    }
+
+    #[test]
+    fn walk_files_skips_excluded_directories() {
+        let tree = TempTree::new();
+        write_file(&tree.path.join("root.txt"), b"root");
+        write_file(&tree.path.join("build").join("artifact.class"), b"class");
+        write_file(&tree.path.join("__pycache__").join("module.pyc"), b"pyc");
+        write_file(&tree.path.join("src").join("main.kt"), b"kt");
+
+        let files = walk_files(
+            &[tree.path_str()],
+            &WalkOptions {
+                show_hidden: false,
+                max_size_bytes: None,
+                path_glob: None,
+                max_files: None,
+                max_entries: None,
+                exclude_dirs: vec!["build".to_string(), "__pycache__".to_string()],
+            },
+        );
+
+        let names: Vec<_> = files
+            .iter()
+            .map(|f| std::path::Path::new(f).file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert!(names.contains(&"root.txt"), "root.txt should be included");
+        assert!(names.contains(&"main.kt"), "main.kt should be included");
+        assert!(!names.contains(&"artifact.class"), "build/ should be excluded");
+        assert!(!names.contains(&"module.pyc"), "__pycache__/ should be excluded");
     }
 }

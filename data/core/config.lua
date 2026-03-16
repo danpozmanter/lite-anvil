@@ -75,6 +75,9 @@ config.large_file = {
 ---Project-scale scanning safeguards for very large trees.
 config.project_scan = {
   max_files = 50000,
+  ---Directory basenames skipped entirely during file-tree walks.
+  ---Add project-specific noise dirs (e.g. "build") to this list.
+  exclude_dirs = { "__pycache__" },
 }
 
 ---A list of files and directories to ignore.

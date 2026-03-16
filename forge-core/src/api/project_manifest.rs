@@ -15,6 +15,10 @@ use super::project_fs::{WalkOptions, walk_files};
 /// Minimum quiet time after the last filesystem event before triggering a rebuild.
 const REBUILD_DEBOUNCE: Duration = Duration::from_millis(500);
 
+#[cfg(feature = "sdl")]
+/// Maximum rate at which dirty-flag watcher events wake up the render loop.
+const WAKEUP_RATE_LIMIT: Duration = Duration::from_millis(200);
+
 struct ManifestEntry {
     files: Arc<Mutex<Vec<String>>>,
     dirty: Arc<AtomicBool>,
@@ -40,6 +44,7 @@ fn build_files(root: &str, max_size_bytes: Option<u64>) -> Vec<String> {
             path_glob: None,
             max_files: None,
             max_entries: None,
+            exclude_dirs: vec![],
         },
     )
 }
@@ -153,6 +158,9 @@ fn ensure_manifest(root: &str, max_size_bytes: Option<u64>) -> LuaResult<()> {
         } => {
             let dirty_for_cb = Arc::clone(&dirty);
             let last_event_for_cb = Arc::clone(&last_event);
+            #[cfg(feature = "sdl")]
+            let last_wakeup_for_cb: Arc<Mutex<Option<Instant>>> =
+                Arc::new(Mutex::new(None::<Instant>));
             let root_clone = root;
             std::thread::spawn(move || {
                 // Step 1: walk the tree and populate the file list first.
@@ -169,8 +177,27 @@ fn ensure_manifest(root: &str, max_size_bytes: Option<u64>) -> LuaResult<()> {
                         move |_res: notify::Result<notify::Event>| {
                             dirty_for_cb.store(true, Ordering::Relaxed);
                             *last_event_for_cb.lock() = Some(Instant::now());
+                            // Rate-limit wakeup pushes to avoid flooding SDL.
                             #[cfg(feature = "sdl")]
-                            crate::window::push_wakeup_event();
+                            {
+                                let should_push = {
+                                    let mut guard = last_wakeup_for_cb.lock();
+                                    let now = Instant::now();
+                                    let elapsed = guard
+                                        .as_ref()
+                                        .map(|t| now.duration_since(*t))
+                                        .unwrap_or(Duration::MAX);
+                                    if elapsed >= WAKEUP_RATE_LIMIT {
+                                        *guard = Some(now);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if should_push {
+                                    crate::window::push_wakeup_event();
+                                }
+                            }
                         },
                         notify::Config::default(),
                     )?;

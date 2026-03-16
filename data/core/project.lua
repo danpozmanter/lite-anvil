@@ -160,6 +160,7 @@ function Project:files()
       local cached = native_project_model.get_files(self.path, {
         max_size_bytes = config.file_size_limit * 1e6,
         max_files = config.project_scan.max_files,
+        exclude_dirs = config.project_scan.exclude_dirs,
       })
       for _, filename in ipairs(cached) do
         local info = { type = "file", size = 0, filename = filename }

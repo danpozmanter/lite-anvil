@@ -153,6 +153,7 @@ local function collect_native_files(path, path_glob)
     max_size_bytes = config.file_size_limit * 1e6,
     path_glob = path_glob,
     max_files = config.project_scan.max_files,
+    exclude_dirs = config.project_scan.exclude_dirs,
   })
   if path and (not system.get_file_info(path) or system.get_file_info(path).type ~= "dir") then
     local filtered = {}

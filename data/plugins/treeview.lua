@@ -10,12 +10,11 @@ local ContextMenu = require "core.contextmenu"
 local RootView = require "core.rootview"
 local CommandView = require "core.commandview"
 local DocView = require "core.docview"
-local Dirwatch = require "core.dirwatch"
-local native_project_fs = nil
+local native_tree_model = nil
 
 do
-  local ok, mod = pcall(require, "project_fs")
-  if ok then native_project_fs = mod end
+  local ok, mod = pcall(require, "tree_model")
+  if ok then native_tree_model = mod end
 end
 
 config.plugins.treeview = common.merge({
@@ -38,19 +37,40 @@ local tooltip_alpha = 255
 local tooltip_alpha_rate = 1
 
 
-local function get_depth(filename)
-  if filename == "" then return 0 end
-  local n = 1
-  for _ in filename:gmatch(PATHSEP) do
-    n = n + 1
-  end
-  return n
-end
-
-
 local function replace_alpha(color, alpha)
   local r, g, b = table.unpack(color)
   return { r, g, b, alpha }
+end
+
+
+local function tree_roots()
+  local roots = {}
+  for i, project in ipairs(core.projects) do
+    roots[i] = project.path
+  end
+  return roots
+end
+
+
+local function project_by_root(root)
+  for _, project in ipairs(core.projects) do
+    if project.path == root then
+      return project
+    end
+  end
+end
+
+
+local function tree_model_opts(view)
+  return {
+    show_hidden = view.show_hidden,
+    show_ignored = view.show_ignored,
+    max_entries = config.plugins.treeview.max_dir_entries,
+    file_size_limit_bytes = config.file_size_limit * 1e6,
+    ignore_files = config.ignore_files,
+    gitignore_enabled = config.gitignore.enabled ~= false,
+    gitignore_additional_patterns = config.gitignore.additional_patterns or {},
+  }
 end
 
 
@@ -70,8 +90,6 @@ function TreeView:new()
   self.target_size = config.plugins.treeview.size
   self.show_hidden = config.plugins.treeview.show_hidden
   self.show_ignored = config.plugins.treeview.show_ignored
-  self.cache = {}
-  self.expanded = {}
   self.tooltip = { x = 0, y = 0, begin = 0, alpha = 0 }
   self.last_scroll_y = 0
   self.selected_path = nil
@@ -79,7 +97,11 @@ function TreeView:new()
 
   self.item_icon_width = 0
   self.item_text_spacing = 0
-  self.watches = { }
+  self.items_flat = nil
+  self.item_index = {}
+  self.items_dirty = true
+  self.last_project_count = 0
+  self.last_tree_generation = 0
 end
 
 
@@ -94,82 +116,6 @@ function TreeView:set_target_size(axis, value)
   end
 end
 
-
-
-function TreeView:get_cached(project, path)
-  local t = self.cache[path]
-  if not t then
-    if not self.watches[project] then self.watches[project] = Dirwatch.new() end
-    local truncated = path:sub(#project.path + 2)
-    local basename = path == project.path and project.name or common.basename(path)
-    local info
-    if self.show_ignored then
-      info = system.get_file_info(path)
-    else
-      info = project:get_file_info(path)
-    end
-    if not info then return nil end
-    t = {
-      filename = basename,
-      depth = get_depth(truncated),
-      abs_filename = path,
-      project = project,
-      name = basename,
-      type = info.type,
-      project = project,
-      ignored = self.show_ignored and project:is_ignored(info, path)
-    }
-    if self.expanded[path] ~= nil then 
-      t.expanded = self.expanded[path]
-    else 
-      t.expanded = (info.type == "dir" and #truncated <= 1) 
-    end
-    if t.expanded then self.watches[project]:watch(path) end
-    self.cache[path] = t
-  end
-  if t.expanded and t.type == "dir" and not t.files then
-    t.files = {}
-    if native_project_fs then
-      for _, entry in ipairs(native_project_fs.list_dir(path, {
-        show_hidden = self.show_hidden,
-        max_entries = config.plugins.treeview.max_dir_entries,
-      })) do
-        local f = {
-          name = entry.name,
-          abs_filename = entry.abs_filename,
-          type = entry.type,
-          size = entry.size,
-          ignored = self.show_ignored and project:is_ignored({ type = entry.type, size = entry.size }, entry.abs_filename)
-        }
-        if self.show_ignored or not f.ignored then
-          table.insert(t.files, f)
-        end
-        self.cache[entry.abs_filename] = nil
-      end
-    else
-      for i, file in ipairs(system.list_dir(path)) do
-        local l = path .. PATHSEP .. file
-        local f
-        if self.show_ignored then
-          f = system.get_file_info(l)
-        else
-          f = project:get_file_info(l)
-        end
-        if f and f.type then
-          f.name = file
-          f.abs_filename = l
-          f.ignored = self.show_ignored and project:is_ignored(f, l)
-          table.insert(t.files, f)
-        end
-        self.cache[l] = nil
-      end
-    end
-    table.sort(t.files, function(a, b) return system.path_compare(a.name, a.type, b.name, b.type) end)
-  end
-  return t
-end
-
-
 function TreeView:get_name()
   return nil
 end
@@ -181,15 +127,11 @@ end
 
 
 function TreeView:get_items(project, path, x, y, w, h)
-  local dir = self:get_cached(project, path)
-  coroutine.yield(dir, x, y, w, h)
-  local count_lines = 1
-  if dir and dir.files and dir.expanded then
-    for i, file in ipairs(dir.files) do
-      if self.show_hidden or not file.name:find("^%.") then
-        count_lines = count_lines + self:get_items(project, path .. PATHSEP .. file.name, x, y + count_lines * h, w, h)
-      end
-    end
+  if self.items_dirty then self:rebuild_items() end
+  local count_lines = 0
+  for i, item in ipairs(self.items_flat or {}) do
+    count_lines = i
+    coroutine.yield(item, x, y + (i - 1) * h, w, h)
   end
   return count_lines
 end
@@ -197,23 +139,48 @@ end
 
 function TreeView:each_item()
   return coroutine.wrap(function()
-    local count_lines = 0
     local ox, oy = self:get_content_offset()
     local h = self:get_item_height()
-    for k, project in ipairs(core.projects) do
-      count_lines = count_lines + self:get_items(project, project.path, ox, oy + style.padding.y + h * count_lines, self.size.x, h)
+    if self.items_dirty then self:rebuild_items() end
+    self.count_lines = #(self.items_flat or {})
+    for i, item in ipairs(self.items_flat or {}) do
+      coroutine.yield(item, ox, oy + style.padding.y + h * (i - 1), self.size.x, h)
     end
-    self.count_lines = count_lines
   end)
+end
+
+
+function TreeView:rebuild_items()
+  self.items_flat = {}
+  self.item_index = {}
+  if native_tree_model then
+    local roots = tree_roots()
+    local opts = tree_model_opts(self)
+    native_tree_model.sync_roots(roots, opts)
+    self.last_tree_generation = native_tree_model.generation()
+    local items = native_tree_model.get_visible_items(roots, opts)
+    for i, item in ipairs(items) do
+      item.project = project_by_root(item.project_root)
+      item.filename = item.name
+      self.items_flat[i] = item
+      self.item_index[item.abs_filename] = i
+    end
+  end
+  self.count_lines = #self.items_flat
+  self.items_dirty = false
+  self.last_project_count = #core.projects
 end
 
 
 function TreeView:resolve_path(path)
   if not path then return nil end
-  for item, x, y, w, h in self:each_item() do
-    if item.abs_filename == path then
-      return item, x, y, w, h
-    end
+  if self.items_dirty then self:rebuild_items() end
+  local idx = self.item_index[path]
+  if idx then
+    local ox, oy = self:get_content_offset()
+    local h = self:get_item_height()
+    local y = oy + style.padding.y + h * (idx - 1)
+    return self.items_flat[idx], ox, y, self.size.x, h
   end
 end
 
@@ -275,39 +242,12 @@ end
 ---@param instant boolean #Don't animate the scroll
 ---@return table? #The selected item
 function TreeView:set_selection_to_path(path, expand, scroll_to, instant)
-  local to_select, to_select_y
-  local let_it_finish, done
-  ::restart::
-  for item, x,y,w,h in self:each_item() do
-    if not done then
-      if item.type == "dir" then
-        local _, to = string.find(path, item.abs_filename..PATHSEP, 1, true)
-        if to and to == #item.abs_filename + #PATHSEP then
-          to_select, to_select_y = item, y
-          if expand and not item.expanded then
-            -- Use TreeView:toggle_expand to update the directory structure.
-            -- Directly using item.expanded doesn't update the cached tree.
-            self:toggle_expand(true, item)
-            -- Because we altered the size of the TreeView
-            -- and because TreeView:get_scrollable_size uses self.count_lines
-            -- which gets updated only when TreeView:each_item finishes,
-            -- we can't stop here or we risk that the scroll
-            -- gets clamped by View:clamp_scroll_position.
-            let_it_finish = true
-            -- We need to restart the process because if TreeView:toggle_expand
-            -- altered the cache, TreeView:each_item risks looping indefinitely.
-            goto restart
-          end
-        end
-      else
-        if item.abs_filename == path then
-          to_select, to_select_y = item, y
-          done = true
-          if not let_it_finish then break end
-        end
-      end
-    end
+  if native_tree_model and expand then
+    native_tree_model.expand_to(path)
+    self.items_dirty = true
   end
+  if self.items_dirty then self:rebuild_items() end
+  local to_select, _, to_select_y = self:resolve_path(path)
   if to_select then
     self:set_selection(to_select, scroll_to and to_select_y, true, instant)
   end
@@ -334,23 +274,29 @@ function TreeView:on_mouse_moved(px, py, ...)
     return
   end
 
-  local item_changed, tooltip_changed
-  for item, x,y,w,h in self:each_item() do
-    if px > x and py > y and px <= x + w and py <= y + h then
-      item_changed = true
-      local same_hover = self.hovered_path == item.abs_filename
-      self.hovered_item = item
-      self.hovered_path = item.abs_filename
+  if self.items_dirty then self:rebuild_items() end
 
-      x,y,w,h = self:get_text_bounding_box(item, x,y,w,h)
-      if px > x and py > y and px <= x + w and py <= y + h then
-        tooltip_changed = true
-        self.tooltip.x, self.tooltip.y = px, py
-        if not same_hover then
-          self.tooltip.begin = system.get_time()
-        end
+  local ox, oy = self:get_content_offset()
+  local h = self:get_item_height()
+  local pad = style.padding.y
+  local row = math.floor((py - oy - pad) / h)
+  local item = (row >= 0 and self.items_flat) and self.items_flat[row + 1]
+
+  local item_changed, tooltip_changed
+  if item and px > ox and px <= ox + self.size.x then
+    local y = oy + pad + row * h
+    item_changed = true
+    local same_hover = self.hovered_path == item.abs_filename
+    self.hovered_item = item
+    self.hovered_path = item.abs_filename
+
+    local ix, iy, iw, ih = self:get_text_bounding_box(item, ox, y, self.size.x, h)
+    if px > ix and py > iy and px <= ix + iw and py <= iy + ih then
+      tooltip_changed = true
+      self.tooltip.x, self.tooltip.y = px, py
+      if not same_hover then
+        self.tooltip.begin = system.get_time()
       end
-      break
     end
   end
   if not item_changed then
@@ -398,6 +344,9 @@ function TreeView:update()
   end
 
   local config = config.plugins.treeview
+  if native_tree_model and native_tree_model.generation() ~= self.last_tree_generation then
+    self.items_dirty = true
+  end
   if config.highlight_focused_file then
     -- Try to only highlight when we actually change tabs
     local current_node = core.root_view:get_active_node()
@@ -530,14 +479,25 @@ end
 function TreeView:draw()
   if not self.visible then return end
   self:draw_background(style.background2)
-  local _y, _h = self.position.y, self.size.y
 
-  for item, x,y,w,h in self:each_item() do
-    if y + h >= _y and y < _y + _h then
+  if #core.projects ~= self.last_project_count then
+    self.items_dirty = true
+  end
+  if self.items_dirty then self:rebuild_items() end
+
+  local _y, _h = self.position.y, self.size.y
+  local ox, oy = self:get_content_offset()
+  local h = self:get_item_height()
+  local pad = style.padding.y
+
+  for i, item in ipairs(self.items_flat) do
+    local y = oy + pad + (i - 1) * h
+    if y + h >= _y then
+      if y >= _y + _h then break end
       self:draw_item(item,
         item.abs_filename == self.selected_path,
         item.abs_filename == self.hovered_path,
-        x, y, w, h)
+        ox, y, self.size.x, h)
     end
   end
 
@@ -553,36 +513,26 @@ function TreeView:get_parent(item)
   if not item then return end
   local parent_path = common.dirname(item.abs_filename)
   if not parent_path then return end
-  for it, _, y in self:each_item() do
-    if it.abs_filename == parent_path then
-      return it, y
-    end
+  local it, _, y = self:resolve_path(parent_path)
+  if it then
+    return it, y
   end
 end
 
 
 function TreeView:get_item(item, where)
-  local last_item, last_x, last_y, last_w, last_h
-  local stop = false
-
-  for it, x, y, w, h in self:each_item() do
-    if not item and where >= 0 then
-      return it, x, y, w, h
-    end
-    if item == it then
-      if where < 0 and last_item then
-        break
-      elseif where == 0 or (where < 0 and not last_item) then
-        return it, x, y, w, h
-      end
-      stop = true
-    elseif stop then
-      item = it
-      return it, x, y, w, h
-    end
-    last_item, last_x, last_y, last_w, last_h = it, x, y, w, h
+  if self.items_dirty then self:rebuild_items() end
+  local idx = item and self.item_index[item.abs_filename] or nil
+  if not idx then
+    idx = where >= 0 and 1 or #self.items_flat
+  else
+    idx = idx + where
   end
-  return last_item, last_x, last_y, last_w, last_h
+  idx = common.clamp(idx, 1, #self.items_flat)
+  local target = self.items_flat[idx]
+  if target then
+    return self:resolve_path(target.abs_filename)
+  end
 end
 
 function TreeView:get_next(item)
@@ -599,16 +549,12 @@ function TreeView:toggle_expand(toggle, item)
 
   if not item then return end
 
-  if item.type == "dir" then
-    if type(toggle) == "boolean" then
-      item.expanded = toggle
-    else
-      item.expanded = not item.expanded
-    end
-    self.expanded[item.abs_filename] = item.expanded
-    if self.watches[item.project] then
-      self.watches[item.project]:watch(item.abs_filename, item.expanded)
-    end
+  if item.type == "dir" and native_tree_model then
+    native_tree_model.toggle_expand(
+      item.abs_filename,
+      type(toggle) == "boolean" and toggle or nil
+    )
+    self.items_dirty = true
   end
 end
 
@@ -616,8 +562,17 @@ function TreeView:open_doc(filename)
   core.root_view:open_doc(core.open_doc(filename))
 end
 
+local view
+
+local function invalidate_project_tree(project)
+  if native_tree_model and project and project.path then
+    native_tree_model.invalidate(project.path)
+  end
+  view.items_dirty = true
+end
+
 -- init
-local view = TreeView()
+view = TreeView()
 local node = core.root_view:get_active_node()
 view.node = node:split("left", view, {x = true}, true)
 
@@ -645,24 +600,18 @@ end
 local old_remove_project = core.remove_project
 function core.remove_project(project, force)
   local project = old_remove_project(project, force)
-  view.cache = {}
-  view.watches[project] = nil
-end
-
-core.add_thread(function()
-  while true do
-    for k,v in pairs(view.watches) do
-      v:check(function(directory)
-        view.cache[directory] = nil
-      end)
-    end
-    coroutine.yield(0.01)
+  view.items_dirty = true
+  if native_tree_model then
+    native_tree_model.sync_roots(tree_roots(), tree_model_opts(view))
   end
-end)
+end
 
 local on_quit_project = core.on_quit_project
 function core.on_quit_project()
-  view.cache = {}
+  view.items_dirty = true
+  if native_tree_model then
+    native_tree_model.clear_all()
+  end
   on_quit_project()
 end
 
@@ -737,8 +686,8 @@ end, {
         file_type:lower(), file_type, relfilename
       ),
       opt,
-      function(item)
-        if item.text == "Yes" then
+      function(choice)
+        if choice.text == "Yes" then
           if file_info.type == "dir" then
             local deleted, error, path = common.rm(filename, true)
             if not deleted then
@@ -753,6 +702,7 @@ end, {
             end
           end
           core.log("Deleted \"%s\"", filename)
+          invalidate_project_tree(item.project)
         end
       end
     )
@@ -778,6 +728,7 @@ end, {
         else
           core.error("Error while renaming \"%s\" to \"%s\": %s", old_abs_filename, abs_filename, err)
         end
+        invalidate_project_tree(item.project)
       end,
       suggest = function(text)
         return common.path_suggest(text, item.project and item.project.path)
@@ -796,12 +747,12 @@ command.add(nil, {
 
   ["treeview:toggle-hidden"] = function()
     view.show_hidden = not view.show_hidden
-    view.cache = {}
+    view.items_dirty = true
   end,
 
   ["treeview:toggle-ignored"] = function()
     view.show_ignored = not view.show_ignored
-    view.cache = {}
+    view.items_dirty = true
   end,
 
   ["treeview:toggle-focus"] = function()
@@ -929,6 +880,7 @@ command.add(
         file:close()
         view:open_doc(doc_filename)
         core.log("Created %s", doc_filename)
+        invalidate_project_tree(item.project)
       end,
       suggest = function(text)
         return common.path_suggest(text, item.project and item.project.path)
@@ -955,6 +907,7 @@ command.add(
           return
         end
         core.log("Created %s", dir_path)
+        invalidate_project_tree(item.project)
       end,
       suggest = function(text)
         return common.path_suggest(text, item.project and item.project.path)

@@ -1,5 +1,10 @@
 # Change Log
 
+## [0.13.6] - 2026-03-16 — Native treeview hot-path port.
+
+* Move treeview traversal, flattening, expand state, ignore filtering, and filesystem watching into a native async Rust tree model.
+* Remove overlapping recursive treeview watchers that could stall even small projects when expanding folders.
+
 ## [0.13.5] - 2026-03-16 — Tree highlight stability and tests.
 
 * Sidebar tree's blue focused-row highlight flicker fix.
