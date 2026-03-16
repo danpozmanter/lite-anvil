@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.13.1] - 2026-03-15 — Autocomplete mode cleanup and LSP-first completions.
+
+* Replace autocomplete source toggles with explicit modes: off, in-document, via LSP, and totally on.
+* Default autocomplete to via-LSP when the LSP provider is available; otherwise default it to off.
+* Wire LSP completions into the autocomplete popup so typing can use server results instead of only manual `ctrl+space`.
+
 ## [0.13.0] - 2026-03-15 — Stability fixes, tab menu, recent items, folding, editor polish.
 
 * Stability fixes - segfault fixes.

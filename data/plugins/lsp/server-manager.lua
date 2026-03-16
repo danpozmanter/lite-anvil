@@ -317,12 +317,25 @@ local function range_sort_desc(a, b)
   return ar.line > br.line
 end
 
-local function apply_text_edit(doc, edit)
+local function set_cursor_after_insert(doc, line, col, text)
+  local end_line, end_col
+  if text and text ~= "" then
+    end_line, end_col = doc:position_offset(line, col, #text)
+  else
+    end_line, end_col = line, col
+  end
+  doc:set_selection(end_line, end_col, end_line, end_col)
+end
+
+local function apply_text_edit(doc, edit, move_cursor)
   local start_line, start_col = doc_position_from_lsp(doc, edit.range.start)
   local end_line, end_col = doc_position_from_lsp(doc, edit.range["end"])
   doc:remove(start_line, start_col, end_line, end_col)
   if edit.newText and edit.newText ~= "" then
     doc:insert(start_line, start_col, edit.newText)
+  end
+  if move_cursor then
+    set_cursor_after_insert(doc, start_line, start_col, edit.newText or "")
   end
 end
 
@@ -906,8 +919,9 @@ function manager.on_doc_close(doc)
   core.redraw = true
 end
 
-function manager.document_params(doc)
-  local line, col = doc:get_selection()
+function manager.document_params(doc, line, col)
+  line = line or select(1, doc:get_selection())
+  col = col or select(2, doc:get_selection())
   return {
     textDocument = { uri = path_to_uri(doc.abs_filename) },
     position = lsp_position_from_doc(doc, line, col),
@@ -1298,6 +1312,42 @@ function manager.maybe_trigger_signature_help(text)
   end
 end
 
+function manager.maybe_trigger_completion(text)
+  local view = current_docview()
+  if not view or not view.doc.abs_filename then
+    return
+  end
+  local state = manager.doc_state[view.doc]
+  if not state then
+    return
+  end
+  local client = state.client
+  local provider = client and client.capabilities and client.capabilities.completionProvider
+  if not provider then
+    return
+  end
+
+  local triggers = provider.triggerCharacters or {}
+  if #triggers == 0 then
+    return
+  end
+
+  local trigger_text = text
+  if text == ":" then
+    local line, col = view.doc:get_selection()
+    if col > 1 and view.doc:get_char(line, col - 1) == ":" then
+      trigger_text = "::"
+    end
+  end
+
+  for i = 1, #triggers do
+    if triggers[i] == trigger_text or triggers[i] == text then
+      manager.complete()
+      break
+    end
+  end
+end
+
 function manager.format_document_for(doc, callback)
   callback = callback or function() end
   local target_doc = doc or (current_docview() and current_docview().doc)
@@ -1485,39 +1535,66 @@ local function completion_items_to_autocomplete(result)
 
   for _, item in ipairs(items) do
     local insert_text = item.insertText or (item.textEdit and item.textEdit.newText) or item.label
-    out.items[item.label] = {
-      info = item.detail,
-      desc = content_to_text(item.documentation),
-      icon = protocol.completion_kinds[item.kind] or "keyword",
-      data = item,
-      onselect = function(_, selected)
-        local view = current_docview()
-        local doc = view and view.doc
-        if not doc then
-          return false
-        end
+    if item.label ~= nil then
+      out.items[tostring(item.label)] = {
+        info = item.detail ~= nil and tostring(item.detail) or nil,
+        desc = content_to_text(item.documentation),
+        icon = protocol.completion_kinds[item.kind] or "keyword",
+        data = item,
+        onselect = function(_, selected)
+          local view = current_docview()
+          local doc = view and view.doc
+          if not doc then
+            return false
+          end
         local selected_item = selected.data
         if selected_item.textEdit then
-          apply_text_edit(doc, selected_item.textEdit)
+          apply_text_edit(doc, selected_item.textEdit, true)
           if selected_item.additionalTextEdits then
             local edits = {}
             for _, edit in ipairs(selected_item.additionalTextEdits) do
               edits[#edits + 1] = edit
+              end
+              table.sort(edits, range_sort_desc)
+              for _, edit in ipairs(edits) do
+                apply_text_edit(doc, edit)
+              end
             end
-            table.sort(edits, range_sort_desc)
-            for _, edit in ipairs(edits) do
-              apply_text_edit(doc, edit)
-            end
+            return true
           end
-          return true
-        end
-        selected.text = insert_text
-        return false
-      end,
-    }
+          selected.text = tostring(insert_text)
+          return false
+        end,
+      }
+    end
   end
 
   return out
+end
+
+if autocomplete_ok then
+  autocomplete.register_provider("lsp", function(ctx, respond)
+    if not ctx or not ctx.doc or not ctx.doc.abs_filename then
+      return {}
+    end
+    local client = manager.open_doc(ctx.doc)
+    if not client then
+      return {}
+    end
+    client:request(
+      "textDocument/completion",
+      manager.document_params(ctx.doc, ctx.line, ctx.col),
+      function(result, err)
+        if err then
+          core.warn("LSP completion failed: %s", err.message or tostring(err))
+          respond({})
+          return
+        end
+        respond(completion_items_to_autocomplete(result))
+      end
+    )
+  end)
+  autocomplete.set_default_mode("lsp")
 end
 
 function manager.complete()

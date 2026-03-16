@@ -11,6 +11,7 @@ local DocView   = require "core.docview"
 local Doc       = require "core.doc"
 local drawing   = require "plugins.autocomplete.drawing"
 local symbol_index = nil
+local user_autocomplete_config = config.plugins.autocomplete or {}
 
 do
   local ok, mod = pcall(require, "symbol_index")
@@ -37,6 +38,8 @@ local function get_doc_id(doc)
 end
 
 config.plugins.autocomplete = common.merge({
+  -- Source mode for autocomplete suggestions.
+  mode = user_autocomplete_config.mode or "lsp",
   -- Amount of characters that need to be written for autocomplete
   min_len = 3,
   -- The max amount of visible items
@@ -58,6 +61,19 @@ config.plugins.autocomplete = common.merge({
   -- The config specification used by gui generators
   config_spec = {
     name = "Autocomplete",
+    {
+      label = "Mode",
+      description = "Choose whether autocomplete uses document symbols, LSP, all known symbols, or stays off.",
+      path = "mode",
+      type = "selection",
+      default = user_autocomplete_config.mode or "lsp",
+      values = {
+        {"Off", "off"},
+        {"In Document", "in_document"},
+        {"Via LSP", "lsp"},
+        {"Totally On", "totally_on"}
+      }
+    },
     {
       label = "Minimum Length",
       description = "Amount of characters that need to be written for autocomplete to popup.",
@@ -93,26 +109,6 @@ config.plugins.autocomplete = common.merge({
       default = 4000,
       min = 1000,
       max = 10000
-    },
-    {
-      label = "Suggestions Scope",
-      description = "Which symbols to show on the suggestions list.",
-      path = "suggestions_scope",
-      type = "selection",
-      default = "global",
-      values = {
-        {"All Documents", "global"},
-        {"Current Document", "local"},
-        {"Related Documents", "related"},
-        {"Known Symbols", "none"}
-      },
-      on_apply = function(value)
-        if value == "global" then
-          for _, doc in ipairs(core.docs) do
-            if cache[doc] then cache[doc] = nil end
-          end
-        end
-      end
     },
     {
       label = "Description Font Size",
@@ -156,27 +152,33 @@ autocomplete.map = {}
 autocomplete.map_manually = {}
 autocomplete.on_close = nil
 autocomplete.icons = {}
+autocomplete.providers = {}
 
 -- Flag that indicates if the autocomplete box was manually triggered
 -- with the autocomplete.complete() function to prevent the suggestions
 -- from getting cluttered with arbitrary document symbols by using the
 -- autocomplete.map_manually table.
 local triggered_manually = false
+local mode_explicitly_set = user_autocomplete_config.mode ~= nil
+local provider_items = nil
+local provider_request_id = 0
 
 local mt = { __tostring = function(t) return t.text end }
 
-function autocomplete.add(t, manually_triggered)
+local function items_from_completion_map(t)
   local items = {}
   for text, info in pairs(t.items) do
+    text = text ~= nil and tostring(text) or nil
+    if text then
     if type(info) == "table" then
       table.insert(
         items,
         setmetatable(
           {
             text     = text,
-            info     = info.info,
+            info     = info.info ~= nil and tostring(info.info) or nil,
             icon     = info.icon,         -- Name of icon to show
-            desc     = info.desc,         -- Description shown on item selected
+            desc     = info.desc ~= nil and tostring(info.desc) or nil, -- Description shown on item selected
             onhover  = info.onhover,      -- A callback called once when item is hovered
             onselect = info.onselect,     -- A callback called when item is selected
             data     = info.data          -- Optional data that can be used on cb
@@ -185,10 +187,34 @@ function autocomplete.add(t, manually_triggered)
         )
       )
     else
-      info = (type(info) == "string") and info
+      info = info ~= nil and tostring(info) or nil
       table.insert(items, setmetatable({ text = text, info = info }, mt))
     end
+    end
   end
+  return items
+end
+
+local function current_mode()
+  return config.plugins.autocomplete.mode or "off"
+end
+
+local function suggestion_scope()
+  local mode = current_mode()
+  if mode == "in_document" then
+    return "local"
+  elseif mode == "totally_on" then
+    return "global"
+  end
+  return nil
+end
+
+local function provider_for_mode()
+  return autocomplete.providers[current_mode()]
+end
+
+function autocomplete.add(t, manually_triggered)
+  local items = items_from_completion_map(t)
 
   if not manually_triggered then
     autocomplete.map[t.name] = { files = t.files or ".*", items = items }
@@ -300,7 +326,7 @@ core.add_thread(function()
         }
       end
       -- update symbol set with doc's symbol set
-      if config.plugins.autocomplete.suggestions_scope == "global" then
+      if suggestion_scope() == "global" then
         if symbol_index and cache[doc].symbols == true then
           for _, sym in ipairs(symbol_index.get_doc_symbols(cache[doc].doc_id)) do
             symbols[sym] = true
@@ -315,7 +341,7 @@ core.add_thread(function()
     end
 
     -- update global symbols list
-    if config.plugins.autocomplete.suggestions_scope == "global" then
+    if suggestion_scope() == "global" then
       global_symbols = symbols
     end
 
@@ -345,6 +371,8 @@ local function reset_suggestions()
   suggestions_offset = 1
   suggestions_idx = 1
   suggestions = {}
+  provider_items = nil
+  provider_request_id = provider_request_id + 1
 
   triggered_manually = false
 
@@ -365,19 +393,26 @@ local function update_suggestions()
 
   -- get all relevant suggestions for given filename
   local items = {}
-  for _, v in pairs(map) do
-    if common.match_pattern(filename, v.files) then
-      for _, item in pairs(v.items) do
-        table.insert(items, item)
-        assigned_sym[item.text] = true
+  if provider_items then
+    for _, item in ipairs(provider_items) do
+      table.insert(items, item)
+      assigned_sym[item.text] = true
+    end
+  else
+    for _, v in pairs(map) do
+      if common.match_pattern(filename, v.files) then
+        for _, item in pairs(v.items) do
+          table.insert(items, item)
+          assigned_sym[item.text] = true
+        end
       end
     end
   end
 
   -- Append the global, local or related text symbols if applicable
-  local scope = config.plugins.autocomplete.suggestions_scope
+  local scope = suggestion_scope()
 
-  if not triggered_manually then
+  if not triggered_manually and not provider_items and scope then
     local text_symbols = nil
 
     if scope == "global" then
@@ -442,8 +477,8 @@ local function update_suggestions()
   local j = 1
   for i = 1, config.plugins.autocomplete.max_suggestions do
     suggestions[i] = items[j]
-    while items[j] and items[i].text == items[j].text do
-      items[i].info = items[i].info or items[j].info
+    while items[j] and suggestions[i] and suggestions[i].text == items[j].text do
+      suggestions[i].info = suggestions[i].info or items[j].info
       j = j + 1
     end
   end
@@ -478,11 +513,55 @@ end
 local function show_autocomplete()
   local av = get_active_view()
   if av then
+    if not triggered_manually and current_mode() == "off" then
+      reset_suggestions()
+      return
+    end
+
     -- update partial symbol and suggestions
     partial = get_partial_symbol()
 
     if #partial >= config.plugins.autocomplete.min_len or triggered_manually then
-      update_suggestions()
+      local provider = not triggered_manually and provider_for_mode() or nil
+      if provider then
+        provider_items = nil
+        provider_request_id = provider_request_id + 1
+        local request_id = provider_request_id
+        local line, col = av.doc:get_selection()
+        local doc = av.doc
+        local change_id = doc:get_change_id()
+        local request_partial = partial
+        local function respond(completions)
+          if request_id ~= provider_request_id then
+            return
+          end
+          local active_view = get_active_view()
+          if not active_view or active_view.doc ~= doc then
+            return
+          end
+          local current_line, current_col = doc:get_selection()
+          if current_line ~= line or current_col ~= col then
+            return
+          end
+          if doc:get_change_id() ~= change_id or get_partial_symbol() ~= request_partial then
+            return
+          end
+          provider_items = completions and items_from_completion_map(completions) or {}
+          update_suggestions()
+        end
+        local completions = provider({
+          doc = doc,
+          line = line,
+          col = col,
+          partial = request_partial,
+          manually = triggered_manually,
+        }, respond)
+        if completions ~= nil then
+          respond(completions)
+        end
+      else
+        update_suggestions()
+      end
 
       if not triggered_manually then
         last_line, last_col = av.doc:get_selection()
@@ -517,7 +596,9 @@ local old_on_close = Doc.on_close
 
 RootView.on_text_input = function(...)
   on_text_input(...)
-  show_autocomplete()
+  if triggered_manually or current_mode() ~= "lsp" then
+    show_autocomplete()
+  end
 end
 
 Doc.remove = function(self, line1, col1, line2, col2)
@@ -605,10 +686,23 @@ function autocomplete.complete(completions, on_close)
 end
 
 function autocomplete.can_complete()
+  if current_mode() == "off" then
+    return false
+  end
   if #partial >= config.plugins.autocomplete.min_len then
     return true
   end
   return false
+end
+
+function autocomplete.register_provider(name, provider)
+  autocomplete.providers[name] = provider
+end
+
+function autocomplete.set_default_mode(mode)
+  if not mode_explicitly_set and current_mode() == "lsp" then
+    config.plugins.autocomplete.mode = mode
+  end
 end
 
 ---Register a font icon that can be assigned to completion items.
@@ -712,6 +806,8 @@ command.add(predicate, {
 -- Keymaps
 --
 keymap.add {
+  ["return"] = "autocomplete:complete",
+  ["keypad enter"] = "autocomplete:complete",
   ["tab"]    = "autocomplete:complete",
   ["up"]     = "autocomplete:previous",
   ["down"]   = "autocomplete:next",

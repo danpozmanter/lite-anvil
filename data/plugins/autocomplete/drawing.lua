@@ -198,7 +198,10 @@ function M.draw_suggestions_box(ctx, av)
       end
     end
 
-    local info_size = style.font:get_width(s.info) + style.padding.x
+    local info_size = 0
+    if s.info and not hide_info then
+      info_size = style.font:get_width(s.info) + style.padding.x
+    end
     local color     = (i == suggestions_idx) and style.accent or style.text
 
     core.push_clip_rect(

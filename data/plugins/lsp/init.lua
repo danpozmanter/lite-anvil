@@ -71,6 +71,7 @@ local RootView = require "core.rootview"
 local old_on_text_input = RootView.on_text_input
 RootView.on_text_input = function(self, text, ...)
   old_on_text_input(self, text, ...)
+  manager.maybe_trigger_completion(text)
   manager.maybe_trigger_signature_help(text)
 end
 

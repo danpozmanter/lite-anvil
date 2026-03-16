@@ -347,10 +347,16 @@ fn apply_remove_internal(
     line2: usize,
     col2: usize,
 ) {
+    let adjust_col_after_join = |col: usize| {
+        if col > col2 {
+            col1 + (col - col2)
+        } else {
+            col1
+        }
+    };
     let before = lines[line1 - 1][..col1 - 1].to_string();
     let after = lines[line2 - 1][col2 - 1..].to_string();
     let line_removal = line2 - line1;
-    let col_removal = col2 - col1;
     lines.splice(line1 - 1..line2, [format!("{before}{after}")]);
 
     let mut merge = false;
@@ -371,8 +377,8 @@ fn apply_remove_internal(
                 l1 -= line_removal;
             } else {
                 l1 = line1;
-                c1 = if cline1 == line2 && ccol1 > col2 {
-                    c1 - col_removal
+                c1 = if cline1 == line2 {
+                    adjust_col_after_join(c1)
                 } else {
                     col1
                 };
@@ -384,8 +390,8 @@ fn apply_remove_internal(
                 l2 -= line_removal;
             } else {
                 l2 = line1;
-                c2 = if cline2 == line2 && ccol2 > col2 {
-                    c2 - col_removal
+                c2 = if cline2 == line2 {
+                    adjust_col_after_join(c2)
                 } else {
                     col1
                 };
@@ -1352,5 +1358,17 @@ mod tests {
 
         apply_remove_to_buffer(&mut state, 99, 99, 0, 0);
         assert_eq!(state.lines, vec!["\n".to_string()]);
+    }
+
+    #[test]
+    fn remove_handles_multiline_ranges_with_smaller_end_column() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["abcd\n".to_string(), "efgh\n".to_string()];
+        state.selections = vec![2, 4, 2, 4];
+
+        apply_remove_to_buffer(&mut state, 1, 4, 2, 2);
+
+        assert_eq!(state.lines, vec!["abcfgh\n".to_string()]);
+        assert_eq!(state.selections, vec![1, 6, 1, 6]);
     }
 }

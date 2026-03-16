@@ -30,6 +30,15 @@ There will be a tag "InitialPort" for the initial port into Rust, before I begin
 
 ## Editing Workflows
 
+### Autocomplete modes
+
+Lite-Anvil supports a small set of autocomplete source modes through `config.plugins.autocomplete.mode`.
+
+- `lsp`: Uses LSP completion items. This is the default. Suggestions appear when the language server's trigger characters are typed, such as `.` or `::`, and can also be opened manually.
+- `in_document`: Uses symbols collected from the current document only.
+- `totally_on`: Uses symbols from all open documents plus built-in syntax symbols.
+- `off`: Disables automatic autocomplete suggestions.
+
 ### Multi-cursor editing
 
 Lite-Anvil supports "select many, edit once" workflows.

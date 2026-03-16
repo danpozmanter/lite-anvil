@@ -14,6 +14,12 @@ end
 
 local Highlighter = Object:extend()
 
+local calc_signature
+local pair_tokens_to_positioned
+local positioned_to_pair_tokens
+local clone_positioned
+local overlay_positioned
+
 function Highlighter:__tostring() return "Highlighter" end
 
 function Highlighter:new(doc)
@@ -117,7 +123,7 @@ function Highlighter:update_notify(line, n)
   -- plugins can hook here to be notified that lines have been retokenized
 end
 
-local function calc_signature(positioned_tokens)
+calc_signature = function(positioned_tokens)
   if not positioned_tokens or #positioned_tokens == 0 then
     return 0
   end
@@ -133,7 +139,7 @@ local function calc_signature(positioned_tokens)
   return hash
 end
 
-local function pair_tokens_to_positioned(tokens)
+pair_tokens_to_positioned = function(tokens)
   local positioned = {}
   local pos = 0
   for i = 1, #tokens, 2 do
@@ -150,7 +156,7 @@ local function pair_tokens_to_positioned(tokens)
   return positioned
 end
 
-local function positioned_to_pair_tokens(positioned, full_text)
+positioned_to_pair_tokens = function(positioned, full_text)
   local pair_tokens = {}
   for i = 1, #positioned do
     local token = positioned[i]
@@ -165,7 +171,7 @@ local function positioned_to_pair_tokens(positioned, full_text)
   return pair_tokens
 end
 
-local function clone_positioned(positioned)
+clone_positioned = function(positioned)
   local copy = {}
   for i = 1, #positioned do
     local token = positioned[i]
@@ -198,7 +204,7 @@ local function merge_adjacent(positioned)
   return merged
 end
 
-local function overlay_positioned(base_tokens, overlay_tokens)
+overlay_positioned = function(base_tokens, overlay_tokens)
   if not overlay_tokens or #overlay_tokens == 0 then
     return clone_positioned(base_tokens)
   end
