@@ -1,5 +1,12 @@
 # Change Log
 
+## [0.13.3] - 2026-03-16 — Large-project responsiveness.
+
+* Stop recursive native directory watches from expanding across entire subtrees.
+* Cap native project file collection and tree directory listing to keep huge workspaces responsive.
+* Avoid full-project native scans when project search or replace targets a single file.
+* Coalesce filesystem change bursts so large directory churn does not flood rebuild work.
+
 ## [0.13.2] - 2026-03-16 — Additional syntax highlighting.
 
 * Add syntax highlighting for env, ini, and zsh files.

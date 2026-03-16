@@ -27,7 +27,8 @@ config.plugins.treeview = common.merge({
   animate_scroll_to_focused_file = true,
   show_hidden = false,
   show_ignored = true,
-  visible = true
+  visible = true,
+  max_dir_entries = 5000,
 }, config.plugins.treeview)
 
 local tooltip_offset = style.font:get_height()
@@ -127,7 +128,10 @@ function TreeView:get_cached(project, path)
   if t.expanded and t.type == "dir" and not t.files then
     t.files = {}
     if native_project_fs then
-      for _, entry in ipairs(native_project_fs.list_dir(path, { show_hidden = self.show_hidden })) do
+      for _, entry in ipairs(native_project_fs.list_dir(path, {
+        show_hidden = self.show_hidden,
+        max_entries = config.plugins.treeview.max_dir_entries,
+      })) do
         local f = {
           name = entry.name,
           abs_filename = entry.abs_filename,

@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+const MAX_QUEUED_CHANGES: usize = 4096;
+
 struct WatchHandle {
     _watcher: RecommendedWatcher,
     queue: Arc<Mutex<VecDeque<String>>>,
@@ -20,6 +22,8 @@ pub(crate) struct WalkOptions {
     pub show_hidden: bool,
     pub max_size_bytes: Option<u64>,
     pub path_glob: Option<String>,
+    pub max_files: Option<usize>,
+    pub max_entries: Option<usize>,
 }
 
 fn next_watch_id() -> u64 {
@@ -104,7 +108,7 @@ struct DirEntry {
     size: u64,
 }
 
-fn read_dir_entries(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
+fn read_dir_entries(path: &Path, show_hidden: bool, max_entries: Option<usize>) -> Vec<DirEntry> {
     let mut entries = Vec::new();
     if let Ok(read_dir) = fs::read_dir(path) {
         for entry in read_dir.flatten() {
@@ -112,14 +116,23 @@ fn read_dir_entries(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
             if !show_hidden && is_hidden(&entry_path) {
                 continue;
             }
-            if let Ok(meta) = entry.metadata() {
-                let kind = if meta.is_dir() { "dir" } else { "file" }.to_string();
-                entries.push(DirEntry {
-                    name: entry.file_name().to_string_lossy().into_owned(),
-                    abs_path: entry_path.to_string_lossy().into_owned(),
-                    kind,
-                    size: meta.len(),
-                });
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let kind = if file_type.is_dir() { "dir" } else { "file" }.to_string();
+            let size = if file_type.is_file() {
+                entry.metadata().map(|meta| meta.len()).unwrap_or(0)
+            } else {
+                0
+            };
+            entries.push(DirEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                abs_path: entry_path.to_string_lossy().into_owned(),
+                kind,
+                size,
+            });
+            if max_entries.is_some_and(|limit| entries.len() >= limit) {
+                break;
             }
         }
     }
@@ -138,7 +151,7 @@ pub(crate) fn walk_files(roots: &[String], opts: &WalkOptions) -> Vec<String> {
         .collect();
 
     while let Some((root, path)) = stack.pop() {
-        let entries = read_dir_entries(&path, opts.show_hidden);
+        let entries = read_dir_entries(&path, opts.show_hidden, opts.max_entries);
         for entry in entries {
             let entry_path = PathBuf::from(&entry.abs_path);
             if entry.kind == "dir" {
@@ -157,6 +170,9 @@ pub(crate) fn walk_files(roots: &[String], opts: &WalkOptions) -> Vec<String> {
                 }
             }
             files.push(entry.abs_path);
+            if opts.max_files.is_some_and(|limit| files.len() >= limit) {
+                return files;
+            }
         }
     }
 
@@ -169,6 +185,8 @@ fn parse_walk_opts(opts: Option<LuaTable>) -> LuaResult<WalkOptions> {
         out.show_hidden = opts.get::<Option<bool>>("show_hidden")?.unwrap_or(false);
         out.max_size_bytes = opts.get::<Option<u64>>("max_size_bytes")?;
         out.path_glob = opts.get::<Option<String>>("path_glob")?;
+        out.max_files = opts.get::<Option<usize>>("max_files")?;
+        out.max_entries = opts.get::<Option<usize>>("max_entries")?;
     }
     Ok(out)
 }
@@ -180,7 +198,7 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
         "list_dir",
         lua.create_function(|lua, (path, opts): (String, Option<LuaTable>)| {
             let opts = parse_walk_opts(opts)?;
-            let entries = read_dir_entries(Path::new(&path), opts.show_hidden);
+            let entries = read_dir_entries(Path::new(&path), opts.show_hidden, opts.max_entries);
             let out = lua.create_table_with_capacity(entries.len(), 0)?;
             for (idx, entry) in entries.into_iter().enumerate() {
                 let item = lua.create_table()?;
@@ -216,12 +234,25 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
         lua.create_function(|_, path: String| {
             let queue = Arc::new(Mutex::new(VecDeque::new()));
             let queue_for_cb = Arc::clone(&queue);
+            let root_path = path.clone();
             let mut watcher = RecommendedWatcher::new(
                 move |res: notify::Result<notify::Event>| {
                     if let Ok(event) = res {
                         let mut queue = queue_for_cb.lock();
+                        if queue.len() >= MAX_QUEUED_CHANGES {
+                            queue.clear();
+                            queue.push_back(root_path.clone());
+                            #[cfg(feature = "sdl")]
+                            crate::window::push_wakeup_event();
+                            return;
+                        }
                         for path in event.paths {
                             queue.push_back(path.to_string_lossy().into_owned());
+                            if queue.len() >= MAX_QUEUED_CHANGES {
+                                queue.clear();
+                                queue.push_back(root_path.clone());
+                                break;
+                            }
                         }
                     }
                     #[cfg(feature = "sdl")]
@@ -231,7 +262,7 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
             )
             .map_err(|e| LuaError::RuntimeError(e.to_string()))?;
             watcher
-                .watch(Path::new(&path), RecursiveMode::Recursive)
+                .watch(Path::new(&path), RecursiveMode::NonRecursive)
                 .map_err(|e| LuaError::RuntimeError(e.to_string()))?;
             let id = next_watch_id();
             WATCHERS.lock().insert(

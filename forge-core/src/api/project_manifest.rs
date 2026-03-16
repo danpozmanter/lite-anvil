@@ -31,6 +31,8 @@ fn build_files(root: &str, max_size_bytes: Option<u64>) -> Vec<String> {
             show_hidden: false,
             max_size_bytes,
             path_glob: None,
+            max_files: None,
+            max_entries: None,
         },
     )
 }

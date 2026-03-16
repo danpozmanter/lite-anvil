@@ -72,6 +72,11 @@ config.large_file = {
   disable_autocomplete = true,
 }
 
+---Project-scale scanning safeguards for very large trees.
+config.project_scan = {
+  max_files = 50000,
+}
+
 ---A list of files and directories to ignore.
 ---Each element is a Lua pattern, where patterns ending with a forward slash
 ---are recognized as directories while patterns ending with an anchor ("$") are

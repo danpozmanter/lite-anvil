@@ -15,6 +15,8 @@ struct ProjectEntry {
     files: Vec<String>,
     dirty: Arc<AtomicBool>,
     _watcher: RecommendedWatcher,
+    max_size_bytes: Option<u64>,
+    max_files: Option<usize>,
 }
 
 static PROJECTS: Lazy<Mutex<HashMap<String, ProjectEntry>>> =
@@ -42,23 +44,33 @@ fn relative_to(root: &str, filename: &str) -> String {
         .unwrap_or_else(|| normalize_path(&filename.to_string_lossy()))
 }
 
-fn build_files(root: &str, max_size_bytes: Option<u64>) -> Vec<String> {
+fn build_files(root: &str, max_size_bytes: Option<u64>, max_files: Option<usize>) -> Vec<String> {
     walk_files(
         &[root.to_string()],
         &WalkOptions {
             show_hidden: false,
             max_size_bytes,
             path_glob: None,
+            max_files,
+            max_entries: None,
         },
     )
 }
 
-fn ensure_project(root: &str, max_size_bytes: Option<u64>) -> LuaResult<()> {
+fn ensure_project(
+    root: &str,
+    max_size_bytes: Option<u64>,
+    max_files: Option<usize>,
+) -> LuaResult<()> {
     let root = normalize_path(root);
     let needs_build = {
         let projects = PROJECTS.lock();
         match projects.get(&root) {
-            Some(entry) => entry.dirty.load(Ordering::Relaxed),
+            Some(entry) => {
+                entry.dirty.load(Ordering::Relaxed)
+                    || entry.max_size_bytes != max_size_bytes
+                    || entry.max_files != max_files
+            }
             None => true,
         }
     };
@@ -81,7 +93,7 @@ fn ensure_project(root: &str, max_size_bytes: Option<u64>) -> LuaResult<()> {
         .watch(Path::new(&root), RecursiveMode::Recursive)
         .map_err(|e| LuaError::RuntimeError(e.to_string()))?;
 
-    let files = build_files(&root, max_size_bytes);
+    let files = build_files(&root, max_size_bytes, max_files);
     dirty.store(false, Ordering::Relaxed);
     PROJECTS.lock().insert(
         root,
@@ -89,6 +101,8 @@ fn ensure_project(root: &str, max_size_bytes: Option<u64>) -> LuaResult<()> {
             files,
             dirty,
             _watcher: watcher,
+            max_size_bytes,
+            max_files,
         },
     );
     Ok(())
@@ -100,15 +114,18 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     module.set(
         "sync_roots",
         lua.create_function(|_, (roots, opts): (LuaTable, Option<LuaTable>)| {
-            let max_size_bytes = if let Some(opts) = opts {
-                opts.get::<Option<u64>>("max_size_bytes")?
+            let (max_size_bytes, max_files) = if let Some(opts) = opts {
+                (
+                    opts.get::<Option<u64>>("max_size_bytes")?,
+                    opts.get::<Option<usize>>("max_files")?,
+                )
             } else {
-                None
+                (None, None)
             };
             let mut keep = HashMap::new();
             for root in roots.sequence_values::<String>() {
                 let root = normalize_path(&root?);
-                ensure_project(&root, max_size_bytes)?;
+                ensure_project(&root, max_size_bytes, max_files)?;
                 keep.insert(root, true);
             }
             PROJECTS.lock().retain(|root, _| keep.contains_key(root));
@@ -119,12 +136,15 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     module.set(
         "get_files",
         lua.create_function(|lua, (root, opts): (String, Option<LuaTable>)| {
-            let max_size_bytes = if let Some(opts) = opts {
-                opts.get::<Option<u64>>("max_size_bytes")?
+            let (max_size_bytes, max_files) = if let Some(opts) = opts {
+                (
+                    opts.get::<Option<u64>>("max_size_bytes")?,
+                    opts.get::<Option<usize>>("max_files")?,
+                )
             } else {
-                None
+                (None, None)
             };
-            ensure_project(&root, max_size_bytes)?;
+            ensure_project(&root, max_size_bytes, max_files)?;
             let root = normalize_path(&root);
             let out = lua.create_table()?;
             if let Some(entry) = PROJECTS.lock().get(&root) {
@@ -139,16 +159,19 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     module.set(
         "get_all_files",
         lua.create_function(|lua, (roots, opts): (LuaTable, Option<LuaTable>)| {
-            let max_size_bytes = if let Some(opts) = opts {
-                opts.get::<Option<u64>>("max_size_bytes")?
+            let (max_size_bytes, max_files) = if let Some(opts) = opts {
+                (
+                    opts.get::<Option<u64>>("max_size_bytes")?,
+                    opts.get::<Option<usize>>("max_files")?,
+                )
             } else {
-                None
+                (None, None)
             };
             let out = lua.create_table()?;
             let mut out_idx = 1i64;
             for root in roots.sequence_values::<String>() {
                 let root = root?;
-                ensure_project(&root, max_size_bytes)?;
+                ensure_project(&root, max_size_bytes, max_files)?;
                 let normalized_root = normalize_path(&root);
                 if let Some(entry) = PROJECTS.lock().get(&normalized_root) {
                     for file in &entry.files {

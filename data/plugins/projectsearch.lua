@@ -141,11 +141,18 @@ local function collect_native_files(path, path_glob)
   if not native_project_search then
     return nil
   end
+  if path then
+    local info = system.get_file_info(path)
+    if info and info.type == "file" then
+      return { path }
+    end
+  end
   local roots = collect_roots(path)
   local files = native_project_search.collect_files(roots, {
     show_hidden = false,
     max_size_bytes = config.file_size_limit * 1e6,
     path_glob = path_glob,
+    max_files = config.project_scan.max_files,
   })
   if path and (not system.get_file_info(path) or system.get_file_info(path).type ~= "dir") then
     local filtered = {}

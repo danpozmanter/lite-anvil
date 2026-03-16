@@ -158,7 +158,8 @@ function Project:files()
   return coroutine.wrap(function()
     if native_project_model then
       local cached = native_project_model.get_files(self.path, {
-        max_size_bytes = config.file_size_limit * 1e6
+        max_size_bytes = config.file_size_limit * 1e6,
+        max_files = config.project_scan.max_files,
       })
       for _, filename in ipairs(cached) do
         local info = self:get_file_info(filename)

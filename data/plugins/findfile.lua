@@ -45,7 +45,8 @@ command.add(nil, {
         roots[i] = project.path
       end
       local cached = native_project_model.get_all_files(roots, {
-        max_size_bytes = config.file_size_limit * 1e6
+        max_size_bytes = config.file_size_limit * 1e6,
+        max_files = config.plugins.findfile.file_limit,
       })
       for _, filename in ipairs(cached) do
         if #files > config.plugins.findfile.file_limit then
