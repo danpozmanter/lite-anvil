@@ -103,8 +103,8 @@ pub fn init() -> Result<()> {
     unsafe {
         SDL_SetAppMetadata(
             c"Lite Anvil".as_ptr(),
-            c"0.14.0".as_ptr(),
-            c"com.lite_anvil.LiteAnvil".as_ptr(),
+            c"0.14.1".as_ptr(),
+            c"com.lite-anvil.LiteAnvil".as_ptr(),
         );
     }
     let ok = unsafe { SDL_Init(SDL_INIT_VIDEO) };

@@ -123,14 +123,18 @@ make install PREFIX=/usr
 
 ### macOS notes
 
-If macOS reports `Code Signature Invalid` after install, re-sign the app bundle
-locally with an ad hoc signature:
+`./install.sh` now assembles the `.app`, clears stale extended attributes,
+applies an ad hoc signature, and verifies the finished bundle locally.
+
+If you modify `/Applications/LiteAnvil.app` after install and macOS reports
+`Code Signature Invalid`, re-sign the app bundle locally:
 
 ```bash
 codesign --force --deep --sign - --timestamp=none /Applications/LiteAnvil.app
 ```
 
-If the app was quarantined by Gatekeeper, remove the quarantine attribute:
+If the app was downloaded or copied in a way that re-added Gatekeeper
+quarantine, remove the quarantine attribute:
 
 ```bash
 sudo xattr -dr com.apple.quarantine /Applications/LiteAnvil.app

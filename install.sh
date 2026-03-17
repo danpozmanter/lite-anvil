@@ -35,7 +35,7 @@ macos_should_bundle_dep() {
         /System/Library/*|/usr/lib/*|@executable_path/*|@loader_path/*)
             return 1
             ;;
-        /*)
+        /*|@rpath/*)
             return 0
             ;;
         *)
@@ -84,6 +84,41 @@ macos_resolve_dep() {
     return 1
 }
 
+macos_bundled_dep_relpath() {
+    local resolved_dep="$1"
+
+    if [[ "$resolved_dep" == *.framework/* ]]; then
+        local framework_dir framework_name
+        framework_dir="${resolved_dep%/*.framework/*}.framework"
+        framework_name="$(basename "$framework_dir")"
+        printf '%s/%s\n' "$framework_name" "${framework_name%.framework}"
+    else
+        basename "$resolved_dep"
+    fi
+}
+
+macos_bundled_dep_ref() {
+    local target="$1"
+    local resolved_dep="$2"
+    local relpath
+    relpath="$(macos_bundled_dep_relpath "$resolved_dep")"
+
+    case "$target" in
+        */Contents/MacOS/*)
+            printf '@executable_path/../Frameworks/%s\n' "$relpath"
+            ;;
+        */Contents/Frameworks/*.framework/*)
+            printf '@loader_path/../%s\n' "$relpath"
+            ;;
+        */Contents/Frameworks/*)
+            printf '@loader_path/%s\n' "$relpath"
+            ;;
+        *)
+            die "unsupported macOS dependency target: $target"
+            ;;
+    esac
+}
+
 bundle_macos_dylibs() {
     local app="$1"
     local binary="$app/Contents/MacOS/lite-anvil"
@@ -115,10 +150,32 @@ bundle_macos_dylibs() {
         resolved_dep="$(macos_resolve_dep "$source_dep")" \
             || die "missing dynamic library: $source_dep"
 
+        if [[ "$resolved_dep" == *.framework/* ]]; then
+            local framework_dir framework_name
+            framework_dir="${resolved_dep%/*.framework/*}.framework"
+            framework_name="$(basename "$framework_dir")"
+
+            dep_name="$framework_name"
+            dest_dep="$frameworks_dir/$framework_name"
+            install_name_tool -change "$source_dep" "$(macos_bundled_dep_ref "$target" "$resolved_dep")" "$target"
+
+            if ! grep -Fxq "$framework_dir" "$processed_list"; then
+                printf '%s\n' "$framework_dir" >> "$processed_list"
+
+                cp -R "$framework_dir" "$dest_dep"
+                chmod -R u+w "$dest_dep"
+                chmod 755 "$dest_dep/${framework_name%.framework}"
+                install_name_tool -id "@loader_path/$framework_name/${framework_name%.framework}" "$dest_dep/${framework_name%.framework}"
+
+                printf '%s\n' "$dest_dep/${framework_name%.framework}" >> "$queued_list"
+            fi
+            return 0
+        fi
+
         dep_name="$(basename "$resolved_dep")"
         dest_dep="$frameworks_dir/$dep_name"
 
-        install_name_tool -change "$source_dep" "@executable_path/../Frameworks/$dep_name" "$target"
+        install_name_tool -change "$source_dep" "$(macos_bundled_dep_ref "$target" "$resolved_dep")" "$target"
 
         if ! grep -Fxq "$resolved_dep" "$processed_list"; then
             printf '%s\n' "$resolved_dep" >> "$processed_list"
@@ -138,30 +195,37 @@ bundle_macos_dylibs() {
     while queued_dep="$(sed -n "${queue_index}p" "$queued_list")" && [ -n "$queued_dep" ]; do
         [ -n "$queued_dep" ] || continue
 
-        local nested_dep nested_name
+        local nested_dep
         while IFS= read -r nested_dep; do
             macos_should_bundle_dep "$nested_dep" || continue
-
-            local resolved_nested_dep
-            resolved_nested_dep="$(macos_resolve_dep "$nested_dep")" \
-                || die "missing nested dynamic library: $nested_dep"
-
-            nested_name="$(basename "$resolved_nested_dep")"
-
-            install_name_tool -change "$nested_dep" "@loader_path/$nested_name" "$queued_dep"
-
-            if ! grep -Fxq "$resolved_nested_dep" "$processed_list"; then
-                printf '%s\n' "$resolved_nested_dep" >> "$processed_list"
-                cp -Lf "$resolved_nested_dep" "$frameworks_dir/$nested_name"
-                chmod 755 "$frameworks_dir/$nested_name"
-                install_name_tool -id "@loader_path/$nested_name" "$frameworks_dir/$nested_name"
-                printf '%s\n' "$frameworks_dir/$nested_name" >> "$queued_list"
-            fi
+            bundle_macos_dep "$queued_dep" "$nested_dep"
         done < <(macos_list_deps "$queued_dep")
         queue_index=$((queue_index + 1))
     done
 
     rm -f "$processed_list" "$queued_list"
+}
+
+sign_macos_app() {
+    local app="$1"
+
+    command -v codesign >/dev/null 2>&1 || die "codesign is required on macOS"
+
+    xattr -cr "$app" 2>/dev/null || true
+
+    codesign --force --sign - --timestamp=none "$app/Contents/MacOS/lite-anvil"
+
+    if [ -d "$app/Contents/Frameworks" ]; then
+        local item
+        while IFS= read -r item; do
+            codesign --force --sign - --timestamp=none "$item"
+        done < <(find "$app/Contents/Frameworks" \
+            \( -name "*.dylib" -o -name "*.framework" \) \
+            -print | sort -r)
+    fi
+
+    codesign --force --deep --sign - --timestamp=none "$app"
+    codesign --verify --deep --strict --verbose=2 "$app"
 }
 
 install_linux() {
@@ -231,9 +295,11 @@ install_macos() {
     <key>CFBundleDisplayName</key>
     <string>Lite-Anvil</string>
     <key>CFBundleIdentifier</key>
-    <string>com.lite_anvil.LiteAnvil</string>
+    <string>com.lite-anvil.LiteAnvil</string>
     <key>CFBundleVersion</key>
-    <string>0.2.6</string>
+    <string>0.14.1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.14.1</string>
     <key>CFBundleExecutable</key>
     <string>lite-anvil</string>
     <key>CFBundlePackageType</key>
@@ -243,6 +309,8 @@ install_macos() {
 </dict>
 </plist>
 PLIST
+
+    sign_macos_app "$APP"
 
     # CLI symlink — /usr/local/bin may need sudo on some systems.
     CLI_LINK=/usr/local/bin/lite-anvil

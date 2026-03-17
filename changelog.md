@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.14.1] - 2026-03-17 — macOS bundle/signing fixes.
+
+* Fix macOS app metadata to use the current release version and a valid bundle identifier.
+* Improve macOS dependency bundling so `@rpath` libraries and framework-style dependencies are copied into the app bundle correctly.
+* Sign and verify the assembled `.app` bundle during install to catch broken local builds before launch.
+
 ## [0.14.0] - 2026-03-16 — Focus mode, LSP navigation, unsaved files ergonomics, terminal improvements.
 
 * Add closing the current project folder so Lite-Anvil can stay open with no folder attached and just unsaved files, plus a reversible focus mode for the active file.
