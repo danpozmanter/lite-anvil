@@ -1,0 +1,235 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": ";",
+  "files": {
+  "$ref": "3"
+},
+  "name": "Assembly",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F]+",
+  "type": "number"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%da-fA-F]*[hHbBqQoOdD]?",
+  "type": "number"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "%%[%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "%.[%a_][%w_]*",
+  "type": "keyword"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[@$][%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%[%](),:]",
+  "type": "operator"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*:",
+  "type": "function"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "add": "keyword",
+  "and": "keyword",
+  "bits": "keyword",
+  "call": "keyword",
+  "cmp": "keyword",
+  "db": "keyword",
+  "dd": "keyword",
+  "default": "keyword",
+  "div": "keyword",
+  "dq": "keyword",
+  "dt": "keyword",
+  "dw": "keyword",
+  "eax": "keyword2",
+  "ebp": "keyword2",
+  "ebx": "keyword2",
+  "ecx": "keyword2",
+  "edi": "keyword2",
+  "edx": "keyword2",
+  "equ": "keyword",
+  "esi": "keyword2",
+  "esp": "keyword2",
+  "extern": "keyword",
+  "global": "keyword",
+  "idiv": "keyword",
+  "imul": "keyword",
+  "int": "keyword",
+  "je": "keyword",
+  "jg": "keyword",
+  "jge": "keyword",
+  "jl": "keyword",
+  "jle": "keyword",
+  "jmp": "keyword",
+  "jne": "keyword",
+  "lea": "keyword",
+  "mov": "keyword",
+  "mul": "keyword",
+  "nop": "keyword",
+  "not": "keyword",
+  "or": "keyword",
+  "org": "keyword",
+  "pop": "keyword",
+  "push": "keyword",
+  "rax": "keyword2",
+  "rbp": "keyword2",
+  "rbx": "keyword2",
+  "rcx": "keyword2",
+  "rdi": "keyword2",
+  "rdx": "keyword2",
+  "resb": "keyword",
+  "resd": "keyword",
+  "resq": "keyword",
+  "resw": "keyword",
+  "ret": "keyword",
+  "rip": "keyword2",
+  "rsi": "keyword2",
+  "rsp": "keyword2",
+  "sar": "keyword",
+  "section": "keyword",
+  "segment": "keyword",
+  "shl": "keyword",
+  "shr": "keyword",
+  "sub": "keyword",
+  "syscall": "keyword",
+  "test": "keyword",
+  "times": "keyword",
+  "xor": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.asm$", "%.s$", "%.S$", "%.inc$", "%.nasm$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": ";.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

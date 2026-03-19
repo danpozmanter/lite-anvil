@@ -8,6 +8,7 @@ local storage = require "core.storage"
 local Doc = require "core.doc"
 local DocView = require "core.docview"
 local style = require "core.style"
+local native_affordance = require "affordance_model"
 
 config.plugins.folding = common.merge({
   persist = true,
@@ -15,97 +16,29 @@ config.plugins.folding = common.merge({
 
 local STORAGE_MODULE = "folding"
 
-local function indent_of(text)
-  local indent = text:match("^[ \t]*") or ""
-  local width = 0
-  for i = 1, #indent do
-    width = width + (indent:sub(i, i) == "\t" and 4 or 1)
-  end
-  return width
-end
-
-local function get_fold_end(doc, line)
-  local line_text = doc.lines[line]
-  if not line_text or line_text:match("^%s*$") then
-    return nil
-  end
-  local base = indent_of(line_text)
-  local next_indent
-  local end_line
-  for i = line + 1, #doc.lines do
-    local text = doc.lines[i]
-    if text and not text:match("^%s*$") then
-      local indent = indent_of(text)
-      if not next_indent then
-        if indent <= base then
-          return nil
-        end
-        next_indent = indent
-      elseif indent <= base then
-        return end_line
-      end
-      end_line = i
-    end
-  end
-  return end_line
-end
-
 local function doc_folds(doc)
   doc.folds = doc.folds or {}
   return doc.folds
 end
 
-local function is_hidden(doc, line)
-  for start_line, end_line in pairs(doc_folds(doc)) do
-    if line > start_line and line <= end_line then
-      return true, start_line, end_line
-    end
-  end
-  return false
+local function get_fold_end(doc, line)
+  return native_affordance.get_fold_end(doc.lines, line)
 end
 
 local function visible_line_count(doc)
-  local hidden = 0
-  for start_line, end_line in pairs(doc_folds(doc)) do
-    hidden = hidden + math.max(0, end_line - start_line)
-  end
-  return #doc.lines - hidden
+  return native_affordance.visible_line_count(#doc.lines, doc_folds(doc))
 end
 
 local function actual_to_visible(doc, line)
-  local visible = line
-  for start_line, end_line in pairs(doc_folds(doc)) do
-    if line > end_line then
-      visible = visible - (end_line - start_line)
-    elseif line > start_line then
-      visible = visible - (line - start_line)
-    end
-  end
-  return math.max(1, visible)
+  return native_affordance.actual_to_visible(line, doc_folds(doc))
 end
 
 local function visible_to_actual(doc, visible)
-  local actual = 1
-  local seen = 0
-  while actual <= #doc.lines do
-    local hidden, _, end_line = is_hidden(doc, actual)
-    if not hidden then
-      seen = seen + 1
-      if seen >= visible then
-        return actual
-      end
-    end
-    actual = hidden and (end_line + 1) or (actual + 1)
-  end
-  return #doc.lines
+  return native_affordance.visible_to_actual(visible, #doc.lines, doc_folds(doc))
 end
 
 local function next_visible_line(doc, line)
-  local hidden, _, end_line = is_hidden(doc, line + 1)
-  if hidden then
-    return end_line + 1
-  end
-  return line + 1
+  return native_affordance.next_visible_line(line, doc_folds(doc))
 end
 
 local function toggle_fold(doc, line)
@@ -227,7 +160,6 @@ function DocView:draw()
   self:draw_background(style.background)
   local _, indent_size = self.doc:get_indent_info()
   self:get_font():set_tab_size(indent_size)
-
   local minline, maxline = self:get_visible_line_range()
   local lh = self:get_line_height()
   local gw, gpad = self:get_gutter_width()
@@ -237,7 +169,6 @@ function DocView:draw()
     y = y + (self:draw_line_gutter(line, self.position.x, y, gpad and gw - gpad or gw) or lh)
     line = next_visible_line(self.doc, line)
   end
-
   local pos = self.position
   x, y = self:get_line_screen_position(minline)
   core.push_clip_rect(pos.x + gw, pos.y, self.size.x - gw, self.size.y)
@@ -267,7 +198,7 @@ function DocView:draw_line_text(line, x, y)
   local lh = old_draw_line_text(self, line, x, y)
   local end_line = self.doc.folds and self.doc.folds[line]
   if end_line then
-    local text = string.format(" … %d lines", end_line - line)
+    local text = string.format(" ... %d lines", end_line - line)
     renderer.draw_text(self:get_font(), text, x + self:get_col_x_offset(line, math.huge) + style.padding.x, y + self:get_line_text_y_offset(), style.dim)
   end
   return lh
@@ -287,7 +218,7 @@ function DocView:on_mouse_pressed(button, x, y, clicks)
   return old_mouse_pressed(self, button, x, y, clicks)
 end
 
-local prev_line = DocView.translate.previous_line
+local old_previous_line = DocView.translate.previous_line
 DocView.translate.previous_line = function(doc, line, col, dv)
   local visible = actual_to_visible(doc, line)
   if visible <= 1 then
@@ -297,7 +228,7 @@ DocView.translate.previous_line = function(doc, line, col, dv)
   return target, dv:get_x_offset_col(target, dv.last_x_offset.offset or 0)
 end
 
-local next_line = DocView.translate.next_line
+local old_next_line = DocView.translate.next_line
 DocView.translate.next_line = function(doc, line, col, dv)
   local visible = actual_to_visible(doc, line)
   if visible >= visible_line_count(doc) then

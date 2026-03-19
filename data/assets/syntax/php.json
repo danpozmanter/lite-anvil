@@ -1,0 +1,259 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "headers": "^<%?php",
+  "name": "PHP",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "comment"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "13"
+},
+  "type": "string"
+}
+},
+  "13": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\\"]
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "15"
+},
+  "type": "string"
+}
+},
+  "15": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "17"
+},
+  "type": "string"
+}
+},
+  "17": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$[%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "abstract": "keyword",
+  "array": "function",
+  "bool": "keyword2",
+  "break": "keyword",
+  "callable": "keyword2",
+  "case": "keyword",
+  "catch": "keyword",
+  "class": "keyword",
+  "const": "keyword",
+  "continue": "keyword",
+  "default": "keyword",
+  "do": "keyword",
+  "echo": "function",
+  "else": "keyword",
+  "elseif": "keyword",
+  "empty": "function",
+  "endfor": "keyword",
+  "endforeach": "keyword",
+  "endif": "keyword",
+  "endswitch": "keyword",
+  "endwhile": "keyword",
+  "extends": "keyword",
+  "false": "literal",
+  "final": "keyword",
+  "finally": "keyword",
+  "float": "keyword2",
+  "fn": "keyword",
+  "for": "keyword",
+  "foreach": "keyword",
+  "function": "keyword",
+  "if": "keyword",
+  "implements": "keyword",
+  "int": "keyword2",
+  "interface": "keyword",
+  "isset": "function",
+  "iterable": "keyword2",
+  "match": "keyword",
+  "mixed": "keyword2",
+  "namespace": "keyword",
+  "new": "keyword",
+  "null": "literal",
+  "object": "keyword2",
+  "parent": "keyword2",
+  "print": "function",
+  "private": "keyword",
+  "protected": "keyword",
+  "public": "keyword",
+  "readonly": "keyword",
+  "return": "keyword",
+  "self": "keyword2",
+  "static": "keyword2",
+  "string": "keyword2",
+  "switch": "keyword",
+  "throw": "keyword",
+  "trait": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "use": "keyword",
+  "void": "keyword2",
+  "while": "keyword",
+  "yield": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*",
+  "type": "number"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:]+",
+  "type": "operator"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.php$", "%.phtml$", "%.php%d?$", "%.phps$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "<%?php",
+  "type": "keyword"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": "%?>",
+  "type": "keyword"
+}
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

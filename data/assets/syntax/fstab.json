@@ -1,0 +1,130 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": "#",
+  "files": {
+  "$ref": "3"
+},
+  "name": "fstab",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": "[,%-]",
+  "type": "operator"
+}
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-%.]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "async": "keyword",
+  "auto": "keyword",
+  "btrfs": "keyword2",
+  "defaults": "keyword",
+  "dev": "keyword",
+  "exec": "keyword",
+  "ext2": "keyword2",
+  "ext3": "keyword2",
+  "ext4": "keyword2",
+  "nfs": "keyword2",
+  "noauto": "keyword",
+  "nodev": "keyword",
+  "noexec": "keyword",
+  "nosuid": "keyword",
+  "ntfs": "keyword2",
+  "proc": "keyword2",
+  "ro": "keyword",
+  "rw": "keyword",
+  "suid": "keyword",
+  "swap": "keyword2",
+  "sync": "keyword",
+  "sysfs": "keyword2",
+  "tmpfs": "keyword2",
+  "user": "keyword",
+  "users": "keyword",
+  "vfat": "keyword2",
+  "xfs": "keyword2"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["fstab$", "mtab$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "11"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "UUID=[^%s#]+",
+  "type": "keyword2"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": "LABEL=[^%s#]+",
+  "type": "keyword2"
+}
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": "/[^%s#]+",
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-]?%d+",
+  "type": "number"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

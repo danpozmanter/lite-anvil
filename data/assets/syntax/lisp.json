@@ -1,0 +1,136 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": ";",
+  "files": {
+  "$ref": "3"
+},
+  "name": "Lisp",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%(%)%[%]{}]",
+  "type": "operator"
+}
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": ":[%a_][%w_%-]*",
+  "type": "keyword2"
+}
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-%*%!%?<>/=+]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "case": "keyword",
+  "cond": "keyword",
+  "defclass": "keyword",
+  "defmacro": "keyword",
+  "defmethod": "keyword",
+  "defparameter": "keyword",
+  "defun": "keyword",
+  "defvar": "keyword",
+  "do": "keyword",
+  "dolist": "keyword",
+  "dotimes": "keyword",
+  "flet": "keyword",
+  "function": "keyword",
+  "if": "keyword",
+  "labels": "keyword",
+  "lambda": "keyword",
+  "let": "keyword",
+  "let*": "keyword",
+  "loop": "keyword",
+  "nil": "literal",
+  "progn": "keyword",
+  "quote": "keyword",
+  "setf": "keyword",
+  "setq": "keyword",
+  "t": "literal",
+  "unless": "keyword",
+  "when": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.lisp$", "%.lsp$", "%.cl$", "%.el$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "12"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": ";.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "string"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-]?%d+%.?%d*",
+  "type": "number"
+}
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": "[`',]",
+  "type": "operator"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

@@ -7,14 +7,7 @@ local style = require "core.style"
 local DocView = require "core.docview"
 local CommandView = require "core.commandview"
 local StatusView = require "core.statusview"
-local doc_native = nil
-
-do
-  local ok, mod = pcall(require, "doc_native")
-  if ok then
-    doc_native = mod
-  end
-end
+local doc_native = require "doc_native"
 
 local last_view, last_fn, last_text, last_sel
 
@@ -157,9 +150,6 @@ local function replace(kind, default, fn)
 end
 
 local function native_replace_text(text, old, new, regex_mode)
-  if not doc_native then
-    return nil
-  end
   local result = doc_native.replace(text, old, new, {
     regex = regex_mode and true or false,
   })

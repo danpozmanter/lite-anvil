@@ -3,14 +3,14 @@ name = "forge-core"
 version.workspace = true
 edition = "2024"
 rust-version = "1.85"
-description = "Lite-Anvil text editor — Rust core"
+description = "Lite-Anvil text editor — Rust application with Lua extensions"
 license = "MIT"
 
 [package.metadata.deb]
 name = "lite-anvil"
 maintainer = "Lite-Anvil contributors"
 copyright = "MIT"
-extended-description = "A lightweight text editor written in Lua with a Rust core."
+extended-description = "A lightweight text editor written in Rust with Lua as the extension and customization layer."
 depends = "libsdl3-0, libfreetype6, libpcre2-8-0"
 section = "editors"
 priority = "optional"

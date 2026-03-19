@@ -6,19 +6,7 @@ local core = require "core"
 local common = require "core.common"
 local config = require "core.config"
 local gitignore = require "core.gitignore"
-local native_manifest = nil
-local native_project_model = nil
-
-do
-  local ok, mod = pcall(require, "project_manifest")
-  if ok then
-    native_manifest = mod
-  end
-  ok, mod = pcall(require, "project_model")
-  if ok then
-    native_project_model = mod
-  end
-end
+local native_project_model = require "project_model"
 
 -- inspect config.ignore_files patterns and prepare ready to use entries.
 local function compile_ignore_files()
@@ -58,7 +46,7 @@ end
 -- This function should get only filenames normalized using
 -- common.normalize_path function.
 function Project:absolute_path(filename)
-  if native_project_model and self and self.path then
+  if self and self.path then
     return native_project_model.absolute_path(self.path, filename)
   elseif common.is_absolute_path(filename) then
     return common.normalize_path(filename)
@@ -73,12 +61,10 @@ end
 
 function Project:normalize_path(filename)
   filename = common.normalize_path(filename)
-  if native_project_model then
-    return native_project_model.normalize_path(self.path, filename)
-  elseif common.path_belongs_to(filename, self.path) then
+  if common.path_belongs_to(filename, self.path) then
     filename = common.relative_path(self.path, filename)
   end
-  return filename
+  return native_project_model.normalize_path(self.path, filename)
 end
 
 
@@ -156,32 +142,17 @@ end
 
 function Project:files()
   return coroutine.wrap(function()
-    if native_project_model then
-      local cached = native_project_model.get_files(self.path, {
-        max_size_bytes = config.file_size_limit * 1e6,
-        max_files = config.project_scan.max_files,
-        exclude_dirs = config.project_scan.exclude_dirs,
-      })
-      for _, filename in ipairs(cached) do
-        local info = { type = "file", size = 0, filename = filename }
-        if not self:is_ignored(info, filename) then
-          coroutine.yield(self, info)
-        end
+    local cached = native_project_model.get_files(self.path, {
+      max_size_bytes = config.file_size_limit * 1e6,
+      max_files = config.project_scan.max_files,
+      exclude_dirs = config.project_scan.exclude_dirs,
+    })
+    for _, filename in ipairs(cached) do
+      local info = { type = "file", size = 0, filename = filename }
+      if not self:is_ignored(info, filename) then
+        coroutine.yield(self, info)
       end
-      return
-    elseif native_manifest then
-      local cached = native_manifest.get_files(self.path, {
-        max_size_bytes = config.file_size_limit * 1e6
-      })
-      for _, filename in ipairs(cached) do
-        local info = { type = "file", size = 0, filename = filename }
-        if not self:is_ignored(info, filename) then
-          coroutine.yield(self, info)
-        end
-      end
-      return
     end
-    find_files_rec(self, self.path)
   end)
 end
 

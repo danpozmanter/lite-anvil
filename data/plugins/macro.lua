@@ -4,9 +4,9 @@ local command = require "core.command"
 local keymap = require "core.keymap"
 
 local handled_events = {
-  ["keypressed"]  = true,
-  ["keyreleased"] = true,
-  ["textinput"]   = true,
+  keypressed = true,
+  keyreleased = true,
+  textinput = true,
 }
 
 local state = "stopped"
@@ -18,23 +18,22 @@ local on_event = core.on_event
 core.on_event = function(type, ...)
   local res = on_event(type, ...)
   if state == "recording" and handled_events[type] then
-    table.insert(event_buffer, { type, ... })
+    event_buffer[#event_buffer + 1] = { type, ... }
   end
   return res
 end
 
-
 local function clone(t)
   local res = {}
-  for k, v in pairs(t) do res[k] = v end
+  for k, v in pairs(t) do
+    res[k] = v
+  end
   return res
 end
-
 
 local function predicate()
   return state ~= "playing"
 end
-
 
 command.add(predicate, {
   ["macro:toggle-record"] = function()
@@ -48,7 +47,6 @@ command.add(predicate, {
       core.log("Stopped recording macro (%d events)", #event_buffer)
     end
   end,
-
   ["macro:play"] = function()
     state = "playing"
     core.log("Playing macro... (%d events)", #event_buffer)
@@ -62,7 +60,6 @@ command.add(predicate, {
     state = "stopped"
   end,
 })
-
 
 keymap.add {
   ["ctrl+shift+;"] = "macro:toggle-record",

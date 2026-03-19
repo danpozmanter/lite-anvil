@@ -1,0 +1,666 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "C++",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "regex": "0x[0-9a-fA-F][0-9a-fA-F']*(?:[lL][uU]|ll[uU]|LL[uU]|[uU][lL]\\b|[uU]ll|[uU]LL|[uU]|[lL]\\b|ll|LL)?",
+  "type": "number"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "regex": "0b[01][01']*(?:[lL][uU]|ll[uU]|LL[uU]|[uU][lL]\\b|[uU]ll|[uU]LL|[uU]|[lL]\\b|ll|LL)?",
+  "type": "number"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "regex": "0()[0-7][0-7']*(?:[lL][uU]|ll[uU]|LL[uU]|[uU][lL]\\b|[uU]ll|[uU]LL|[uU]|[lL]\\b|ll|LL)?",
+  "type": {
+  "$ref": "16"
+}
+}
+},
+  "16": {
+  "kind": "array",
+  "values": ["keyword", "number"]
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "regex": "(?:\\d[\\d']*)\\.?(?:\\d[\\d']*)?(?:[Ee][-+]?(?:\\d[\\d']*))?[fFlL]?",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "regex": "\\.(?:\\d[\\d']*)(?:[Ee][-+]?(?:\\d[\\d']*))?[fFlL]?",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%^%%<>!~|:&]",
+  "type": "operator"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "#define": "keyword",
+  "#elif": "keyword",
+  "#else": "keyword",
+  "#elseif": "keyword",
+  "#endif": "keyword",
+  "#error": "keyword",
+  "#if": "keyword",
+  "#ifdef": "keyword",
+  "#ifndef": "keyword",
+  "#include": "keyword",
+  "#pragma": "keyword",
+  "#warning": "keyword",
+  "NULL": "literal",
+  "alignas": "keyword",
+  "alignof": "keyword",
+  "and": "keyword",
+  "and_eq": "keyword",
+  "asm": "keyword",
+  "auto": "keyword",
+  "bitand": "keyword",
+  "bitor": "keyword",
+  "bool": "keyword2",
+  "break": "keyword",
+  "case": "keyword",
+  "catch": "keyword",
+  "char": "keyword2",
+  "char16_t": "keyword2",
+  "char32_t": "keyword2",
+  "char8_t": "keyword2",
+  "class": "keyword",
+  "co_await": "keyword",
+  "co_return": "keyword",
+  "co_yield": "keyword",
+  "compl": "keyword",
+  "concept": "keyword",
+  "const": "keyword",
+  "const_cast": "keyword",
+  "consteval": "keyword",
+  "constexpr": "keyword",
+  "constinit": "keyword",
+  "continue": "keyword",
+  "decltype": "keyword",
+  "default": "keyword",
+  "delete": "keyword",
+  "do": "keyword",
+  "double": "keyword2",
+  "dynamic_cast": "keyword",
+  "else": "keyword",
+  "elseif": "keyword",
+  "enum": "keyword",
+  "explicit": "keyword",
+  "export": "keyword",
+  "extern": "keyword",
+  "false": "literal",
+  "float": "keyword2",
+  "for": "keyword",
+  "friend": "keyword",
+  "goto": "keyword",
+  "if": "keyword",
+  "inline": "keyword",
+  "int": "keyword2",
+  "long": "keyword2",
+  "mutable": "keyword",
+  "namespace": "keyword",
+  "new": "keyword",
+  "noexcept": "keyword",
+  "not": "keyword",
+  "not_eq": "keyword",
+  "nullptr": "keyword",
+  "operator": "keyword",
+  "or": "keyword",
+  "or_eq": "keyword",
+  "override": "keyword",
+  "private": "keyword",
+  "protected": "keyword",
+  "public": "keyword",
+  "register": "keyword",
+  "reinterpret_cast": "keyword",
+  "requires": "keyword",
+  "return": "keyword",
+  "short": "keyword2",
+  "static": "keyword",
+  "static_assert": "keyword",
+  "static_cast": "keyword",
+  "struct": "keyword",
+  "switch": "keyword",
+  "template": "keyword",
+  "then": "keyword",
+  "this": "keyword",
+  "thread_local": "keyword",
+  "throw": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "typedef": "keyword",
+  "typeid": "keyword",
+  "typename": "keyword",
+  "union": "keyword",
+  "unsigned": "keyword2",
+  "using": "keyword",
+  "virtual": "keyword",
+  "void": "keyword2",
+  "volatile": "keyword",
+  "wchar_t": "keyword2",
+  "while": "keyword",
+  "xor": "keyword",
+  "xor_eq": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "##",
+  "type": "operator"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "struct%s()[%a_][%w_]*",
+  "type": {
+  "$ref": "22"
+}
+}
+},
+  "22": {
+  "kind": "array",
+  "values": ["keyword", "keyword2"]
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "class%s()[%a_][%w_]*",
+  "type": {
+  "$ref": "24"
+}
+}
+},
+  "24": {
+  "kind": "array",
+  "values": ["keyword", "keyword2"]
+},
+  "25": {
+  "kind": "object",
+  "values": {
+  "pattern": "union%s()[%a_][%w_]*",
+  "type": {
+  "$ref": "26"
+}
+}
+},
+  "26": {
+  "kind": "array",
+  "values": ["keyword", "keyword2"]
+},
+  "27": {
+  "kind": "object",
+  "values": {
+  "pattern": "namespace%s()[%a_][%w_]*",
+  "type": {
+  "$ref": "28"
+}
+}
+},
+  "28": {
+  "kind": "array",
+  "values": ["keyword", "keyword2"]
+},
+  "29": {
+  "kind": "object",
+  "values": {
+  "pattern": "static()%s+()inline",
+  "type": {
+  "$ref": "30"
+}
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "30": {
+  "kind": "array",
+  "values": ["keyword", "normal", "keyword"]
+},
+  "31": {
+  "kind": "object",
+  "values": {
+  "pattern": "static()%s+()constexpr",
+  "type": {
+  "$ref": "32"
+}
+}
+},
+  "32": {
+  "kind": "array",
+  "values": ["keyword", "normal", "keyword"]
+},
+  "33": {
+  "kind": "object",
+  "values": {
+  "pattern": "static()%s+()constinit",
+  "type": {
+  "$ref": "34"
+}
+}
+},
+  "34": {
+  "kind": "array",
+  "values": ["keyword", "normal", "keyword"]
+},
+  "35": {
+  "kind": "object",
+  "values": {
+  "pattern": "static()%s+()consteval",
+  "type": {
+  "$ref": "36"
+}
+}
+},
+  "36": {
+  "kind": "array",
+  "values": ["keyword", "normal", "keyword"]
+},
+  "37": {
+  "kind": "object",
+  "values": {
+  "pattern": "static()%s+()const",
+  "type": {
+  "$ref": "38"
+}
+}
+},
+  "38": {
+  "kind": "array",
+  "values": ["keyword", "normal", "keyword"]
+},
+  "39": {
+  "kind": "object",
+  "values": {
+  "pattern": "static()%s+()[%a_][%w_]*",
+  "type": {
+  "$ref": "40"
+}
+}
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.h$", "%.inl$", "%.cpp$", "%.cc$", "%.C$", "%.cxx$", "%.c++$", "%.hh$", "%.H$", "%.hxx$", "%.hpp$", "%.h++$", "%.ino$", "%.cu$", "%.cuh$"]
+},
+  "40": {
+  "kind": "array",
+  "values": ["keyword", "normal", "literal"]
+},
+  "41": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s*()%**()%s*()[%a_][%w_]*()%s*()::",
+  "type": {
+  "$ref": "42"
+}
+}
+},
+  "42": {
+  "kind": "array",
+  "values": ["literal", "normal", "operator", "normal", "literal", "normal", "operator"]
+},
+  "43": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%*+()%s+()[%a_][%w_]*%f[%(]",
+  "type": {
+  "$ref": "44"
+}
+}
+},
+  "44": {
+  "kind": "array",
+  "values": ["literal", "operator", "normal", "function"]
+},
+  "45": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s+()%*+()[%a_][%w_]*%f[%(]",
+  "type": {
+  "$ref": "46"
+}
+}
+},
+  "46": {
+  "kind": "array",
+  "values": ["literal", "normal", "operator", "function"]
+},
+  "47": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s+()[%a_][%w_]*%f[%(]",
+  "type": {
+  "$ref": "48"
+}
+}
+},
+  "48": {
+  "kind": "array",
+  "values": ["literal", "normal", "function"]
+},
+  "49": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%*+()%s+()[%a_][%w_]*",
+  "type": {
+  "$ref": "50"
+}
+}
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "25"
+}, {
+  "$ref": "27"
+}, {
+  "$ref": "29"
+}, {
+  "$ref": "31"
+}, {
+  "$ref": "33"
+}, {
+  "$ref": "35"
+}, {
+  "$ref": "37"
+}, {
+  "$ref": "39"
+}, {
+  "$ref": "41"
+}, {
+  "$ref": "43"
+}, {
+  "$ref": "45"
+}, {
+  "$ref": "47"
+}, {
+  "$ref": "49"
+}, {
+  "$ref": "51"
+}, {
+  "$ref": "53"
+}, {
+  "$ref": "55"
+}, {
+  "$ref": "57"
+}, {
+  "$ref": "59"
+}, {
+  "$ref": "61"
+}, {
+  "$ref": "63"
+}, {
+  "$ref": "64"
+}, {
+  "$ref": "65"
+}, {
+  "$ref": "66"
+}, {
+  "$ref": "68"
+}, {
+  "$ref": "70"
+}, {
+  "$ref": "71"
+}]
+},
+  "50": {
+  "kind": "array",
+  "values": ["literal", "operator", "normal", "normal"]
+},
+  "51": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s+()%*+()[%a_][%w_]*",
+  "type": {
+  "$ref": "52"
+}
+}
+},
+  "52": {
+  "kind": "array",
+  "values": ["literal", "normal", "operator", "normal"]
+},
+  "53": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s+()[%a_][%w_]*()%s*()[;,%[%)]",
+  "type": {
+  "$ref": "54"
+}
+}
+},
+  "54": {
+  "kind": "array",
+  "values": ["literal", "normal", "normal", "normal", "normal"]
+},
+  "55": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s+()[%a_][%w_]*()%s*()=",
+  "type": {
+  "$ref": "56"
+}
+}
+},
+  "56": {
+  "kind": "array",
+  "values": ["literal", "normal", "normal", "normal", "operator"]
+},
+  "57": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()&()%s+()[%a_][%w_]*",
+  "type": {
+  "$ref": "58"
+}
+}
+},
+  "58": {
+  "kind": "array",
+  "values": ["literal", "operator", "normal", "normal"]
+},
+  "59": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s+()&()[%a_][%w_]*",
+  "type": {
+  "$ref": "60"
+}
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "60": {
+  "kind": "array",
+  "values": ["literal", "normal", "operator", "normal"]
+},
+  "61": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s*()::",
+  "type": {
+  "$ref": "62"
+}
+}
+},
+  "62": {
+  "kind": "array",
+  "values": ["literal", "normal", "operator"]
+},
+  "63": {
+  "kind": "object",
+  "values": {
+  "pattern": "_?%u[%u_][%u%d_]*%f[%s%+%*%-%.%)%]}%?%^%%=/<>~|&;:,!]",
+  "type": "number"
+}
+},
+  "64": {
+  "kind": "object",
+  "values": {
+  "pattern": "__[%u%l]+__",
+  "type": "number"
+}
+},
+  "65": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "66": {
+  "kind": "object",
+  "values": {
+  "pattern": "^%s*#%s*define%s+()[%a_][%a%d_]*",
+  "type": {
+  "$ref": "67"
+}
+}
+},
+  "67": {
+  "kind": "array",
+  "values": ["keyword", "symbol"]
+},
+  "68": {
+  "kind": "object",
+  "values": {
+  "pattern": "#%s*include%s+()<.->",
+  "type": {
+  "$ref": "69"
+}
+}
+},
+  "69": {
+  "kind": "array",
+  "values": ["keyword", "string"]
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "70": {
+  "kind": "object",
+  "values": {
+  "pattern": "%f[#]#%s*[%a_][%w_]*",
+  "type": "keyword"
+}
+},
+  "71": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

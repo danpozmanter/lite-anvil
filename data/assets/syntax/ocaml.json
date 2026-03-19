@@ -1,0 +1,193 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "files": {
+  "$ref": "4"
+},
+  "name": "OCaml",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-]?%d+%.?%d*[eE]?[%+%-]?%d*",
+  "type": "number"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "->|=>|::|:=|;;|@@|%|>",
+  "type": "operator"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%[%]%(%){};,.:~?=<>/%*%+%-|&]+",
+  "type": "operator"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%u][%w_']*",
+  "type": "keyword2"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_']*%f[(]",
+  "type": "function"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_']*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "and": "keyword",
+  "as": "keyword",
+  "assert": "keyword",
+  "begin": "keyword",
+  "class": "keyword",
+  "constraint": "keyword",
+  "do": "keyword",
+  "done": "keyword",
+  "downto": "keyword",
+  "else": "keyword",
+  "end": "keyword",
+  "exception": "keyword",
+  "external": "keyword",
+  "false": "literal",
+  "for": "keyword",
+  "fun": "keyword",
+  "function": "keyword",
+  "functor": "keyword",
+  "if": "keyword",
+  "in": "keyword",
+  "include": "keyword",
+  "inherit": "keyword",
+  "initializer": "keyword",
+  "lazy": "keyword",
+  "let": "keyword",
+  "match": "keyword",
+  "method": "keyword",
+  "module": "keyword",
+  "mutable": "keyword",
+  "new": "keyword",
+  "object": "keyword",
+  "of": "keyword",
+  "open": "keyword",
+  "or": "keyword",
+  "private": "keyword",
+  "rec": "keyword",
+  "sig": "keyword",
+  "struct": "keyword",
+  "then": "keyword",
+  "to": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "type": "keyword",
+  "val": "keyword",
+  "virtual": "keyword",
+  "when": "keyword",
+  "while": "keyword",
+  "with": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%(%*", "%*%)"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.ml$", "%.mli$", "%.mll$", "%.mly$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["%(%*", "%*%)"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

@@ -1,0 +1,254 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Kotlin",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\""]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "14"
+},
+  "type": "string"
+}
+},
+  "14": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "@[%a_][%w_%.]*",
+  "type": "keyword"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+[lL]?",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "0b[01_]+[lL]?",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[fFdDlL]?",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.]",
+  "type": "operator"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "Any": "keyword2",
+  "Array": "keyword2",
+  "Boolean": "keyword2",
+  "Byte": "keyword2",
+  "Char": "keyword2",
+  "Double": "keyword2",
+  "Float": "keyword2",
+  "Int": "keyword2",
+  "List": "keyword2",
+  "Long": "keyword2",
+  "Map": "keyword2",
+  "MutableList": "keyword2",
+  "MutableMap": "keyword2",
+  "MutableSet": "keyword2",
+  "Nothing": "keyword2",
+  "Set": "keyword2",
+  "Short": "keyword2",
+  "String": "keyword2",
+  "Unit": "keyword2",
+  "abstract": "keyword",
+  "as": "keyword",
+  "break": "keyword",
+  "by": "keyword",
+  "catch": "keyword",
+  "class": "keyword",
+  "companion": "keyword",
+  "constructor": "keyword",
+  "continue": "keyword",
+  "data": "keyword",
+  "do": "keyword",
+  "else": "keyword",
+  "enum": "keyword",
+  "false": "literal",
+  "field": "keyword",
+  "final": "keyword",
+  "finally": "keyword",
+  "for": "keyword",
+  "fun": "keyword",
+  "get": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "in": "keyword",
+  "infix": "keyword",
+  "init": "keyword",
+  "inline": "keyword",
+  "interface": "keyword",
+  "internal": "keyword",
+  "is": "keyword",
+  "lateinit": "keyword",
+  "null": "literal",
+  "object": "keyword",
+  "open": "keyword",
+  "operator": "keyword",
+  "override": "keyword",
+  "package": "keyword",
+  "private": "keyword",
+  "protected": "keyword",
+  "public": "keyword",
+  "reified": "keyword",
+  "return": "keyword",
+  "sealed": "keyword",
+  "set": "keyword",
+  "super": "keyword",
+  "suspend": "keyword",
+  "tailrec": "keyword",
+  "this": "keyword",
+  "throw": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "typealias": "keyword",
+  "val": "keyword",
+  "var": "keyword",
+  "vararg": "keyword",
+  "when": "keyword",
+  "while": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.kt$", "%.kts$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

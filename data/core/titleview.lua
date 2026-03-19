@@ -9,7 +9,7 @@ local icon_colors = {
   color7 = { common.color "#ffa94dff" },
   color8 = { common.color "#93ddfaff" },
   color9 = { common.color "#f7c95cff" }
-};
+}
 
 local restore_command = {
   symbol = "w", action = function() system.set_window_mode(core.window, "normal") end
@@ -20,9 +20,9 @@ local maximize_command = {
 }
 
 local title_commands = {
-  {symbol = "_", action = function() system.set_window_mode(core.window, "minimized") end},
+  { symbol = "_", action = function() system.set_window_mode(core.window, "minimized") end },
   maximize_command,
-  {symbol = "X", action = function() core.quit() end},
+  { symbol = "X", action = function() core.quit() end },
 }
 
 ---@class core.titleview : core.view
@@ -68,7 +68,6 @@ function TitleView:configure_hit_test(borderless)
     local metrics = self:get_control_metrics()
     local controls_width = metrics.hit_width * #title_commands + metrics.spacing
     system.set_window_hit_test(core.window, title_height, controls_width, metrics.spacing)
-    -- core.hit_test_title_height = title_height
   else
     system.set_window_hit_test(core.window)
   end
@@ -107,18 +106,16 @@ end
 
 function TitleView:each_control_item()
   local metrics = self:get_control_metrics()
-  local icon_h, icon_w = metrics.height, metrics.width
-  local icon_spacing = metrics.spacing
   local ox, oy = self:get_content_offset()
   ox = ox + self.size.x - title_separator_inset()
   local i, n = 0, #title_commands
   local iter = function()
     i = i + 1
     if i <= n then
-      local dx = - (metrics.hit_width * (n - i + 1))
+      local dx = -(metrics.hit_width * (n - i + 1))
       local x = ox + dx
       local y = oy + style.padding.y
-      return title_commands[i], x, y, metrics.hit_width, icon_h, metrics
+      return title_commands[i], x, y, metrics.hit_width, metrics.height, metrics
     end
   end
   return iter
@@ -126,7 +123,7 @@ end
 
 
 function TitleView:draw_window_controls()
-  for item, x, y, w, h, metrics in self:each_control_item() do
+  for item, x, y, w, h in self:each_control_item() do
     local color = item == self.hovered_item and style.text or style.dim
     if item == self.hovered_item then
       local hover_bg = { table.unpack(style.line_highlight) }
@@ -158,10 +155,7 @@ function TitleView:on_mouse_moved(px, py, ...)
   if self.size.y == 0 then return end
   TitleView.super.on_mouse_moved(self, px, py, ...)
   self.hovered_item = nil
-  local x_min, x_max, y_min, y_max = self.size.x, 0, self.size.y, 0
   for item, x, y, w, h in self:each_control_item() do
-    x_min, x_max = math.min(x, x_min), math.max(x + w, x_max)
-    y_min, y_max = y, y + h
     if px > x and py > y and px <= x + w and py <= y + h then
       self.hovered_item = item
       return

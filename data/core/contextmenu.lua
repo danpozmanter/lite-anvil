@@ -10,23 +10,16 @@ local divider_width = 1
 local divider_padding = 5
 local DIVIDER = {}
 
----An item in the context menu.
----
----If the command predicate fails, it won't be included in the menu.
----@see core.command.command
 ---@class core.contextmenu.item
 ---@field text string
----@field info string? Text displayed on the right side of the menu.
+---@field info string?
 ---@field command string|fun(...)
 
----Definition of the context menu properties.
----
 ---@class core.contextmenu.contextdetails
----@field items core.contextmenu.item[] Array of items to show
----@field x integer? Context menu origin x coordinate. Defaults to the mouse position.
----@field y integer? Context menu origin y coordinate. Defaults to the mouse position.
+---@field items core.contextmenu.item[]
+---@field x integer?
+---@field y integer?
 
----A context menu.
 ---@class core.contextmenu : core.view
 ---@field visible boolean
 ---@field selected number
@@ -36,10 +29,8 @@ local ContextMenu = View:extend()
 
 function ContextMenu:__tostring() return "ContextMenu" end
 
----A unique value representing the divider in a context menu.
 ContextMenu.DIVIDER = DIVIDER
 
----Creates a new context menu.
 function ContextMenu:new()
   self.visible = false
   self.selected = -1
@@ -80,11 +71,6 @@ local function update_items_size(items, update_binding)
   items.width, items.height = width, height
 end
 
----Shows the context menu.
----@param x number
----@param y number
----@param items table
----@return boolean # If true, the context menu is shown.
 function ContextMenu:show(x, y, items, ...)
   local items_list = { width = 0, height = 0, arguments = { ... } }
   for _, item in ipairs(items) do
@@ -101,8 +87,6 @@ function ContextMenu:show(x, y, items, ...)
     self.items = items_list
     update_items_size(self.items, true)
     local w, h = self.items.width, self.items.height
-
-    -- by default the box is opened on the right and below
     x = common.clamp(x, 0, core.root_view.size.x - w - style.padding.x)
     y = common.clamp(y, 0, core.root_view.size.y - h)
 
@@ -115,7 +99,6 @@ function ContextMenu:show(x, y, items, ...)
   return false
 end
 
----Hides the context menu.
 function ContextMenu:hide()
   self.visible = false
   self.items = nil
@@ -127,8 +110,6 @@ function ContextMenu:hide()
   core.request_cursor(core.active_view.cursor)
 end
 
----Returns an iterator that iterates over each context menu item and their dimensions.
----@return fun(): number, core.contextmenu.item, number, number, number, number
 function ContextMenu:each_item()
   local x, y, w = self.position.x, self.position.y, self.items.width
   return coroutine.wrap(function()
@@ -143,7 +124,9 @@ end
 
 function ContextMenu:on_mouse_pressed(button, x, y)
   if not self.visible then return false end
-  if button =='left' and x >= self.position.x and y >= self.position.y and x < self.position.x + self.items.width and y < self.position.y + self.height then
+  if button == "left"
+      and x >= self.position.x and y >= self.position.y
+      and x < self.position.x + self.items.width and y < self.position.y + self.height then
     local item = self:get_item_selected()
     if not item or not item.command then return true end
     if core.active_view == self then
@@ -160,10 +143,6 @@ function ContextMenu:on_mouse_released(button, x, y)
   return true
 end
 
----Event handler for mouse movements.
----@param px any
----@param py any
----@return boolean # true if the event is caught.
 function ContextMenu:on_mouse_moved(px, py)
   if not self.visible then return false end
 
@@ -178,8 +157,6 @@ function ContextMenu:on_mouse_moved(px, py)
   return true
 end
 
----Event handler for when the selection is confirmed.
----@param item core.contextmenu.item
 function ContextMenu:on_selected(item)
   if type(item.command) == "string" then
     command.perform(item.command, table.unpack(self.items.arguments))
@@ -192,7 +169,6 @@ local function change_value(value, change)
   return value + change
 end
 
----Selects the the previous item.
 function ContextMenu:focus_previous()
   self.selected = (self.selected == -1 or self.selected == 1) and #self.items or change_value(self.selected, -1)
   if self:get_item_selected() == DIVIDER then
@@ -200,7 +176,6 @@ function ContextMenu:focus_previous()
   end
 end
 
----Selects the next item.
 function ContextMenu:focus_next()
   self.selected = (self.selected == -1 or self.selected == #self.items) and 1 or change_value(self.selected, 1)
   if self:get_item_selected() == DIVIDER then
@@ -208,26 +183,18 @@ function ContextMenu:focus_next()
   end
 end
 
----Gets the currently selected item.
----@return core.contextmenu.item|nil
 function ContextMenu:get_item_selected()
   return (self.items or {})[self.selected]
 end
 
----@type fun(self: table, k: string, dest: number, rate?: number, name?: string)
 ContextMenu.move_towards = View.move_towards
 
----Event handler for content update.
 function ContextMenu:update()
   if self.visible then
     self:move_towards("height", self.items.height, nil, "contextmenu")
   end
 end
 
----Draws the context menu.
----
----This wraps `ContextMenu:draw_context_menu()`.
----@see core.contextmenu.draw_context_menu
 function ContextMenu:draw()
   if not self.visible then return end
   if self.current_scale ~= SCALE then
@@ -261,6 +228,5 @@ function ContextMenu:draw()
     end
   end
 end
-
 
 return ContextMenu

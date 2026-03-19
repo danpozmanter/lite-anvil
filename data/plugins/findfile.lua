@@ -5,24 +5,8 @@ local command = require "core.command"
 local common = require "core.common"
 local config = require "core.config"
 local keymap = require "core.keymap"
-local native_manifest = nil
-local native_project_model = nil
-local native_picker = nil
-
-do
-  local ok, mod = pcall(require, "project_manifest")
-  if ok then
-    native_manifest = mod
-  end
-  ok, mod = pcall(require, "project_model")
-  if ok then
-    native_project_model = mod
-  end
-  ok, mod = pcall(require, "picker")
-  if ok then
-    native_picker = mod
-  end
-end
+local native_project_model = require "project_model"
+local native_picker = require "picker"
 
 config.plugins.findfile = common.merge({
   -- how many files from the project we store in a list before we stop
@@ -46,74 +30,32 @@ command.add(nil, {
     local file_limit = config.plugins.findfile.file_limit
 
     local refresh = coroutine.wrap(function()
-      if native_project_model then
-        local roots = {}
+      local roots = {}
+      for i, project in ipairs(core.projects) do
+        roots[i] = project.path
+      end
+      local cached = native_project_model.get_all_files(roots, {
+        max_size_bytes = config.file_size_limit * 1e6,
+        max_files = file_limit,
+        exclude_dirs = config.project_scan.exclude_dirs,
+      })
+      local n = 0
+      for _, filename in ipairs(cached) do
+        if complete or #files >= file_limit then break end
         for i, project in ipairs(core.projects) do
-          roots[i] = project.path
-        end
-        local cached = native_project_model.get_all_files(roots, {
-          max_size_bytes = config.file_size_limit * 1e6,
-          max_files = file_limit,
-          exclude_dirs = config.project_scan.exclude_dirs,
-        })
-        local n = 0
-        for _, filename in ipairs(cached) do
-          if complete or #files >= file_limit then break end
-          for i, project in ipairs(core.projects) do
-            if common.path_belongs_to(filename, project.path) then
-              local info = { type = "file", size = 0, filename = filename }
-              if not project:is_ignored(info, filename) then
-                files[#files + 1] = i == 1 and filename:sub(#project.path + 2)
-                  or common.home_encode(filename)
-              end
-              break
-            end
-          end
-          n = n + 1
-          if n % 200 == 0 then
-            core.command_view:update_suggestions()
-            coroutine.yield(0)
-          end
-        end
-      elseif native_manifest then
-        for i, project in ipairs(core.projects) do
-          local cached = native_manifest.get_files(project.path, {
-            max_size_bytes = config.file_size_limit * 1e6
-          })
-          local n = 0
-          for _, filename in ipairs(cached) do
-            if complete or #files >= file_limit then break end
+          if common.path_belongs_to(filename, project.path) then
             local info = { type = "file", size = 0, filename = filename }
             if not project:is_ignored(info, filename) then
               files[#files + 1] = i == 1 and filename:sub(#project.path + 2)
                 or common.home_encode(filename)
             end
-            n = n + 1
-            if n % 200 == 0 then
-              core.command_view:update_suggestions()
-              coroutine.yield(0)
-            end
+            break
           end
         end
-      else
-        local start, total = system.get_time(), 0
-        for i, project in ipairs(core.projects) do
-          for project, item in project:files() do
-            if complete then return end
-            if #files > file_limit then
-              core.command_view:update_suggestions()
-              return
-            end
-            table.insert(files, i == 1 and item.filename:sub(#project.path + 2) or common.home_encode(item.filename))
-            local diff = system.get_time() - start
-            if diff > config.plugins.findfile.max_loop_time then
-              core.command_view:update_suggestions()
-              total = total + diff
-              if total > config.plugins.findfile.max_search_time then return end
-              coroutine.yield(config.plugins.findfile.interval)
-              start = system.get_time()
-            end
-          end
+        n = n + 1
+        if n % 200 == 0 then
+          core.command_view:update_suggestions()
+          coroutine.yield(0)
         end
       end
     end)
@@ -138,11 +80,7 @@ command.add(nil, {
         if original_files and text == "" then
           return original_files
         end
-        if native_picker then
-          original_files = native_picker.rank_strings(files, text, true, text == "" and core.visited_files or nil)
-        else
-          original_files = common.fuzzy_match_with_recents(files, core.visited_files, text)
-        end
+        original_files = native_picker.rank_strings(files, text, true, text == "" and core.visited_files or nil)
         return original_files
       end,
       cancel = function()

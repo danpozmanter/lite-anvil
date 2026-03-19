@@ -1,11 +1,19 @@
+mod affordance_model;
+mod builtin_embeds;
+mod commands_doc_native;
 mod dirmonitor;
+mod doc_module_native;
+mod docview_native;
 mod doc_layout;
 mod doc_native;
 mod git_native;
 mod lsp_manager;
+mod lsp_plugin_preloads;
+mod lsp_protocol;
 mod lsp_transport;
 mod markdown;
 mod node_model;
+mod node_native;
 mod picker;
 #[cfg(unix)]
 mod process;
@@ -14,14 +22,22 @@ mod project_manifest;
 mod project_model;
 mod project_search;
 mod regex;
+mod root_model;
+mod rootview_native;
+mod session_native;
 mod status_model;
+mod statusview_native;
+mod terminal_view_native;
+mod storage_native;
 mod symbol_index;
 #[cfg(unix)]
 mod terminal;
 mod terminal_buffer;
 mod tokenizer;
 mod tree_model;
+mod treeview_native;
 mod utf8extra;
+mod workspace_native;
 
 use mlua::prelude::*;
 use parking_lot::Mutex;
@@ -186,6 +202,17 @@ fn path_compare(path1: &str, type1: &str, path2: &str, type2: &str) -> bool {
 pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
     let pkg_loaded: LuaTable = globals.get::<LuaTable>("package")?.get("loaded")?;
+    builtin_embeds::register_builtin_preloads(lua)?;
+    workspace_native::register_preload(lua)?;
+    terminal_view_native::register_preload(lua)?;
+    statusview_native::register_preload(lua)?;
+    lsp_plugin_preloads::register_preload(lua)?;
+    treeview_native::register_preload(lua)?;
+    node_native::register_preload(lua)?;
+    rootview_native::register_preload(lua)?;
+    doc_module_native::register_preload(lua)?;
+    docview_native::register_preload(lua)?;
+    commands_doc_native::register_preload(lua)?;
 
     let system = make_system(lua)?;
     insert(&globals, &pkg_loaded, "system", system)?;
@@ -238,6 +265,9 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
     let doc_layout = doc_layout::make_module(lua)?;
     insert(&globals, &pkg_loaded, "doc_layout", doc_layout)?;
 
+    let affordance_model = affordance_model::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "affordance_model", affordance_model)?;
+
     let symbol_index = symbol_index::make_module(lua)?;
     insert(&globals, &pkg_loaded, "symbol_index", symbol_index)?;
 
@@ -250,6 +280,15 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
     let status_model = status_model::make_module(lua)?;
     insert(&globals, &pkg_loaded, "status_model", status_model)?;
 
+    let root_model = root_model::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "root_model", root_model)?;
+
+    let storage_native = storage_native::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "storage_native", storage_native)?;
+
+    let session_native = session_native::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "session_native", session_native)?;
+
     let node_model = node_model::make_module(lua)?;
     insert(&globals, &pkg_loaded, "node_model", node_model)?;
 
@@ -258,6 +297,9 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
 
     let lsp_manager = lsp_manager::make_module(lua)?;
     insert(&globals, &pkg_loaded, "lsp_manager", lsp_manager)?;
+
+    let lsp_protocol = lsp_protocol::make_module(lua)?;
+    insert(&globals, &pkg_loaded, "lsp_protocol", lsp_protocol)?;
 
     let lsp_transport = lsp_transport::make_module(lua)?;
     insert(&globals, &pkg_loaded, "lsp_transport", lsp_transport)?;

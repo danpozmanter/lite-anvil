@@ -3,14 +3,7 @@ local command = require "core.command"
 local common = require "core.common"
 local style = require "core.style"
 local StatusView = require "core.statusview"
-local native_picker = nil
-
-do
-  local ok, mod = pcall(require, "picker")
-  if ok then
-    native_picker = mod
-  end
-end
+local native_picker = require "picker"
 
 local function status_view_item_names()
   local items = core.status_view:get_items_list()
@@ -36,7 +29,7 @@ end
 
 local function status_view_get_items(text)
   local names = status_view_item_names()
-  local results = native_picker and native_picker.rank_strings(names, text) or common.fuzzy_match(names, text)
+  local results = native_picker.rank_strings(names, text)
   results = status_view_items_data(results)
   return results
 end

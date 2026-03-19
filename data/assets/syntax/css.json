@@ -1,0 +1,432 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "files": {
+  "$ref": "4"
+},
+  "name": "CSS",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a][%w-]*%s*%f[:]",
+  "type": "keyword"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "#%x%x%x%x%x%x%f[%W]",
+  "type": "string"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "#%x%x%x%f[%W]",
+  "type": "string"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*p[xtc]",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*deg",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*cm",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*mm",
+  "type": "number"
+}
+},
+  "2": {
+  "kind": "array",
+  "values": []
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*in",
+  "type": "number"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*r?ic",
+  "type": "number"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*r?cap",
+  "type": "number"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*r?em",
+  "type": "number"
+}
+},
+  "24": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*r?lh",
+  "type": "number"
+}
+},
+  "25": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*r?ch",
+  "type": "number"
+}
+},
+  "26": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*r?ex",
+  "type": "number"
+}
+},
+  "27": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*m?s",
+  "type": "number"
+}
+},
+  "28": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*hz",
+  "type": "number"
+}
+},
+  "29": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*Hz",
+  "type": "number"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "30": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*vw",
+  "type": "number"
+}
+},
+  "31": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*vh",
+  "type": "number"
+}
+},
+  "32": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*vmin",
+  "type": "number"
+}
+},
+  "33": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*vmax",
+  "type": "number"
+}
+},
+  "34": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*vb",
+  "type": "number"
+}
+},
+  "35": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*vi",
+  "type": "number"
+}
+},
+  "36": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*%%",
+  "type": "number"
+}
+},
+  "37": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*Q",
+  "type": "number"
+}
+},
+  "38": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*cqw",
+  "type": "number"
+}
+},
+  "39": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*cqh",
+  "type": "number"
+}
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.css$"]
+},
+  "40": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*cqi",
+  "type": "number"
+}
+},
+  "41": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*cqb",
+  "type": "number"
+}
+},
+  "42": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*cqmin",
+  "type": "number"
+}
+},
+  "43": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*cqmax",
+  "type": "number"
+}
+},
+  "44": {
+  "kind": "object",
+  "values": {
+  "pattern": "-?%d+[%d%.]*",
+  "type": "number"
+}
+},
+  "45": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "46": {
+  "kind": "object",
+  "values": {
+  "pattern": "#[%a][%w_-]*",
+  "type": "keyword2"
+}
+},
+  "47": {
+  "kind": "object",
+  "values": {
+  "pattern": "@[%a][%w_-]*",
+  "type": "keyword2"
+}
+},
+  "48": {
+  "kind": "object",
+  "values": {
+  "pattern": "%.[%a][%w_-]*",
+  "type": "keyword2"
+}
+},
+  "49": {
+  "kind": "object",
+  "values": {
+  "pattern": "[{}:]",
+  "type": "operator"
+}
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "24"
+}, {
+  "$ref": "25"
+}, {
+  "$ref": "26"
+}, {
+  "$ref": "27"
+}, {
+  "$ref": "28"
+}, {
+  "$ref": "29"
+}, {
+  "$ref": "30"
+}, {
+  "$ref": "31"
+}, {
+  "$ref": "32"
+}, {
+  "$ref": "33"
+}, {
+  "$ref": "34"
+}, {
+  "$ref": "35"
+}, {
+  "$ref": "36"
+}, {
+  "$ref": "37"
+}, {
+  "$ref": "38"
+}, {
+  "$ref": "39"
+}, {
+  "$ref": "40"
+}, {
+  "$ref": "41"
+}, {
+  "$ref": "42"
+}, {
+  "$ref": "43"
+}, {
+  "$ref": "44"
+}, {
+  "$ref": "45"
+}, {
+  "$ref": "46"
+}, {
+  "$ref": "47"
+}, {
+  "$ref": "48"
+}, {
+  "$ref": "49"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\.",
+  "type": "normal"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

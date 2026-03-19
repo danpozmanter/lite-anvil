@@ -1,0 +1,31 @@
+{
+  "name": "fall",
+  "palette": {
+    "background": "#343233",
+    "background2": "#2c2a2b",
+    "background3": "#2c2a2b",
+    "text": "#c4b398",
+    "caret": "#61efce",
+    "accent": "#ffd152",
+    "dim": "#615d5f",
+    "divider": "#242223",
+    "selection": "#454244",
+    "line_number": "#454244",
+    "line_number2": "#615d5f",
+    "line_highlight": "#383637",
+    "scrollbar": "#454344",
+    "scrollbar2": "#524F50",
+    "syntax": {
+      "normal": "#efdab9",
+      "symbol": "#efdab9",
+      "comment": "#615d5f",
+      "keyword": "#d36e2d",
+      "keyword2": "#ef6179",
+      "number": "#ffd152",
+      "literal": "#ffd152",
+      "string": "#ffd152",
+      "operator": "#efdab9",
+      "function": "#61efce"
+    }
+  }
+}

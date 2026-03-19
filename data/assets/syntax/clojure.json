@@ -1,0 +1,157 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": ";",
+  "files": {
+  "$ref": "3"
+},
+  "name": "Clojure",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*",
+  "type": "number"
+}
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:]+",
+  "type": "operator"
+}
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "%b()",
+  "type": "normal"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_*!?%+%-][%w_*!?%+%-/%.]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "->": "keyword",
+  "->>": "keyword",
+  "assoc": "function",
+  "case": "keyword",
+  "catch": "keyword",
+  "cond": "keyword",
+  "conj": "function",
+  "def": "keyword",
+  "defmacro": "keyword",
+  "defmethod": "keyword",
+  "defmulti": "keyword",
+  "defn": "keyword",
+  "dissoc": "function",
+  "do": "keyword",
+  "doseq": "keyword",
+  "false": "literal",
+  "filter": "function",
+  "finally": "keyword",
+  "first": "function",
+  "fn": "keyword",
+  "for": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "let": "keyword",
+  "loop": "keyword",
+  "map": "function",
+  "nil": "literal",
+  "ns": "keyword",
+  "recur": "keyword",
+  "reduce": "function",
+  "require": "keyword",
+  "rest": "function",
+  "some->": "keyword",
+  "some->>": "keyword",
+  "throw": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "use": "keyword",
+  "when": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.clj$", "%.cljs$", "%.cljc$", "%.edn$", "%.bb$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": ";.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "string"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": ":[%a_*!?%+%-][%w_*!?%+%-/%.]*",
+  "type": "keyword2"
+}
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": "#[%{%(%[%^_]?[%a_*!?%+%-]*",
+  "type": "keyword"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

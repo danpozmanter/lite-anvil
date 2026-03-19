@@ -10,15 +10,8 @@ local RootView  = require "core.rootview"
 local DocView   = require "core.docview"
 local Doc       = require "core.doc"
 local drawing   = require "plugins.autocomplete.drawing"
-local symbol_index = nil
+local symbol_index = require "symbol_index"
 local user_autocomplete_config = config.plugins.autocomplete or {}
-
-do
-  local ok, mod = pcall(require, "symbol_index")
-  if ok then
-    symbol_index = mod
-  end
-end
 
 ---Symbols cache of all open documents
 ---@type table<core.doc, table>
@@ -250,7 +243,7 @@ core.add_thread(function()
       doc.disable_symbols = true
       return {}
     end
-    if symbol_index and config.symbol_pattern == "[%a_][%w_]*" then
+    if config.symbol_pattern == "[%a_][%w_]*" then
       local state = symbol_index.set_doc_symbols(
         get_doc_id(doc),
         doc.lines,
@@ -327,7 +320,7 @@ core.add_thread(function()
       end
       -- update symbol set with doc's symbol set
       if suggestion_scope() == "global" then
-        if symbol_index and cache[doc].symbols == true then
+        if cache[doc].symbols == true then
           for _, sym in ipairs(symbol_index.get_doc_symbols(cache[doc].doc_id)) do
             symbols[sym] = true
           end
@@ -416,19 +409,15 @@ local function update_suggestions()
     local text_symbols = nil
 
     if scope == "global" then
-      if symbol_index then
-        local doc_ids = {}
-        for _, d in ipairs(core.docs) do
-          if cache[d] and cache[d].symbols == true then
-            doc_ids[#doc_ids + 1] = cache[d].doc_id
-          end
+      local doc_ids = {}
+      for _, d in ipairs(core.docs) do
+        if cache[d] and cache[d].symbols == true then
+          doc_ids[#doc_ids + 1] = cache[d].doc_id
         end
-        text_symbols = symbol_index.collect(doc_ids)
-      else
-        text_symbols = global_symbols
       end
+      text_symbols = symbol_index.collect(doc_ids)
     elseif scope == "local" and cache[doc] and cache[doc].symbols then
-      if symbol_index and cache[doc].symbols == true then
+      if cache[doc].symbols == true then
         text_symbols = symbol_index.get_doc_symbols(cache[doc].doc_id)
       else
         text_symbols = cache[doc].symbols
@@ -437,7 +426,7 @@ local function update_suggestions()
       for _, d in ipairs(core.docs) do
         if doc.syntax == d.syntax then
           if cache[d] and cache[d].symbols then
-            if symbol_index and cache[d].symbols == true then
+            if cache[d].symbols == true then
               for _, name in ipairs(symbol_index.get_doc_symbols(cache[d].doc_id)) do
                 if not assigned_sym[name] then
                   table.insert(items, setmetatable({ text = name, info = "normal" }, mt))
@@ -456,7 +445,7 @@ local function update_suggestions()
     end
 
     if text_symbols then
-      if symbol_index and type(text_symbols[1]) ~= "nil" then
+      if type(text_symbols[1]) ~= "nil" then
         for _, name in ipairs(text_symbols) do
           if not assigned_sym[name] then
             table.insert(items, setmetatable({ text = name, info = "normal" }, mt))
@@ -644,7 +633,7 @@ RootView.draw = function(...)
 end
 
 Doc.on_close = function(self, ...)
-  if symbol_index and cache[self] and cache[self].doc_id then
+  if cache[self] and cache[self].doc_id then
     symbol_index.remove_doc(cache[self].doc_id)
     if symbol_index.shrink then
       symbol_index.shrink()

@@ -1,0 +1,247 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Java",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "14"
+},
+  "type": "string"
+}
+},
+  "14": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "@[%a_][%w_%.]*",
+  "type": "keyword"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+[lL]?",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "0b[01_]+[lL]?",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[fFdDlL]?",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.]",
+  "type": "operator"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "abstract": "keyword",
+  "assert": "keyword",
+  "boolean": "keyword2",
+  "break": "keyword",
+  "byte": "keyword2",
+  "case": "keyword",
+  "catch": "keyword",
+  "char": "keyword2",
+  "class": "keyword",
+  "const": "keyword",
+  "continue": "keyword",
+  "default": "keyword",
+  "do": "keyword",
+  "double": "keyword2",
+  "else": "keyword",
+  "enum": "keyword",
+  "extends": "keyword",
+  "false": "literal",
+  "final": "keyword",
+  "finally": "keyword",
+  "float": "keyword2",
+  "for": "keyword",
+  "goto": "keyword",
+  "if": "keyword",
+  "implements": "keyword",
+  "import": "keyword",
+  "instanceof": "keyword",
+  "int": "keyword2",
+  "interface": "keyword",
+  "long": "keyword2",
+  "native": "keyword",
+  "new": "keyword",
+  "non-sealed": "keyword",
+  "null": "literal",
+  "package": "keyword",
+  "permits": "keyword",
+  "private": "keyword",
+  "protected": "keyword",
+  "public": "keyword",
+  "record": "keyword",
+  "return": "keyword",
+  "sealed": "keyword",
+  "short": "keyword2",
+  "static": "keyword",
+  "strictfp": "keyword",
+  "super": "keyword",
+  "switch": "keyword",
+  "synchronized": "keyword",
+  "this": "keyword",
+  "throw": "keyword",
+  "throws": "keyword",
+  "transient": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "var": "keyword",
+  "void": "keyword2",
+  "volatile": "keyword",
+  "while": "keyword",
+  "yield": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "%u[%w_]*%f[%s%.%(]",
+  "type": "keyword2"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.java$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

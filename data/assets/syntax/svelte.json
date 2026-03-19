@@ -1,0 +1,245 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "files": {
+  "$ref": "4"
+},
+  "name": "Svelte",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "comment"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["<!%-%-", "%-%->"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "13"
+},
+  "type": "keyword"
+}
+},
+  "13": {
+  "kind": "array",
+  "values": ["{#", "}"]
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "15"
+},
+  "type": "keyword"
+}
+},
+  "15": {
+  "kind": "array",
+  "values": ["{/", "}"]
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "17"
+},
+  "type": "keyword"
+}
+},
+  "17": {
+  "kind": "array",
+  "values": ["{:", "}"]
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "19"
+},
+  "type": "keyword2"
+}
+},
+  "19": {
+  "kind": "array",
+  "values": ["{@", "}"]
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "await": "keyword",
+  "catch": "keyword",
+  "const": "keyword2",
+  "debug": "keyword2",
+  "each": "keyword",
+  "html": "keyword2",
+  "if": "keyword",
+  "script": "keyword",
+  "style": "keyword",
+  "template": "keyword",
+  "then": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "21"
+},
+  "type": "keyword2"
+}
+},
+  "21": {
+  "kind": "array",
+  "values": ["{", "}"]
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "23"
+},
+  "type": "string"
+}
+},
+  "23": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "24": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "25"
+},
+  "type": "string"
+}
+},
+  "25": {
+  "kind": "array",
+  "values": ["'", "'"]
+},
+  "26": {
+  "kind": "object",
+  "values": {
+  "pattern": "%f[^<]/[%a_][%w_%-]*",
+  "type": "function"
+}
+},
+  "27": {
+  "kind": "object",
+  "values": {
+  "pattern": "%f[^<][%a_][%w_%-]*",
+  "type": "function"
+}
+},
+  "28": {
+  "kind": "object",
+  "values": {
+  "pattern": "[/<>=]",
+  "type": "operator"
+}
+},
+  "29": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["<!--", "-->"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.svelte$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "24"
+}, {
+  "$ref": "26"
+}, {
+  "$ref": "27"
+}, {
+  "$ref": "28"
+}, {
+  "$ref": "29"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "syntax": ".js",
+  "type": "function"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["<%s*[sS][cC][rR][iI][pP][tT]%f[%s>].->", "<%s*/%s*[sS][cC][rR][iI][pP][tT]%s*>"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "syntax": ".css",
+  "type": "function"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["<%s*[sS][tT][yY][lL][eE]%f[%s>].->", "<%s*/%s*[sS][tT][yY][lL][eE]%s*>"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

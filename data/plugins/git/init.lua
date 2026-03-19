@@ -5,17 +5,11 @@ local common = require "core.common"
 local config = require "core.config"
 local keymap = require "core.keymap"
 local style = require "core.style"
-local native_picker = nil
+local native_picker = require "picker"
+local TreeView = require "plugins.treeview"
 
 local git = require ".status"
 local ui = require ".ui"
-
-do
-  local ok, mod = pcall(require, "picker")
-  if ok then
-    native_picker = mod
-  end
-end
 
 local function active_path()
   local view = core.active_view
@@ -69,10 +63,7 @@ local function prompt_branch_checkout()
         if not text or text == "" then
           return branches
         end
-        if native_picker then
-          return native_picker.rank_strings(branches, text)
-        end
-        return common.fuzzy_match(branches, text)
+        return native_picker.rank_strings(branches, text)
       end,
       submit = function(text, item)
         local branch = item and item.text or text
@@ -207,64 +198,29 @@ keymap.add {
   ["down"] = "git:select-next",
 }
 
-core.status_view:add_item({
-  name = "git:branch",
-  alignment = core.status_view.Item.RIGHT,
-  position = 1,
-  predicate = function()
-    return config.plugins.git.show_branch_in_statusbar ~= false and git.get_active_repo() ~= nil
-  end,
-  get_item = function()
-    local repo = refresh_active(false)
-    if not repo then
-      return {}
-    end
-    local label = repo.branch ~= "" and repo.branch or "git"
-    local dirty = repo.dirty and " *" or ""
-    return {
-      style.icon_font, "g",
-      style.text, " ",
-      style.font,
-      repo.dirty and style.accent or style.text, label .. dirty
-    }
-  end,
-  command = "git:status",
-  separator = core.status_view.separator2,
-})
-
-do
-  local ok, TreeView = pcall(require, "plugins.treeview")
-  if ok and TreeView and not TreeView.__git_highlighting_patched then
-    TreeView.__git_highlighting_patched = true
-    local get_item_text = TreeView.get_item_text
-    function TreeView:get_item_text(item, active, hovered)
-      local text, font, color = get_item_text(self, item, active, hovered)
-      if not active and not hovered and not item.ignored and item.type == "file"
-          and config.plugins.git.treeview_highlighting ~= false then
-        local entry = git.get_file_status(item.abs_filename)
-        if entry then
-          if entry.kind == "staged" then
-            color = style.accent
-          elseif entry.kind == "untracked" then
-            color = style.good or color
-          elseif entry.kind == "conflict" then
-            color = style.error or color
-          else
-            color = style.text
-          end
+if not TreeView.__git_highlighting_patched then
+  TreeView.__git_highlighting_patched = true
+  local get_item_text = TreeView.get_item_text
+  function TreeView:get_item_text(item, active, hovered)
+    local text, font, color = get_item_text(self, item, active, hovered)
+    if not active and not hovered and not item.ignored and item.type == "file"
+        and config.plugins.git.treeview_highlighting ~= false then
+      local entry = git.get_file_status(item.abs_filename)
+      if entry then
+        if entry.kind == "staged" then
+          color = style.accent
+        elseif entry.kind == "untracked" then
+          color = style.good or color
+        elseif entry.kind == "conflict" then
+          color = style.error or color
+        else
+          color = style.text
         end
       end
-      return text, font, color
     end
+    return text, font, color
   end
 end
-
-core.add_thread(function()
-  while true do
-    refresh_active(false)
-    coroutine.yield(math.max(1, config.plugins.git.refresh_interval or 5))
-  end
-end)
 
 return {
   status = git,

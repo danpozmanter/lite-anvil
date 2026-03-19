@@ -1,0 +1,234 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "#",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Julia",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "14"
+},
+  "type": "string"
+}
+},
+  "14": {
+  "kind": "array",
+  "values": ["'", "'"]
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "@[%a_][%w_]*",
+  "type": "keyword"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "0b[01_]+",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[eEfFimM]?[%+%-]?[%d_]*",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "::|=>|->",
+  "type": "operator"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "abstract": "keyword",
+  "baremodule": "keyword",
+  "begin": "keyword",
+  "break": "keyword",
+  "catch": "keyword",
+  "const": "keyword",
+  "continue": "keyword",
+  "do": "keyword",
+  "else": "keyword",
+  "elseif": "keyword",
+  "end": "keyword",
+  "export": "keyword",
+  "false": "literal",
+  "finally": "keyword",
+  "for": "keyword",
+  "function": "keyword",
+  "global": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "in": "keyword",
+  "isa": "keyword",
+  "let": "keyword",
+  "local": "keyword",
+  "macro": "keyword",
+  "missing": "literal",
+  "module": "keyword",
+  "mutable": "keyword",
+  "nothing": "literal",
+  "primitive": "keyword",
+  "quote": "keyword",
+  "return": "keyword",
+  "struct": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "using": "keyword",
+  "where": "keyword",
+  "while": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:]+",
+  "type": "operator"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%u][%w_]*",
+  "type": "keyword2"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_!]*%f[(]",
+  "type": "function"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_!]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["#=", "=#"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.jl$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["#=", "=#"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

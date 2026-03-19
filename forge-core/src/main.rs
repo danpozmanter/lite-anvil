@@ -2,6 +2,7 @@ mod api;
 mod lua_vm;
 #[cfg(feature = "sdl")]
 mod renderer;
+mod runtime;
 mod time;
 #[cfg(feature = "sdl")]
 mod window;
@@ -28,11 +29,13 @@ fn run(args: &[String]) -> anyhow::Result<()> {
 }
 
 fn run_loop(args: &[String]) -> anyhow::Result<()> {
+    let mut restarted = false;
     loop {
-        if !lua_vm::run(args)? {
+        if !lua_vm::run(args, restarted)? {
             return Ok(());
         }
         log::info!("restarting Lua VM");
+        restarted = true;
         // Release any FontRef arcs held by the previous frame's draw commands
         // before the new Lua VM loads fonts on the same FT_Library.
         #[cfg(feature = "sdl")]

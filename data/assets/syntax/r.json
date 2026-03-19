@@ -1,0 +1,153 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": "#",
+  "files": {
+  "$ref": "3"
+},
+  "name": "R",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F]+",
+  "type": "number"
+}
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[eE]?[%+%-]?[%d_]*i?",
+  "type": "number"
+}
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?$.:]+",
+  "type": "operator"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_%.][%w_%.]*%f[(]",
+  "type": "function"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_%.][%w_%.]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "F": "literal",
+  "FALSE": "literal",
+  "Inf": "literal",
+  "NA": "literal",
+  "NULL": "literal",
+  "NaN": "literal",
+  "T": "literal",
+  "TRUE": "literal",
+  "break": "keyword",
+  "character": "keyword2",
+  "data.frame": "keyword2",
+  "else": "keyword",
+  "factor": "keyword2",
+  "for": "keyword",
+  "function": "keyword",
+  "if": "keyword",
+  "in": "keyword",
+  "integer": "keyword2",
+  "library": "function",
+  "list": "keyword2",
+  "logical": "keyword2",
+  "matrix": "keyword2",
+  "next": "keyword",
+  "numeric": "keyword2",
+  "repeat": "keyword",
+  "require": "function",
+  "return": "keyword",
+  "source": "function",
+  "while": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.r$", "%.R$", "%.Rmd$", "%.Rprofile$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "string"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["'", "'"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

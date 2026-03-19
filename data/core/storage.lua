@@ -1,5 +1,6 @@
 local core = require "core"
 local common = require "core.common"
+local native_storage = require "storage_native"
 
 local function module_key_to_path(module, key)
   return USERDIR .. PATHSEP .. "storage" .. (module and (PATHSEP .. module .. (key and (PATHSEP .. key:gsub("[\\/]", "-")) or "")) or "")
@@ -17,14 +18,21 @@ local storage = {}
 ---@param key string The key under which the data is stored.
 ---@return string|table|number? data The stored data present for this module, at this key.
 function storage.load(module, key)
-  local path = module_key_to_path(module, key)
-  if system.get_file_info(path) then
-    local func, err = loadfile(path)
+  local ok, text = pcall(native_storage.load_text, module, key)
+  if not ok then
+    core.error("error loading storage file for %s[%s]: %s", module, key, text)
+    return nil
+  end
+  if text ~= nil then
+    local chunk = text
+    if not tostring(text):match("^%s*return[%s%(\"'{%[%-%d]") then
+      chunk = "return " .. text
+    end
+    local func, err = load(chunk, "@storage[" .. module .. ":" .. key .. "]")
     if func then
       return func()
-    else
-      core.error("error loading storage file for %s[%s]: %s", module, key, err)
     end
+    core.error("error decoding storage file for %s[%s]: %s", module, key, err)
   end
   return nil
 end
@@ -36,20 +44,9 @@ end
 ---@param key string The key under which the data is stored.
 ---@param value table|string|number The value to store.
 function storage.save(module, key, value)
-  local path = module_key_to_path(module, key)
-  local dir = common.dirname(path)
-  if not system.get_file_info(dir) then
-    local status, err = common.mkdirp(dir)
-    if not status then
-      core.error("error creating storage directory for %s at %s: %s", module, dir, err)
-    end
-  end
-  local f, err = io.open(path, "wb")
-  if f then
-    f:write("return " .. common.serialize(value))
-    f:flush()
-  else
-    core.error("error opening storage file %s for writing: %s", path, err)
+  local ok, err = pcall(native_storage.save_text, module, key, common.serialize(value))
+  if not ok then
+    core.error("error opening storage file %s for writing: %s", module_key_to_path(module, key), err)
   end
 end
 
@@ -59,7 +56,8 @@ end
 ---@param module string The module under which the data is stored.
 ---@return table A table of keys under which data is stored for this module.
 function storage.keys(module)
-  return system.list_dir(module_key_to_path(module)) or {}
+  local ok, keys = pcall(native_storage.keys, module)
+  return ok and keys or {}
 end
 
 
@@ -68,9 +66,9 @@ end
 ---@param module string The module under which the data is stored.
 ---@param key? string The key under which the data is stored. If omitted, will clear the entire store for this module.
 function storage.clear(module, key)
-  local path = module_key_to_path(module, key)
-  if system.get_file_info(path) then
-    common.rm(path, true)
+  local ok, err = pcall(native_storage.clear, module, key)
+  if not ok then
+    core.error("error clearing storage file %s: %s", module_key_to_path(module, key), err)
   end
 end
 

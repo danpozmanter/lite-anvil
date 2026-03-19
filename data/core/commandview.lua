@@ -306,7 +306,6 @@ function CommandView:update_suggestions()
       end
     end
     self.suggestion_idx = new_suggestion_idx or (#res > 0 and 1 or 0)
-    -- This preserves the suggestion_offset and realigns it with the new table.
     self:move_suggestion_idx(0)
   else
     self.suggestion_idx = #res > 0 and 1 or 0
@@ -327,7 +326,6 @@ function CommandView:update()
     self:exit(false, true)
   end
 
-  -- update suggestions if text has changed
   if self.last_change_id ~= self.doc:get_change_id() then
     self.last_change = "text"
     self.user_supplied_text = self:get_text()
@@ -345,10 +343,8 @@ function CommandView:update()
     self.last_change_id = self.doc:get_change_id()
   end
 
-  -- update gutter text color brightness
   self:move_towards("gutter_text_brightness", 0, 0.1, "commandview")
 
-  -- update gutter width
   local dest = self:get_font():get_width(self.label) + style.padding.x
   if self.size.y <= 0 then
     self.gutter_width = dest
@@ -356,17 +352,14 @@ function CommandView:update()
     self:move_towards("gutter_width", dest, nil, "commandview")
   end
 
-  -- update suggestions box height
   local lh = self:get_suggestion_line_height()
-  local dest = self.state.show_suggestions and math.min(#self.suggestions, config.max_visible_commands) * lh or 0
+  dest = self.state.show_suggestions and math.min(#self.suggestions, config.max_visible_commands) * lh or 0
   self:move_towards("suggestions_height", dest, nil, "commandview")
 
-  -- update suggestion cursor offset
-  local dest = (self.suggestion_idx - self.suggestions_offset + 1) * self:get_suggestion_line_height()
+  dest = (self.suggestion_idx - self.suggestions_offset + 1) * self:get_suggestion_line_height()
   self:move_towards("selection_offset", dest, nil, "commandview")
 
-  -- update size based on whether this is the active_view
-  local dest = 0
+  dest = 0
   if self == core.active_view then
     dest = style.font:get_height() + style.padding.y * 2
   end
@@ -400,7 +393,6 @@ local function draw_suggestions_box(self)
   local rx, ry, rh = self.position.x, self.position.y - h - dh, h
 
   core.push_clip_rect(rx, ry, rw, rh)
-  -- draw suggestions background
   if #self.suggestions > 0 then
     renderer.draw_rect(rx, ry, rw, rh, style.background3)
     renderer.draw_rect(rx, ry - dh, rw, dh, style.divider)
@@ -408,10 +400,9 @@ local function draw_suggestions_box(self)
     renderer.draw_rect(rx, y, rw, lh, style.line_highlight)
   end
 
-  -- draw suggestion text
   local first = math.max(self.suggestions_offset, 1)
   local last = math.min(self.suggestions_offset + config.max_visible_commands, #self.suggestions)
-  for i=first, last do
+  for i = first, last do
     local item = self.suggestions[i]
     local color = (i == self.suggestion_idx) and style.accent or style.text
     local y = self.position.y - (i - first + 1) * lh - dh

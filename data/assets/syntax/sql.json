@@ -1,0 +1,227 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "--",
+  "files": {
+  "$ref": "4"
+},
+  "name": "SQL",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["'", "'", "\\'"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "`[%a_][%w_]*`",
+  "type": "keyword2"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "%b[]",
+  "type": "keyword2"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*",
+  "type": "number"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:,();]",
+  "type": "operator"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_$]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "all": "keyword",
+  "alter": "keyword",
+  "and": "keyword",
+  "as": "keyword",
+  "avg": "function",
+  "begin": "keyword",
+  "between": "keyword",
+  "bigint": "keyword2",
+  "boolean": "keyword2",
+  "by": "keyword",
+  "case": "keyword",
+  "commit": "keyword",
+  "constraint": "keyword",
+  "count": "function",
+  "create": "keyword",
+  "database": "keyword",
+  "date": "keyword2",
+  "delete": "keyword",
+  "distinct": "keyword",
+  "drop": "keyword",
+  "else": "keyword",
+  "end": "keyword",
+  "exists": "keyword",
+  "false": "literal",
+  "foreign": "keyword",
+  "from": "keyword",
+  "full": "keyword",
+  "grant": "keyword",
+  "group": "keyword",
+  "having": "keyword",
+  "in": "keyword",
+  "index": "keyword",
+  "inner": "keyword",
+  "insert": "keyword",
+  "int": "keyword2",
+  "integer": "keyword2",
+  "into": "keyword",
+  "is": "keyword",
+  "join": "keyword",
+  "key": "keyword",
+  "left": "keyword",
+  "like": "keyword",
+  "limit": "keyword",
+  "max": "function",
+  "min": "function",
+  "not": "keyword",
+  "null": "literal",
+  "numeric": "keyword2",
+  "offset": "keyword",
+  "on": "keyword",
+  "or": "keyword",
+  "order": "keyword",
+  "outer": "keyword",
+  "primary": "keyword",
+  "references": "keyword",
+  "revoke": "keyword",
+  "right": "keyword",
+  "rollback": "keyword",
+  "schema": "keyword",
+  "select": "keyword",
+  "sum": "function",
+  "table": "keyword",
+  "text": "keyword2",
+  "then": "keyword",
+  "timestamp": "keyword2",
+  "true": "literal",
+  "union": "keyword",
+  "update": "keyword",
+  "varchar": "keyword2",
+  "view": "keyword",
+  "when": "keyword",
+  "where": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.sql$", "%.psql$", "%.ddl$", "%.dml$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "%-%-.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

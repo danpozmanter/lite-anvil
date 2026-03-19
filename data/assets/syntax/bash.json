@@ -1,0 +1,196 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": "#",
+  "files": {
+  "$ref": "3"
+},
+  "headers": "^#!.*[ /][bz]?a?sh",
+  "name": "Bash",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": "<<%-?%s*'?[%a_][%w_]*'?",
+  "type": "keyword"
+}
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$[%a_@#%*%?%-!0-9][%w_]*",
+  "type": "keyword2"
+}
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "%${[^}]*}",
+  "type": "keyword2"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d+",
+  "type": "number"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "[|&;<>%(%)%[%]%!]",
+  "type": "operator"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "=",
+  "type": "operator"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$%(",
+  "type": "operator"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-%.]*%f[%(]",
+  "type": "function"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "break": "keyword",
+  "case": "keyword",
+  "continue": "keyword",
+  "declare": "keyword",
+  "do": "keyword",
+  "done": "keyword",
+  "echo": "function",
+  "elif": "keyword",
+  "else": "keyword",
+  "esac": "keyword",
+  "exec": "keyword",
+  "exit": "keyword",
+  "export": "keyword",
+  "false": "literal",
+  "fi": "keyword",
+  "for": "keyword",
+  "function": "keyword",
+  "if": "keyword",
+  "in": "keyword",
+  "local": "keyword",
+  "printf": "function",
+  "read": "function",
+  "readonly": "keyword",
+  "return": "keyword",
+  "set": "keyword",
+  "shift": "keyword",
+  "source": "keyword",
+  "test": "function",
+  "then": "keyword",
+  "trap": "keyword",
+  "true": "literal",
+  "typeset": "keyword",
+  "unset": "keyword",
+  "until": "keyword",
+  "while": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.sh$", "%.bash$", "%.zsh$", "%.fish$", "%.bashrc$", "%.zshrc$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "string"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["'", "'"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

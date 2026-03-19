@@ -1,15 +1,8 @@
 local core = require "core"
 local common = require "core.common"
 local config = require "core.config"
+local native_project_fs = require "project_fs"
 local dirwatch = {}
-local native_project_fs = nil
-
-do
-  local ok, mod = pcall(require, "project_fs")
-  if ok then
-    native_project_fs = mod
-  end
-end
 
 function dirwatch:__index(idx)
   local value = rawget(self, idx)
@@ -54,10 +47,7 @@ end
 ---@param  unwatch? boolean If true, remove this directory from the watch list.
 function dirwatch:scan(path, unwatch)
   if unwatch == false then return self:unwatch(path) end
-  if native_project_fs then
-    return self:watch(path)
-  end
-  self.scanned[path] = system.get_file_info(path).modified
+  return self:watch(path)
 end
 
 
@@ -75,45 +65,12 @@ function dirwatch:watch(path, unwatch)
   if unwatch == false then return self:unwatch(path) end
   local info = system.get_file_info(path)
   if not info then return end
-  if native_project_fs then
-    if not self.native_watches[path] then
-      local ok, watch_id = pcall(native_project_fs.watch_project, path)
-      if ok and watch_id then
-        self.native_watches[path] = { id = watch_id, type = info.type }
-      else
-        self.scanned[path] = info.modified
-      end
-    end
-    return
-  end
-  if not self.watched[path] and not self.scanned[path] then
-    if self.monitor:mode() == "single" then
-      if info.type ~= "dir" then return self:scan(path) end
-      if not self.single_watch_top or path:find(self.single_watch_top, 1, true) ~= 1 then
-        -- Get the highest level of directory that is common to this directory, and the original.
-        local target = path
-        while self.single_watch_top and self.single_watch_top:find(target, 1, true) ~= 1 do
-          target = common.dirname(target)
-        end
-        if target ~= self.single_watch_top then
-          local value = self.monitor:watch(target)
-          if value and value < 0 then
-            return self:scan(path)
-          end
-          self.single_watch_top = target
-        end
-      end
-      self.single_watch_count = self.single_watch_count + 1
-      self.watched[path] = true
+  if not self.native_watches[path] then
+    local ok, watch_id = pcall(native_project_fs.watch_project, path)
+    if ok and watch_id then
+      self.native_watches[path] = { id = watch_id, type = info.type }
     else
-      local value = self.monitor:watch(path)
-      -- If for whatever reason, we can't watch this directory, revert back to scanning.
-      -- Don't bother trying to find out why, for now.
-      if value and value < 0 then
-        return self:scan(path)
-      end
-      self.watched[path] = value
-      self.reverse_watched[value] = path
+      self.scanned[path] = info.modified
     end
   end
 end
@@ -121,25 +78,12 @@ end
 ---Removes a path from the watch list.
 ---@param directory string The path to remove. This should be an absolute path.
 function dirwatch:unwatch(directory)
-  if native_project_fs and self.native_watches[directory] then
+  if self.native_watches[directory] then
     native_project_fs.cancel_watch(self.native_watches[directory].id)
     self.native_watches[directory] = nil
-    self.scanned[directory] = nil
     return
   end
-  if self.watched[directory] then
-    if self.monitor:mode() == "multiple" then
-      self.monitor:unwatch(self.watched[directory])
-      self.reverse_watched[directory] = nil
-    else
-      self.single_watch_count = self.single_watch_count - 1
-      if self.single_watch_count == 0 then
-        self.single_watch_top = nil
-        self.monitor:unwatch(directory)
-      end
-    end
-    self.watched[directory] = nil
-  elseif self.scanned[directory] then
+  if self.scanned[directory] then
     self.scanned[directory] = nil
   end
 end
@@ -152,52 +96,24 @@ end
 ---@return boolean # If true, a path had changed.
 function dirwatch:check(change_callback, scan_time, wait_time)
   local had_change = false
-  if native_project_fs then
-    local delivered = {}
-    for path, watch in pairs(self.native_watches) do
-      local ok, changes = pcall(native_project_fs.poll_changes, watch.id)
-      if ok and changes then
-        for _, changed in ipairs(changes) do
-          local target = watch.type == "dir" and path or path
-          if watch.type == "file" then
-            if changed == path and not delivered[target] then
-              delivered[target] = true
-              change_callback(target)
-              had_change = true
-            end
-          elseif not delivered[target] then
+  local delivered = {}
+  for path, watch in pairs(self.native_watches) do
+    local ok, changes = pcall(native_project_fs.poll_changes, watch.id)
+    if ok and changes then
+      for _, changed in ipairs(changes) do
+        local target = watch.type == "dir" and path or path
+        if watch.type == "file" then
+          if changed == path and not delivered[target] then
             delivered[target] = true
             change_callback(target)
             had_change = true
           end
+        elseif not delivered[target] then
+          delivered[target] = true
+          change_callback(target)
+          had_change = true
         end
       end
-    end
-  end
-  local last_error
-  if not native_project_fs then
-    self.monitor:check(function(id)
-      had_change = true
-      if self.monitor:mode() == "single" then
-        local path = common.dirname(id)
-        if not string.match(id, "^/") and not string.match(id, "^%a:[/\\]") then
-          path = common.dirname(self.single_watch_top .. PATHSEP .. id)
-        end
-        change_callback(path)
-      elseif self.reverse_watched[id] then
-        local path = self.reverse_watched[id]
-        change_callback(path)
-        local info = system.get_file_info(path)
-        if info and info.type == "file" then
-          self:unwatch(path)
-          self:watch(path)
-        end
-      end
-    end, function(err)
-      last_error = err
-    end)
-    if last_error ~= nil then
-      core.error("dirwatch error: %s", tostring(last_error))
     end
   end
   local start_time = system.get_time()

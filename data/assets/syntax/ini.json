@@ -1,0 +1,154 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": ";",
+  "files": {
+  "$ref": "3"
+},
+  "name": "INI",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["'", "'"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-]?%d+%.?%d*",
+  "type": "number"
+}
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$[%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "%${[^}]+}",
+  "type": "keyword2"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "^%s*()[%w_%-%.]+()%s*()=",
+  "type": {
+  "$ref": "15"
+}
+}
+},
+  "15": {
+  "kind": "array",
+  "values": ["normal", "function", "normal", "operator"]
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "=",
+  "type": "operator"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-%.]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "false": "literal",
+  "no": "literal",
+  "off": "literal",
+  "on": "literal",
+  "true": "literal",
+  "yes": "literal"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.ini$", "%.cfg$", "%.editorconfig$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": "[;#].*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "^%s*%[.-%]",
+  "type": "keyword"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "string"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

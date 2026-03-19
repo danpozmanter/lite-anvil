@@ -1,0 +1,241 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Go",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["`", "`"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "14"
+},
+  "type": "string"
+}
+},
+  "14": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "0b[01_]+",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "0o[0-7_]+",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[eEi]?",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.]",
+  "type": "operator"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "any": "keyword2",
+  "append": "function",
+  "bool": "keyword2",
+  "break": "keyword",
+  "byte": "keyword2",
+  "cap": "function",
+  "case": "keyword",
+  "chan": "keyword",
+  "close": "function",
+  "complex128": "keyword2",
+  "complex64": "keyword2",
+  "const": "keyword",
+  "continue": "keyword",
+  "copy": "function",
+  "default": "keyword",
+  "defer": "keyword",
+  "delete": "function",
+  "else": "keyword",
+  "error": "keyword2",
+  "fallthrough": "keyword",
+  "false": "literal",
+  "float32": "keyword2",
+  "float64": "keyword2",
+  "for": "keyword",
+  "func": "keyword",
+  "go": "keyword",
+  "goto": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "int": "keyword2",
+  "int16": "keyword2",
+  "int32": "keyword2",
+  "int64": "keyword2",
+  "int8": "keyword2",
+  "interface": "keyword",
+  "iota": "literal",
+  "len": "function",
+  "make": "function",
+  "map": "keyword",
+  "new": "function",
+  "nil": "literal",
+  "package": "keyword",
+  "panic": "function",
+  "print": "function",
+  "println": "function",
+  "range": "keyword",
+  "recover": "function",
+  "return": "keyword",
+  "rune": "keyword2",
+  "select": "keyword",
+  "string": "keyword2",
+  "struct": "keyword",
+  "switch": "keyword",
+  "true": "literal",
+  "type": "keyword",
+  "uint": "keyword2",
+  "uint16": "keyword2",
+  "uint32": "keyword2",
+  "uint64": "keyword2",
+  "uint8": "keyword2",
+  "uintptr": "keyword2",
+  "var": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.go$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

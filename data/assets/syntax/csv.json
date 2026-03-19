@@ -1,0 +1,80 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "files": {
+  "$ref": "3"
+},
+  "name": "CSV",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "2": {
+  "kind": "array",
+  "values": []
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.csv$", "%.tsv$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "9"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "6"
+},
+  "type": "string"
+}
+},
+  "6": {
+  "kind": "array",
+  "values": ["\"", "\"", "\"\""]
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-]?%d+%.?%d*[eE]?[%+%-]?%d*",
+  "type": "number"
+}
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": "[,;\t]",
+  "type": "operator"
+}
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": "[^,;\t\r\n\"]+",
+  "type": "symbol"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

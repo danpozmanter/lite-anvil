@@ -6,15 +6,8 @@ local command = require "core.command"
 local config  = require "core.config"
 local style   = require "core.style"
 local View    = require "core.view"
-local native_project_search = nil
-local native_project_model = nil
-
-do
-  local ok, mod = pcall(require, "project_search")
-  if ok then native_project_search = mod end
-  ok, mod = pcall(require, "project_model")
-  if ok then native_project_model = mod end
-end
+local native_project_search = require "project_search"
+local native_project_model = require "project_model"
 
 config.plugins.projectreplace = common.merge({
   backup_originals = true,
@@ -120,59 +113,36 @@ function ReplaceView:begin_scan()
   self.phase         = "scanning"
   self.last_file_idx = 1
 
-  if native_project_search and self.native_search_opts then
-    local handle = native_project_search.search(self.native_search_opts)
-    self.last_file_idx = #(self.native_search_opts.files or {})
-    core.add_thread(function()
-      while true do
-        local polled = native_project_search.poll(handle, 128)
-        if polled and polled.error then
-          core.error("%s", polled.error)
-          self.phase = "confirming"
-          break
-        end
-        if polled and polled.results then
-          for _, item in ipairs(polled.results) do
-            self.results[#self.results + 1] = {
-              file = item.file,
-              text = item.text,
-              line = item.line,
-              col = item.col,
-            }
-          end
-          core.redraw = true
-        end
-        if polled and polled.done then
-          self.phase = "confirming"
-          self.brightness = 100
-          core.redraw = true
-          break
-        end
-        coroutine.yield(0.01)
-      end
-    end, self.results)
-    self.scroll.to.y = 0
-    return
-  end
-
+  local handle = native_project_search.search(self.native_search_opts)
+  self.last_file_idx = #(self.native_search_opts.files or {})
   core.add_thread(function()
-    local i = 1
-    for _, project in ipairs(core.projects) do
-      for _, file in project:files() do
-        if file.type == "file"
-            and (not self.path or file.filename:find(self.path, 1, true) == 1)
-            and path_matches_glob(file.filename, self.path_glob) then
-          collect_matches(self.results, file.filename, self.fn_find)
-        end
-        self.last_file_idx = i
-        i = i + 1
+    while true do
+      local polled = native_project_search.poll(handle, 128)
+      if polled and polled.error then
+        core.error("%s", polled.error)
+        self.phase = "confirming"
+        break
       end
+      if polled and polled.results then
+        for _, item in ipairs(polled.results) do
+          self.results[#self.results + 1] = {
+            file = item.file,
+            text = item.text,
+            line = item.line,
+            col = item.col,
+          }
+        end
+        core.redraw = true
+      end
+      if polled and polled.done then
+        self.phase = "confirming"
+        self.brightness = 100
+        core.redraw = true
+        break
+      end
+      coroutine.yield(0.01)
     end
-    self.phase      = "confirming"
-    self.brightness = 100
-    core.redraw = true
   end, self.results)
-
   self.scroll.to.y = 0
 end
 
@@ -183,68 +153,26 @@ function ReplaceView:apply_replace()
   core.redraw = true
 
   core.add_thread(function()
-    if native_project_search and self.native_replace_opts then
-      local handle = native_project_search.replace_async(self.native_replace_opts)
-      while true do
-        local polled = native_project_search.replace_poll(handle)
-        if polled and polled.error then
-          core.error("%s", polled.error)
-          self.phase = "done"
-          self.brightness = 100
-          core.redraw = true
-          return
-        end
-        if polled and polled.done then
-          self.replaced_count = polled.replaced_count or 0
-          self.replaced_files = polled.replaced_files or 0
-          self.phase = "done"
-          self.brightness = 100
-          core.redraw = true
-          return
-        end
-        coroutine.yield(0.01)
+    local handle = native_project_search.replace_async(self.native_replace_opts)
+    while true do
+      local polled = native_project_search.replace_poll(handle)
+      if polled and polled.error then
+        core.error("%s", polled.error)
+        self.phase = "done"
+        self.brightness = 100
+        core.redraw = true
+        return
       end
-    end
-
-    local files = {}
-    local seen  = {}
-    for _, item in ipairs(self.results) do
-      if not seen[item.file] then
-        seen[item.file] = true
-        table.insert(files, item.file)
+      if polled and polled.done then
+        self.replaced_count = polled.replaced_count or 0
+        self.replaced_files = polled.replaced_files or 0
+        self.phase = "done"
+        self.brightness = 100
+        core.redraw = true
+        return
       end
+      coroutine.yield(0.01)
     end
-
-    for _, filename in ipairs(files) do
-      local fp = io.open(filename, "rb")
-      if fp then
-        local content = fp:read("*a")
-        fp:close()
-        local new_content, count = self.fn_apply(content)
-        if count > 0 then
-          if config.plugins.projectreplace.backup_originals then
-            local backup = io.open(filename .. ".bak", "wb")
-            if backup then
-              backup:write(content)
-              backup:close()
-            end
-          end
-          local out = io.open(filename, "wb")
-          if out then
-            out:write(new_content)
-            out:close()
-            self.replaced_count = self.replaced_count + count
-            self.replaced_files = self.replaced_files + 1
-          end
-        end
-      end
-      coroutine.yield(0)
-      core.redraw = true
-    end
-
-    self.phase      = "done"
-    self.brightness = 100
-    core.redraw = true
   end)
 end
 
@@ -560,9 +488,6 @@ local function open_replace_view(path, search, replace, fn_find, fn_apply, path_
 end
 
 local function collect_native_files(path, path_glob)
-  if not native_project_search and not native_project_model then
-    return nil
-  end
   if path then
     local info = system.get_file_info(path)
     if info and info.type == "file" then
@@ -581,30 +506,19 @@ local function collect_native_files(path, path_glob)
       roots[#roots + 1] = project.path
     end
   end
-  local files
-  if native_project_model then
-    files = native_project_model.get_all_files(roots, {
-      max_size_bytes = config.file_size_limit * 1e6,
-      max_files = config.project_scan.max_files,
-      exclude_dirs = config.project_scan.exclude_dirs,
-    })
-    if path_glob and path_glob ~= "" then
-      local filtered = {}
-      for _, file in ipairs(files) do
-        if path_matches_glob(file, path_glob) then
-          filtered[#filtered + 1] = file
-        end
+  local files = native_project_model.get_all_files(roots, {
+    max_size_bytes = config.file_size_limit * 1e6,
+    max_files = config.project_scan.max_files,
+    exclude_dirs = config.project_scan.exclude_dirs,
+  })
+  if path_glob and path_glob ~= "" then
+    local filtered = {}
+    for _, file in ipairs(files) do
+      if path_matches_glob(file, path_glob) then
+        filtered[#filtered + 1] = file
       end
-      files = filtered
     end
-  else
-    files = native_project_search.collect_files(roots, {
-      show_hidden = false,
-      max_size_bytes = config.file_size_limit * 1e6,
-      path_glob = path_glob,
-      max_files = config.project_scan.max_files,
-      exclude_dirs = config.project_scan.exclude_dirs,
-    })
+    files = filtered
   end
   if path and (not system.get_file_info(path) or system.get_file_info(path).type ~= "dir") then
     local filtered = {}
@@ -705,20 +619,20 @@ command.add(nil, {
                 end,
                 path_glob,
                 "replace",
-                native_project_search and {
+                {
                   files = collect_native_files(path, path_glob) or {},
                   query = search,
                   mode = "plain",
                   no_case = false,
-                } or nil,
-                native_project_search and {
+                },
+                {
                   files = collect_native_files(path, path_glob) or {},
                   mode = "plain",
                   query = search,
                   replace = replace,
                   no_case = false,
                   backup_originals = config.plugins.projectreplace.backup_originals ~= false,
-                } or nil
+                }
               )
             end
           })
@@ -744,20 +658,20 @@ command.add(nil, {
                 end,
                 path_glob,
                 "replace",
-                native_project_search and {
+                {
                   files = collect_native_files(path, path_glob) or {},
                   query = search,
                   mode = "regex",
                   no_case = false,
-                } or nil,
-                native_project_search and {
+                },
+                {
                   files = collect_native_files(path, path_glob) or {},
                   mode = "regex",
                   query = search,
                   replace = replace,
                   no_case = false,
                   backup_originals = config.plugins.projectreplace.backup_originals ~= false,
-                } or nil
+                }
               )
             end
           })
@@ -812,7 +726,7 @@ command.add(nil, {
                 opts.path_glob,
                 "swap",
                 nil,
-                native_project_search and {
+                {
                   files = collect_native_files(opts.path, opts.path_glob) or {},
                   mode = "swap",
                   query = opts.text_a,
@@ -823,7 +737,7 @@ command.add(nil, {
                   query_b_regex = opts.b_regex,
                   query_b_case = opts.b_case,
                   query_a_regex = opts.a_regex,
-                } or nil
+                }
               )
             end)
           end

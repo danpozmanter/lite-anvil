@@ -196,7 +196,6 @@ fn status_table(lua: &Lua, root: &str) -> LuaResult<LuaTable> {
             entries.push((kind.to_string(), rel, entry));
         }
     }
-
     entries.sort_by(|a, b| {
         if a.0 != b.0 {
             a.0.cmp(&b.0)

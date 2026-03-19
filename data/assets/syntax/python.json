@@ -1,0 +1,880 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "#",
+  "files": {
+  "$ref": "4"
+},
+  "headers": "^#!.*[ /]python",
+  "name": "Python",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "11"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "11": {
+  "kind": "array",
+  "values": [{
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "25"
+}, {
+  "$ref": "34"
+}, {
+  "$ref": "36"
+}, {
+  "$ref": "37"
+}, {
+  "$ref": "38"
+}, {
+  "$ref": "39"
+}, {
+  "$ref": "40"
+}, {
+  "$ref": "41"
+}, {
+  "$ref": "42"
+}]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "13"
+},
+  "syntax": {
+  "$ref": "10"
+}
+}
+},
+  "13": {
+  "kind": "array",
+  "values": ["{", "}"]
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "15"
+},
+  "syntax": {
+  "$ref": "10"
+}
+}
+},
+  "15": {
+  "kind": "array",
+  "values": ["%[", "%]"]
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[uUrR]%f[\"]",
+  "type": "keyword"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "18"
+},
+  "type": "string"
+}
+},
+  "18": {
+  "kind": "array",
+  "values": ["[ruU]?\"\"\"", "\"\"\"", "\\"]
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "20"
+},
+  "type": "string"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "False": "literal",
+  "None": "literal",
+  "True": "literal",
+  "and": "keyword",
+  "as": "keyword",
+  "assert": "keyword",
+  "async": "keyword",
+  "await": "keyword",
+  "break": "keyword",
+  "case": "keyword",
+  "class": "keyword",
+  "continue": "keyword",
+  "def": "keyword",
+  "del": "keyword",
+  "elif": "keyword",
+  "else": "keyword",
+  "except": "keyword",
+  "finally": "keyword",
+  "for": "keyword",
+  "from": "keyword",
+  "global": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "in": "keyword",
+  "is": "keyword",
+  "lambda": "keyword",
+  "match": "keyword",
+  "nonlocal": "keyword",
+  "not": "keyword",
+  "or": "keyword",
+  "pass": "keyword",
+  "raise": "keyword",
+  "return": "keyword",
+  "self": "keyword2",
+  "try": "keyword",
+  "while": "keyword",
+  "with": "keyword",
+  "yield": "keyword"
+}
+},
+  "20": {
+  "kind": "array",
+  "values": ["[ruU]?'''", "'''", "\\"]
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "22"
+},
+  "type": "string"
+}
+},
+  "22": {
+  "kind": "array",
+  "values": ["[ruU]?\"", "\"", "\\"]
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "24"
+},
+  "type": "string"
+}
+},
+  "24": {
+  "kind": "array",
+  "values": ["[ruU]?'", "'", "\\"]
+},
+  "25": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "26"
+},
+  "syntax": {
+  "$ref": "27"
+},
+  "type": "string"
+}
+},
+  "26": {
+  "kind": "array",
+  "values": ["f\"", "\"", "\\"]
+},
+  "27": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "28"
+},
+  "symbols": {
+  "$ref": "33"
+}
+}
+},
+  "28": {
+  "kind": "array",
+  "values": [{
+  "$ref": "29"
+}, {
+  "$ref": "31"
+}, {
+  "$ref": "32"
+}]
+},
+  "29": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "30"
+},
+  "syntax": {
+  "$ref": "10"
+}
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\""]
+},
+  "30": {
+  "kind": "array",
+  "values": ["{", "}"]
+},
+  "31": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\.",
+  "type": "string"
+}
+},
+  "32": {
+  "kind": "object",
+  "values": {
+  "pattern": "[^\"\\{}']+",
+  "type": "string"
+}
+},
+  "33": {
+  "kind": "array",
+  "values": []
+},
+  "34": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "35"
+},
+  "syntax": {
+  "$ref": "27"
+},
+  "type": "string"
+}
+},
+  "35": {
+  "kind": "array",
+  "values": ["f'", "'", "\\"]
+},
+  "36": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d+[%d%.eE_]*",
+  "type": "number"
+}
+},
+  "37": {
+  "kind": "object",
+  "values": {
+  "pattern": "0[xboXBO][%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "38": {
+  "kind": "object",
+  "values": {
+  "pattern": "%.?%d+",
+  "type": "number"
+}
+},
+  "39": {
+  "kind": "object",
+  "values": {
+  "pattern": "%f[-%w_]-%f[%d%.]",
+  "type": "number"
+}
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.py$", "%.pyw$", "%.rpy$", "%.pyi$"]
+},
+  "40": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%^%%<>!~|&]",
+  "type": "operator"
+}
+},
+  "41": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "42": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]+",
+  "type": "symbol"
+}
+},
+  "43": {
+  "kind": "array",
+  "values": ["%[", "%]"]
+},
+  "44": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "45"
+},
+  "syntax": {
+  "$ref": "10"
+}
+}
+},
+  "45": {
+  "kind": "array",
+  "values": ["{", "}"]
+},
+  "46": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "47"
+},
+  "syntax": {
+  "$ref": "49"
+},
+  "type": {
+  "$ref": "48"
+}
+}
+},
+  "47": {
+  "kind": "array",
+  "values": ["^%s*()def%f[%s]", ":"]
+},
+  "48": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "49": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "50"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "44"
+}, {
+  "$ref": "46"
+}, {
+  "$ref": "65"
+}, {
+  "$ref": "68"
+}, {
+  "$ref": "71"
+}, {
+  "$ref": "74"
+}, {
+  "$ref": "77"
+}, {
+  "$ref": "80"
+}, {
+  "$ref": "83"
+}, {
+  "$ref": "86"
+}, {
+  "$ref": "88"
+}, {
+  "$ref": "90"
+}, {
+  "$ref": "92"
+}, {
+  "$ref": "94"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "25"
+}, {
+  "$ref": "34"
+}, {
+  "$ref": "36"
+}, {
+  "$ref": "37"
+}, {
+  "$ref": "38"
+}, {
+  "$ref": "39"
+}, {
+  "$ref": "40"
+}, {
+  "$ref": "41"
+}, {
+  "$ref": "42"
+}]
+},
+  "50": {
+  "kind": "array",
+  "values": [{
+  "$ref": "51"
+}, {
+  "$ref": "53"
+}, {
+  "$ref": "63"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "25"
+}, {
+  "$ref": "34"
+}, {
+  "$ref": "36"
+}, {
+  "$ref": "37"
+}, {
+  "$ref": "38"
+}, {
+  "$ref": "39"
+}, {
+  "$ref": "40"
+}, {
+  "$ref": "41"
+}, {
+  "$ref": "42"
+}]
+},
+  "51": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "52"
+},
+  "syntax": {
+  "$ref": "49"
+}
+}
+},
+  "52": {
+  "kind": "array",
+  "values": ["%(", "%)"]
+},
+  "53": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "54"
+},
+  "syntax": {
+  "$ref": "55"
+},
+  "type": "operator"
+}
+},
+  "54": {
+  "kind": "array",
+  "values": ["->", "%f[:]"]
+},
+  "55": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "56"
+},
+  "symbols": {
+  "$ref": "62"
+}
+}
+},
+  "56": {
+  "kind": "array",
+  "values": [{
+  "$ref": "57"
+}, {
+  "$ref": "59"
+}, {
+  "$ref": "60"
+}, {
+  "$ref": "61"
+}]
+},
+  "57": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "58"
+},
+  "syntax": {
+  "$ref": "55"
+}
+}
+},
+  "58": {
+  "kind": "array",
+  "values": ["%[", "%]"]
+},
+  "59": {
+  "kind": "object",
+  "values": {
+  "pattern": "|",
+  "type": "operator"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "60": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%w_]+",
+  "type": "keyword2"
+}
+},
+  "61": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]+",
+  "type": "symbol"
+}
+},
+  "62": {
+  "kind": "object",
+  "values": {
+  "None": "literal"
+}
+},
+  "63": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "64"
+},
+  "syntax": {
+  "$ref": "55"
+}
+}
+},
+  "64": {
+  "kind": "array",
+  "values": [":%s*", "%f[^%[%]%w_]"]
+},
+  "65": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "66"
+},
+  "syntax": {
+  "$ref": "10"
+},
+  "type": {
+  "$ref": "67"
+}
+}
+},
+  "66": {
+  "kind": "array",
+  "values": ["^%s*()for%f[%s]", ":"]
+},
+  "67": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "68": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "69"
+},
+  "syntax": {
+  "$ref": "10"
+},
+  "type": {
+  "$ref": "70"
+}
+}
+},
+  "69": {
+  "kind": "array",
+  "values": ["^%s*()if%f[%s]", ":"]
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "70": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "71": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "72"
+},
+  "syntax": {
+  "$ref": "10"
+},
+  "type": {
+  "$ref": "73"
+}
+}
+},
+  "72": {
+  "kind": "array",
+  "values": ["^%s*()elif%f[%s]", ":"]
+},
+  "73": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "74": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "75"
+},
+  "syntax": {
+  "$ref": "10"
+},
+  "type": {
+  "$ref": "76"
+}
+}
+},
+  "75": {
+  "kind": "array",
+  "values": ["^%s*()while%f[%s]", ":"]
+},
+  "76": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "77": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "78"
+},
+  "syntax": {
+  "$ref": "10"
+},
+  "type": {
+  "$ref": "79"
+}
+}
+},
+  "78": {
+  "kind": "array",
+  "values": ["^%s*()match%f[%s]", ":"]
+},
+  "79": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "8": {
+  "kind": "array",
+  "values": ["^%s*\"\"\"", "\"\"\""]
+},
+  "80": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "81"
+},
+  "syntax": {
+  "$ref": "10"
+},
+  "type": {
+  "$ref": "82"
+}
+}
+},
+  "81": {
+  "kind": "array",
+  "values": ["^%s*()case%f[%s]", ":"]
+},
+  "82": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "83": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "84"
+},
+  "syntax": {
+  "$ref": "10"
+},
+  "type": {
+  "$ref": "85"
+}
+}
+},
+  "84": {
+  "kind": "array",
+  "values": ["^%s*()except%f[%s]", ":"]
+},
+  "85": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "86": {
+  "kind": "object",
+  "values": {
+  "pattern": "else():",
+  "type": {
+  "$ref": "87"
+}
+}
+},
+  "87": {
+  "kind": "array",
+  "values": ["keyword", "normal"]
+},
+  "88": {
+  "kind": "object",
+  "values": {
+  "pattern": "try():",
+  "type": {
+  "$ref": "89"
+}
+}
+},
+  "89": {
+  "kind": "array",
+  "values": ["keyword", "normal"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "43"
+},
+  "syntax": {
+  "$ref": "10"
+}
+}
+},
+  "90": {
+  "kind": "object",
+  "values": {
+  "pattern": "lambda()%s.+:",
+  "type": {
+  "$ref": "91"
+}
+}
+},
+  "91": {
+  "kind": "array",
+  "values": ["keyword", "normal"]
+},
+  "92": {
+  "kind": "object",
+  "values": {
+  "pattern": "class%s+()[%a_][%w_]+().*:",
+  "type": {
+  "$ref": "93"
+}
+}
+},
+  "93": {
+  "kind": "array",
+  "values": ["keyword", "keyword2", "normal"]
+},
+  "94": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "95"
+},
+  "syntax": {
+  "$ref": "55"
+}
+}
+},
+  "95": {
+  "kind": "array",
+  "values": [":%s*", "%f[^%[%]%w_]"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

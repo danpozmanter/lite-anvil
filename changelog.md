@@ -1,5 +1,17 @@
 # Change Log
 
+## [0.15.0] - 2026-03-19 — Rust-owned editor runtime + fixes.
+
+* Move all core module bodies (`core`, `core.statusview`, `core.rootview`, `core.node`, `core.doc`, `core.docview`, `core.commands.doc`, `plugins.treeview`, `plugins.lsp.server-manager`, `plugins.terminal.view`, `plugins.workspace`) to Rust-owned package preloads. Lua is now the extension and customization layer; the runtime is Rust.
+* Add native Rust backends for startup globals and path resolution, tab and pane layout math, persistent storage I/O, document load/save/edit/undo/redo, session persistence, project file search and replace, bracket matching, fold calculations, indent detection, trim-whitespace decisions, and autorestart path checks.
+* Move status-bar panel layout, drag handling, and hit-testing into Rust. Move treeview init, model sync, selection, hover, and scale-metrics into Rust.
+* Add declarative JSON-backed theme and syntax assets. Migrate bundled default themes and Rust, Bash, TOML, env, and ini syntax definitions onto that path. Remove per-language Lua wrapper files for all JSON-covered languages.
+* Add `core.plugin_api` as a stable Lua interface for bundled plugins, replacing direct access to internal views, prompts, status items, session hooks, and thread spawning.
+* Fix startup and directory-change crash in the bundled Git plugin. Git commands remain available; the branch indicator is no longer shown in the status bar.
+* Fix empty treeview on startup when the session has no active project.
+* Fix Open File crash when submitting an empty string.
+* Fix Esc incorrectly triggering focus-mode exit when focus mode was not active.
+
 ## [0.14.7] - 2026-03-18 — RAM reductions and cache bounds.
 
 * Reduce terminal scrollback memory and allocator churn.

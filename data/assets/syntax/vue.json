@@ -1,0 +1,216 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "files": {
+  "$ref": "4"
+},
+  "name": "Vue",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "comment"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["<!%-%-", "%-%->"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "13"
+},
+  "type": "keyword2"
+}
+},
+  "13": {
+  "kind": "array",
+  "values": ["{{", "}}"]
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "15"
+},
+  "type": "string"
+}
+},
+  "15": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "17"
+},
+  "type": "string"
+}
+},
+  "17": {
+  "kind": "array",
+  "values": ["'", "'"]
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "%f[^<]![%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "%f[^<]/[%a_][%w_%-]*",
+  "type": "function"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "scoped": "keyword",
+  "script": "keyword",
+  "setup": "keyword",
+  "slot": "keyword2",
+  "style": "keyword",
+  "template": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "%f[^<][%a_][%w_%-]*",
+  "type": "function"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "v%-%a[%w%-]*",
+  "type": "keyword"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": ":[%a_][%w_%-]*",
+  "type": "keyword2"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "@[%a_][%w_%-]*",
+  "type": "keyword2"
+}
+},
+  "24": {
+  "kind": "object",
+  "values": {
+  "pattern": "[/<>=]",
+  "type": "operator"
+}
+},
+  "25": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["<!--", "-->"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.vue$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "24"
+}, {
+  "$ref": "25"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "syntax": ".js",
+  "type": "function"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["<%s*[sS][cC][rR][iI][pP][tT]%f[%s>].->", "<%s*/%s*[sS][cC][rR][iI][pP][tT]%s*>"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "syntax": ".css",
+  "type": "function"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["<%s*[sS][tT][yY][lL][eE]%f[%s>].->", "<%s*/%s*[sS][tT][yY][lL][eE]%s*>"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

@@ -1,0 +1,299 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "--",
+  "files": {
+  "$ref": "4"
+},
+  "headers": "^#!.*[ /]lua",
+  "name": "Lua",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["%[%[", "%]%]"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "13"
+},
+  "type": "comment"
+}
+},
+  "13": {
+  "kind": "array",
+  "values": ["%-%-%[%[", "%]%]"]
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "%-%-.*",
+  "type": "comment"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x%x+%.%x*[pP][-+]?%d+",
+  "type": "number"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x%x+%.%x*",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x%.%x+[pP][-+]?%d+",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x%.%x+",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x%x+[pP][-+]?%d+",
+  "type": "number"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "and": "keyword",
+  "break": "keyword",
+  "do": "keyword",
+  "else": "keyword",
+  "elseif": "keyword",
+  "end": "keyword",
+  "false": "literal",
+  "for": "keyword",
+  "function": "keyword",
+  "goto": "keyword",
+  "if": "keyword",
+  "in": "keyword",
+  "local": "keyword",
+  "nil": "literal",
+  "not": "keyword",
+  "or": "keyword",
+  "repeat": "keyword",
+  "return": "keyword",
+  "self": "keyword2",
+  "then": "keyword",
+  "true": "literal",
+  "until": "keyword",
+  "while": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x%x+",
+  "type": "number"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d%.%d*[eE][-+]?%d+",
+  "type": "number"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d%.%d*",
+  "type": "number"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "%.?%d*[eE][-+]?%d+",
+  "type": "number"
+}
+},
+  "24": {
+  "kind": "object",
+  "values": {
+  "pattern": "%.?%d+",
+  "type": "number"
+}
+},
+  "25": {
+  "kind": "object",
+  "values": {
+  "pattern": "<%a+>",
+  "type": "keyword2"
+}
+},
+  "26": {
+  "kind": "object",
+  "values": {
+  "pattern": "%.%.%.?",
+  "type": "operator"
+}
+},
+  "27": {
+  "kind": "object",
+  "values": {
+  "pattern": "[<>~=]=",
+  "type": "operator"
+}
+},
+  "28": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%^%%#<>]",
+  "type": "operator"
+}
+},
+  "29": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*()%s*%f[(\"'{]",
+  "type": {
+  "$ref": "30"
+}
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["--[[", "]]"]
+},
+  "30": {
+  "kind": "array",
+  "values": ["function", "normal"]
+},
+  "31": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "32": {
+  "kind": "object",
+  "values": {
+  "pattern": "::[%a_][%w_]*::",
+  "type": "function"
+}
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.lua$", "%.rockspec$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "24"
+}, {
+  "$ref": "25"
+}, {
+  "$ref": "26"
+}, {
+  "$ref": "27"
+}, {
+  "$ref": "28"
+}, {
+  "$ref": "29"
+}, {
+  "$ref": "31"
+}, {
+  "$ref": "32"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "string"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

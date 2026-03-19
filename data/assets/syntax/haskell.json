@@ -1,0 +1,189 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "%-%-",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Haskell",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-]?%d+%.?%d*[eE]?[%+%-]?%d*",
+  "type": "number"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "::|->|=>|<-",
+  "type": "operator"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%[%]%(%){}:,=|\\\\<>/%*%+%-%.]+",
+  "type": "operator"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%u][%w_']*",
+  "type": "keyword2"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_']*%f[%s%(]",
+  "type": "function"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_']*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "False": "literal",
+  "Just": "literal",
+  "Nothing": "literal",
+  "True": "literal",
+  "as": "keyword",
+  "case": "keyword",
+  "class": "keyword",
+  "data": "keyword",
+  "default": "keyword",
+  "deriving": "keyword",
+  "do": "keyword",
+  "else": "keyword",
+  "family": "keyword",
+  "forall": "keyword",
+  "foreign": "keyword",
+  "hiding": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "in": "keyword",
+  "infix": "keyword",
+  "infixl": "keyword",
+  "infixr": "keyword",
+  "instance": "keyword",
+  "let": "keyword",
+  "mdo": "keyword",
+  "module": "keyword",
+  "newtype": "keyword",
+  "of": "keyword",
+  "proc": "keyword",
+  "qualified": "keyword",
+  "rec": "keyword",
+  "then": "keyword",
+  "type": "keyword",
+  "where": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["{%-", "%-%}"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.hs$", "%.lhs$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "%-%-.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["{%-", "%-%}"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

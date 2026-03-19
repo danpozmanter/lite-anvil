@@ -1,0 +1,251 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Swift",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "12"
+},
+  "type": "string"
+}
+},
+  "12": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "14"
+},
+  "type": "string"
+}
+},
+  "14": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "@[%a_][%w_%.]*",
+  "type": "keyword"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "#[%a_][%w_]*",
+  "type": "keyword"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$[%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*",
+  "type": "number"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "Array": "keyword2",
+  "Bool": "keyword2",
+  "Character": "keyword2",
+  "Dictionary": "keyword2",
+  "Double": "keyword2",
+  "Float": "keyword2",
+  "Int": "keyword2",
+  "Self": "keyword2",
+  "Set": "keyword2",
+  "String": "keyword2",
+  "Void": "keyword2",
+  "any": "keyword",
+  "as": "keyword",
+  "associatedtype": "keyword",
+  "break": "keyword",
+  "case": "keyword",
+  "catch": "keyword",
+  "class": "keyword",
+  "continue": "keyword",
+  "default": "keyword",
+  "defer": "keyword",
+  "deinit": "keyword",
+  "do": "keyword",
+  "else": "keyword",
+  "enum": "keyword",
+  "extension": "keyword",
+  "fallthrough": "keyword",
+  "false": "literal",
+  "fileprivate": "keyword",
+  "for": "keyword",
+  "func": "keyword",
+  "guard": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "in": "keyword",
+  "init": "keyword",
+  "internal": "keyword",
+  "is": "keyword",
+  "let": "keyword",
+  "mutating": "keyword",
+  "nil": "literal",
+  "nonmutating": "keyword",
+  "open": "keyword",
+  "override": "keyword",
+  "private": "keyword",
+  "protocol": "keyword",
+  "public": "keyword",
+  "repeat": "keyword",
+  "rethrows": "keyword",
+  "return": "keyword",
+  "some": "keyword",
+  "static": "keyword",
+  "struct": "keyword",
+  "subscript": "keyword",
+  "switch": "keyword",
+  "throw": "keyword",
+  "throws": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "typealias": "keyword",
+  "var": "keyword",
+  "where": "keyword",
+  "while": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:]+",
+  "type": "operator"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.swift$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

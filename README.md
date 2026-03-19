@@ -1,9 +1,8 @@
 # Lite-Anvil
 
-A lightweight text editor written in Lua with a Rust core.
+A lightweight code editor written in Rust with Lua for customization and plugins.
 
-Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl) that replaces the
-original C backend with Rust.
+Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl).
 
 ## Purpose & Forking
 
@@ -13,7 +12,7 @@ This project exists partially as an experiment, and partially as something I jus
 
 I do not intend to maintain or support this in any way, but wanted to share the code so anyone interested can freely use, learn from, or fork this project into something new.
 
-There will be a tag "InitialPort" for the initial port into Rust, before I begin altering this further to suit my own ergonomics.
+FYI: There is a tag "InitialPort" for the initial port into Rust, before I begin altering this further to suit my own ergonomics.
 
 ## Features
 

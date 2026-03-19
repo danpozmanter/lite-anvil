@@ -1,0 +1,209 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": "#",
+  "files": {
+  "$ref": "3"
+},
+  "headers": "^#!.*ruby",
+  "name": "Ruby",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["'", "'"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": ":[%a_][%w_]*[!?=]?",
+  "type": "keyword2"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "@@?[%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$[%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:]+",
+  "type": "operator"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*[!?=]?%f[(]",
+  "type": "function"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*[!?=]?",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "alias": "keyword",
+  "and": "keyword",
+  "attr_accessor": "function",
+  "attr_reader": "function",
+  "attr_writer": "function",
+  "begin": "keyword",
+  "break": "keyword",
+  "case": "keyword",
+  "class": "keyword",
+  "def": "keyword",
+  "do": "keyword",
+  "else": "keyword",
+  "elsif": "keyword",
+  "end": "keyword",
+  "ensure": "keyword",
+  "false": "literal",
+  "for": "keyword",
+  "if": "keyword",
+  "in": "keyword",
+  "module": "keyword",
+  "next": "keyword",
+  "nil": "literal",
+  "not": "keyword",
+  "or": "keyword",
+  "print": "function",
+  "puts": "function",
+  "redo": "keyword",
+  "require": "function",
+  "require_relative": "function",
+  "rescue": "keyword",
+  "retry": "keyword",
+  "return": "keyword",
+  "self": "keyword",
+  "super": "keyword",
+  "then": "keyword",
+  "true": "literal",
+  "undef": "keyword",
+  "unless": "keyword",
+  "until": "keyword",
+  "when": "keyword",
+  "while": "keyword",
+  "yield": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.rb$", "%.rake$", "Gemfile$", "Rakefile$", "%.gemspec$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "string"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\\"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

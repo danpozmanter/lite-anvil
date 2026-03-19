@@ -6,27 +6,32 @@ local config = require "core.config"
 local keymap = require "core.keymap"
 local style = require "core.style"
 local storage = require "core.storage"
-local CommandView = require "core.commandview"
 local DocView = require "core.docview"
 
 config.plugins.scale = common.merge({
-  -- The method used to apply the scaling: "code", "ui"
   mode = "code",
-  -- Default scale applied at startup.
   default_scale = "autodetect",
-  -- Allow using CTRL + MouseWheel for changing the scale.
   use_mousewheel = true
 }, config.plugins.scale)
 
 local scale_steps = 0.05
-
 local current_scale = SCALE
 local default_scale = SCALE
+local set_scale
 
-local function set_scale(scale)
+local function restore_scale(value)
+  if type(value) == "table" then
+    value = value.scale
+  end
+  if type(value) == "number" then
+    set_scale(value)
+    return true
+  end
+  return false
+end
+
+function set_scale(scale)
   scale = common.clamp(scale, 0.2, 6)
-
-  -- save scroll positions
   local v_scrolls = {}
   local h_scrolls = {}
   for _, view in ipairs(core.root_view.root_node:get_children()) do
@@ -39,22 +44,18 @@ local function set_scale(scale)
       h_scrolls[view] = view.scroll.x / (hn - view.size.x)
     end
   end
-
   local s = scale / current_scale
   current_scale = scale
-
   if config.plugins.scale.mode == "ui" then
     SCALE = scale
-
-    style.padding.x               = style.padding.x               * s
-    style.padding.y               = style.padding.y               * s
-    style.divider_size            = style.divider_size            * s
-    style.scrollbar_size          = style.scrollbar_size          * s
+    style.padding.x = style.padding.x * s
+    style.padding.y = style.padding.y * s
+    style.divider_size = style.divider_size * s
+    style.scrollbar_size = style.scrollbar_size * s
     style.expanded_scrollbar_size = style.expanded_scrollbar_size * s
-    style.caret_width             = style.caret_width             * s
-    style.tab_width               = style.tab_width               * s
+    style.caret_width = style.caret_width * s
+    style.tab_width = style.tab_width * s
   end
-
   local font_getters = {
     font = function() return style.font end,
     big_font = function() return style.get_big_font() end,
@@ -62,16 +63,13 @@ local function set_scale(scale)
     icon_big_font = function() return style.get_icon_big_font() end,
     code_font = function() return style.code_font end,
   }
-  for _, name in ipairs {"font", "big_font", "icon_font", "icon_big_font", "code_font"} do
+  for _, name in ipairs { "font", "big_font", "icon_font", "icon_big_font", "code_font" } do
     local font = font_getters[name]()
     font:set_size(s * font:get_size())
   end
-
   for name, font in pairs(style.syntax_fonts) do
     style.syntax_fonts[name]:set_size(s * font:get_size())
   end
-
-  -- restore scroll positions
   for view, n in pairs(v_scrolls) do
     view.scroll.y = n * (view:get_scrollable_size() - view.size.y)
     view.scroll.to.y = view.scroll.y
@@ -80,7 +78,6 @@ local function set_scale(scale)
     view.scroll.x = hn * (view:get_h_scrollable_size() - view.size.x)
     view.scroll.to.x = view.scroll.x
   end
-
   core.redraw = true
   storage.save("scale", "scale", scale)
 end
@@ -101,18 +98,22 @@ local function dec_scale()
   set_scale(current_scale - scale_steps)
 end
 
-if default_scale ~= config.plugins.scale.default_scale then
-  if type(config.plugins.scale.default_scale) == "number" then
-    set_scale(config.plugins.scale.default_scale)
-  end
+if default_scale ~= config.plugins.scale.default_scale and type(config.plugins.scale.default_scale) == "number" then
+  set_scale(config.plugins.scale.default_scale)
 end
 
-local saved_scale = storage.load("scale", "scale")
-if type(saved_scale) == "number" then
-  set_scale(saved_scale)
+if not restore_scale(core.session and core.session.plugin_data and core.session.plugin_data.scale) then
+  restore_scale(storage.load("scale", "scale"))
 end
 
--- The config specification used by gui generators
+core.register_session_load_hook("scale", function(data)
+  restore_scale(data)
+end)
+
+core.register_session_save_hook("scale", function()
+  return { scale = current_scale }
+end)
+
 config.plugins.scale.config_spec = {
   name = "Scale",
   {
@@ -122,8 +123,8 @@ config.plugins.scale.config_spec = {
     type = "selection",
     default = "code",
     values = {
-      {"Everything", "ui"},
-      {"Code Only", "code"}
+      { "Everything", "ui" },
+      { "Code Only", "code" }
     }
   },
   {
@@ -133,23 +134,15 @@ config.plugins.scale.config_spec = {
     type = "selection",
     default = "autodetect",
     values = {
-      {"Autodetect", "autodetect"},
-      {"80%", 0.80},
-      {"90%", 0.90},
-      {"100%", 1.00},
-      {"110%", 1.10},
-      {"120%", 1.20},
-      {"125%", 1.25},
-      {"130%", 1.30},
-      {"140%", 1.40},
-      {"150%", 1.50},
-      {"175%", 1.75},
-      {"200%", 2.00},
-      {"250%", 2.50},
-      {"300%", 3.00}
+      { "Autodetect", "autodetect" },
+      { "80%", 0.80 }, { "90%", 0.90 }, { "100%", 1.00 }, { "110%", 1.10 },
+      { "120%", 1.20 }, { "125%", 1.25 }, { "130%", 1.30 }, { "140%", 1.40 },
+      { "150%", 1.50 }, { "175%", 1.75 }, { "200%", 2.00 }, { "250%", 2.50 }, { "300%", 3.00 }
     },
     on_apply = function(value)
-      if type(value) == "string" then value = default_scale end
+      if type(value) == "string" then
+        value = default_scale
+      end
       if value ~= current_scale then
         set_scale(value)
       end
@@ -175,26 +168,25 @@ config.plugins.scale.config_spec = {
   }
 }
 
-
 command.add(nil, {
-  ["scale:reset"   ] = function() res_scale() end,
+  ["scale:reset"] = function() res_scale() end,
   ["scale:decrease"] = function() dec_scale() end,
   ["scale:increase"] = function() inc_scale() end,
 })
 
 keymap.add {
-  ["ctrl+0"]       = "scale:reset",
-  ["ctrl+-"]       = "scale:decrease",
-  ["ctrl+="]       = "scale:increase",
+  ["ctrl+0"] = "scale:reset",
+  ["ctrl+-"] = "scale:decrease",
+  ["ctrl+="] = "scale:increase",
   ["ctrl+shift+="] = "scale:increase",
   ["ctrl+shift+/"] = "core:show-shortcuts-help",
 }
 
 if PLATFORM == "Mac OS X" then
   keymap.add {
-    ["cmd+0"]       = "scale:reset",
-    ["cmd+-"]       = "scale:decrease",
-    ["cmd+="]       = "scale:increase",
+    ["cmd+0"] = "scale:reset",
+    ["cmd+-"] = "scale:decrease",
+    ["cmd+="] = "scale:increase",
     ["cmd+shift+="] = "scale:increase",
     ["cmd+shift+/"] = "core:show-shortcuts-help",
   }
@@ -213,22 +205,21 @@ if config.plugins.scale.use_mousewheel then
   end
 end
 
-local old_DocView_on_context_menu = DocView.on_context_menu
+local old_docview_context_menu = DocView.on_context_menu
 function DocView:on_context_menu()
-  local args = { old_DocView_on_context_menu(self) }
+  local args = { old_docview_context_menu(self) }
   local cmds = args[1]
   table.move(cmds.items, 4, 6, 7)
-  cmds.items[4] = { text = "Font +",     command = "scale:increase" }
-  cmds.items[5] = { text = "Font -",     command = "scale:decrease" }
-  cmds.items[6] = { text = "Font Reset", command = "scale:reset"    }
+  cmds.items[4] = { text = "Font +", command = "scale:increase" }
+  cmds.items[5] = { text = "Font -", command = "scale:decrease" }
+  cmds.items[6] = { text = "Font Reset", command = "scale:reset" }
   return table.unpack(args)
 end
 
-
 return {
-  ["set"] = set_scale,
-  ["get"] = get_scale,
-  ["increase"] = inc_scale,
-  ["decrease"] = dec_scale,
-  ["reset"] = res_scale
+  set = set_scale,
+  get = get_scale,
+  increase = inc_scale,
+  decrease = dec_scale,
+  reset = res_scale,
 }

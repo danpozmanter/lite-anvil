@@ -6,18 +6,8 @@ local command = require "core.command"
 local config = require "core.config"
 local style = require "core.style"
 local View = require "core.view"
-local native_project_search = nil
-local native_project_fs = nil
-local native_project_model = nil
-
-do
-  local ok, mod = pcall(require, "project_search")
-  if ok then native_project_search = mod end
-  ok, mod = pcall(require, "project_fs")
-  if ok then native_project_fs = mod end
-  ok, mod = pcall(require, "project_model")
-  if ok then native_project_model = mod end
-end
+local native_project_search = require "project_search"
+local native_project_model = require "project_model"
 
 ---@class plugins.projectsearch.resultsview : core.view
 local ResultsView = View:extend()
@@ -84,29 +74,6 @@ function ResultsView:get_name()
 end
 
 
-local function find_all_matches_in_file(t, filename, fn)
-  local fp = io.open(filename)
-  if not fp then return t end
-  local n = 1
-  for line in fp:lines() do
-    local s = fn(line)
-    if s then
-      -- Insert maximum 256 characters. If we insert more, for compiled files, which can have very long lines
-      -- things tend to get sluggish. If our line is longer than 80 characters, begin to truncate the thing.
-      local start_index = math.max(s - 80, 1)
-      local text = (start_index > 1 and "..." or "") .. line:sub(start_index, 256 + start_index)
-      if #line > 256 + start_index then text = text .. "..." end
-      table.insert(t, { file = filename, text = text, line = n, col = s })
-      core.redraw = true
-    end
-    if n % 100 == 0 then coroutine.yield(0) end
-    n = n + 1
-    core.redraw = true
-  end
-  fp:close()
-end
-
-
 function ResultsView:rebuild_display_results()
   self.display_results = {}
   local last_file
@@ -141,9 +108,6 @@ local function collect_roots(path)
 end
 
 local function collect_native_files(path, path_glob)
-  if not native_project_search and not native_project_model then
-    return nil
-  end
   if path then
     local info = system.get_file_info(path)
     if info and info.type == "file" then
@@ -151,30 +115,19 @@ local function collect_native_files(path, path_glob)
     end
   end
   local roots = collect_roots(path)
-  local files
-  if native_project_model then
-    files = native_project_model.get_all_files(roots, {
-      max_size_bytes = config.file_size_limit * 1e6,
-      max_files = config.project_scan.max_files,
-      exclude_dirs = config.project_scan.exclude_dirs,
-    })
-    if path_glob and path_glob ~= "" then
-      local filtered = {}
-      for _, file in ipairs(files) do
-        if path_matches_glob(file, path_glob) then
-          filtered[#filtered + 1] = file
-        end
+  local files = native_project_model.get_all_files(roots, {
+    max_size_bytes = config.file_size_limit * 1e6,
+    max_files = config.project_scan.max_files,
+    exclude_dirs = config.project_scan.exclude_dirs,
+  })
+  if path_glob and path_glob ~= "" then
+    local filtered = {}
+    for _, file in ipairs(files) do
+      if path_matches_glob(file, path_glob) then
+        filtered[#filtered + 1] = file
       end
-      files = filtered
     end
-  else
-    files = native_project_search.collect_files(roots, {
-      show_hidden = false,
-      max_size_bytes = config.file_size_limit * 1e6,
-      path_glob = path_glob,
-      max_files = config.project_scan.max_files,
-      exclude_dirs = config.project_scan.exclude_dirs,
-    })
+    files = filtered
   end
   if path and (not system.get_file_info(path) or system.get_file_info(path).type ~= "dir") then
     local filtered = {}
@@ -198,69 +151,44 @@ function ResultsView:begin_search(path, text, fn, path_glob, search_opts)
   self.selected_idx = 0
   self.search_opts = search_opts
 
-  if native_project_search and search_opts then
-    local files = collect_native_files(path, path_glob) or {}
-    self.last_file_idx = #files
-    local handle = native_project_search.search({
-      files = files,
-      query = search_opts.query,
-      mode = search_opts.mode,
-      no_case = search_opts.no_case,
-    })
-    core.add_thread(function()
-      while true do
-        local polled = native_project_search.poll(handle, 128)
-        if polled and polled.error then
-          core.error("%s", polled.error)
-          self.searching = false
-          break
-        end
-        if polled and polled.results then
-          for _, item in ipairs(polled.results) do
-            self.results[#self.results + 1] = {
-              file = item.file,
-              text = item.text,
-              line = item.line,
-              col = item.col,
-            }
-          end
-          self:rebuild_display_results()
-          core.redraw = true
-        end
-        if polled and polled.done then
-          self.searching = false
-          self.brightness = 100
-          self:rebuild_display_results()
-          core.redraw = true
-          break
-        end
-        coroutine.yield(0.01)
-      end
-    end, self.results)
-    self.scroll.to.y = 0
-    return
-  end
-
+  local files = collect_native_files(path, path_glob) or {}
+  self.last_file_idx = #files
+  local handle = native_project_search.search({
+    files = files,
+    query = search_opts.query,
+    mode = search_opts.mode,
+    no_case = search_opts.no_case,
+  })
   core.add_thread(function()
-    local i = 1
-    for k, project in ipairs(core.projects) do
-      for dir_name, file in project:files() do
-        if file.type == "file"
-            and (not path or file.filename:find(path, 1, true) == 1)
-            and path_matches_glob(file.filename, path_glob) then
-          find_all_matches_in_file(self.results, file.filename, fn)
-          self:rebuild_display_results()
-        end
-        self.last_file_idx = i
-        i = i + 1
+    while true do
+      local polled = native_project_search.poll(handle, 128)
+      if polled and polled.error then
+        core.error("%s", polled.error)
+        self.searching = false
+        break
       end
+      if polled and polled.results then
+        for _, item in ipairs(polled.results) do
+          self.results[#self.results + 1] = {
+            file = item.file,
+            text = item.text,
+            line = item.line,
+            col = item.col,
+          }
+        end
+        self:rebuild_display_results()
+        core.redraw = true
+      end
+      if polled and polled.done then
+        self.searching = false
+        self.brightness = 100
+        self:rebuild_display_results()
+        core.redraw = true
+        break
+      end
+      coroutine.yield(0.01)
     end
-    self.searching = false
-    self.brightness = 100
-    self:rebuild_display_results()
-    core.redraw = true
   end, self.results)
-
   self.scroll.to.y = 0
 end
 

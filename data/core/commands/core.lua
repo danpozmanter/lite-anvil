@@ -6,14 +6,7 @@ local Doc = require "core.doc"
 local keymap = require "core.keymap"
 local LogView = require "core.logview"
 local style = require "core.style"
-local native_picker = nil
-
-do
-  local ok, mod = pcall(require, "picker")
-  if ok then
-    native_picker = mod
-  end
-end
+local native_picker = require "picker"
 
 
 local fullscreen = false
@@ -178,10 +171,7 @@ local function add_project_directory(use_dialog)
 end
 
 local function recent_items(items, text)
-  if native_picker then
-    return native_picker.rank_strings(items, text)
-  end
-  return common.fuzzy_match(items, text)
+  return native_picker.rank_strings(items, text)
 end
 
 local function open_recent_file()
@@ -299,10 +289,7 @@ command.add(nil, {
         for name in pairs(package.loaded) do
           table.insert(items, name)
         end
-        if native_picker then
-          return native_picker.rank_strings(items, text)
-        end
-        return common.fuzzy_match(items, text)
+        return native_picker.rank_strings(items, text)
       end
     })
   end,
@@ -317,7 +304,7 @@ command.add(nil, {
       end,
       suggest = function(text)
         local res = {}
-        local matched = native_picker and native_picker.rank_strings(commands, text) or common.fuzzy_match(commands, text)
+        local matched = native_picker.rank_strings(commands, text)
         for i, name in ipairs(matched) do
           res[i] = {
             text = command.prettify_name(name),

@@ -1,0 +1,400 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "JavaScript",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "array",
+  "values": ["\\/(?=(?!\\/)(?:(?>[^\\\\[\\/]++|\\\\.|\\[(?:[^\\\\\\]]++|\\\\.)*+\\])*+)++\\/[gmiyuvsd]*\\s*(?:[\\n,;\\)\\]\\}\\.]|\\/[\\/*]))()", "/()[gmiyuvsd]*", "\\"]
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "12"
+},
+  "symbols": {
+  "$ref": "28"
+}
+}
+},
+  "12": {
+  "kind": "array",
+  "values": [{
+  "$ref": "13"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "26"
+}, {
+  "$ref": "27"
+}]
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "%(()%?[:!=><]",
+  "type": {
+  "$ref": "14"
+}
+}
+},
+  "14": {
+  "kind": "array",
+  "values": ["string", "string"]
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "[.?+*%(%)|]",
+  "type": "string"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "{%d*,?%d*}",
+  "type": "string"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "18"
+},
+  "syntax": {
+  "$ref": "20"
+},
+  "type": {
+  "$ref": "19"
+}
+}
+},
+  "18": {
+  "kind": "array",
+  "values": ["\\[()\\^?", "(?:\\]|(?=\\n))()", "\\"]
+},
+  "19": {
+  "kind": "array",
+  "values": ["string", "string"]
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "Infinity": "keyword2",
+  "NaN": "keyword2",
+  "arguments": "keyword2",
+  "async": "keyword",
+  "await": "keyword",
+  "break": "keyword",
+  "case": "keyword",
+  "catch": "keyword",
+  "class": "keyword",
+  "const": "keyword",
+  "continue": "keyword",
+  "debugger": "keyword",
+  "default": "keyword",
+  "delete": "keyword",
+  "do": "keyword",
+  "else": "keyword",
+  "export": "keyword",
+  "extends": "keyword",
+  "false": "literal",
+  "finally": "keyword",
+  "for": "keyword",
+  "from": "keyword",
+  "function": "keyword",
+  "get": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "in": "keyword",
+  "instanceof": "keyword",
+  "let": "keyword",
+  "new": "keyword",
+  "null": "literal",
+  "of": "keyword",
+  "return": "keyword",
+  "set": "keyword",
+  "static": "keyword",
+  "super": "keyword",
+  "switch": "keyword",
+  "this": "keyword2",
+  "throw": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "typeof": "keyword",
+  "undefined": "literal",
+  "var": "keyword",
+  "void": "keyword",
+  "while": "keyword",
+  "with": "keyword",
+  "yield": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "21"
+},
+  "symbols": {
+  "$ref": "25"
+}
+}
+},
+  "21": {
+  "kind": "array",
+  "values": [{
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "24"
+}]
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\\\",
+  "type": "string"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\%]",
+  "type": "string"
+}
+},
+  "24": {
+  "kind": "object",
+  "values": {
+  "pattern": "[^%]\n]",
+  "type": "string"
+}
+},
+  "25": {
+  "kind": "array",
+  "values": []
+},
+  "26": {
+  "kind": "object",
+  "values": {
+  "regex": "\\/",
+  "type": "string"
+}
+},
+  "27": {
+  "kind": "object",
+  "values": {
+  "regex": "[^/\n]",
+  "type": "string"
+}
+},
+  "28": {
+  "kind": "array",
+  "values": []
+},
+  "29": {
+  "kind": "array",
+  "values": ["string", "string"]
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "30": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "31"
+},
+  "type": "string"
+}
+},
+  "31": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "32": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "33"
+},
+  "type": "string"
+}
+},
+  "33": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "34": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "35"
+},
+  "type": "string"
+}
+},
+  "35": {
+  "kind": "array",
+  "values": ["`", "`", "\\"]
+},
+  "36": {
+  "kind": "object",
+  "values": {
+  "regex": "-?0[xXbBoO][\\da-fA-F_]+n?()\\s*()(?:\\/(?!\\/|\\*))?",
+  "type": {
+  "$ref": "37"
+}
+}
+},
+  "37": {
+  "kind": "array",
+  "values": ["number", "normal", "operator"]
+},
+  "38": {
+  "kind": "object",
+  "values": {
+  "regex": "-?\\d+[0-9.eE_n]*()\\s*()(?:\\/(?!\\/|\\*))?",
+  "type": {
+  "$ref": "39"
+}
+}
+},
+  "39": {
+  "kind": "array",
+  "values": ["number", "normal", "operator"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.js$", "%.json$", "%.cson$", "%.mjs$", "%.cjs$"]
+},
+  "40": {
+  "kind": "object",
+  "values": {
+  "regex": "-?\\.?\\d+()\\s*()(?:\\/(?!\\/|\\*))?",
+  "type": {
+  "$ref": "41"
+}
+}
+},
+  "41": {
+  "kind": "array",
+  "values": ["number", "normal", "operator"]
+},
+  "42": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%^%%<>!~|&]",
+  "type": "operator"
+}
+},
+  "43": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "44": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "30"
+}, {
+  "$ref": "32"
+}, {
+  "$ref": "34"
+}, {
+  "$ref": "36"
+}, {
+  "$ref": "38"
+}, {
+  "$ref": "40"
+}, {
+  "$ref": "42"
+}, {
+  "$ref": "43"
+}, {
+  "$ref": "44"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "10"
+},
+  "syntax": {
+  "$ref": "11"
+},
+  "type": {
+  "$ref": "29"
+}
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

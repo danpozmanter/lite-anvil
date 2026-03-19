@@ -1,0 +1,159 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": "//",
+  "files": {
+  "$ref": "3"
+},
+  "name": "Gleam",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "11": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*",
+  "type": "number"
+}
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "->|=>|<-|<<|>>",
+  "type": "operator"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:,|]+",
+  "type": "operator"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%u][%w_]*",
+  "type": "keyword2"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "Nil": "literal",
+  "as": "keyword",
+  "assert": "keyword",
+  "case": "keyword",
+  "const": "keyword",
+  "false": "literal",
+  "fn": "keyword",
+  "if": "keyword",
+  "import": "keyword",
+  "let": "keyword",
+  "opaque": "keyword",
+  "panic": "keyword",
+  "pub": "keyword",
+  "todo": "keyword",
+  "true": "literal",
+  "type": "keyword",
+  "use": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["%.gleam$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "string"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\\"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}
