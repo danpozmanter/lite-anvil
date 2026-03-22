@@ -28,7 +28,8 @@ mod doc_translate;
 mod emptyview;
 mod findfile;
 mod folding;
-mod git_plugin;
+mod commands_git;
+mod git_view;
 mod gitignore;
 mod highlighter;
 mod ime;
@@ -324,7 +325,8 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
     treeview::register_preload(lua)?;
     // Color themes
     colors::register_preload(lua)?;
-    // Bundled plugins
+    // Bundled plugins fully implemented in Rust — listed in package.native_plugins so
+    // core.load_plugins() loads them without requiring a .lua stub file on disk.
     autocomplete::register_preload(lua)?;
     autoreload::register_preload(lua)?;
     autorestart::register_preload(lua)?;
@@ -347,7 +349,32 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
     theme_toggle::register_preload(lua)?;
     toolbarview::register_preload(lua)?;
     trimwhitespace::register_preload(lua)?;
-    git_plugin::register_preload(lua)?;
+    // Advertise fully-Rust plugins so core.load_plugins() loads them without a .lua stub.
+    {
+        let native_plugins = lua.create_table()?;
+        for name in [
+            "autocomplete",
+            "autoreload",
+            "autorestart",
+            "bracketmatch",
+            "detectindent",
+            "drawwhitespace",
+            "findfile",
+            "folding",
+            "lineguide",
+            "linewrapping",
+            "quote",
+            "terminal",
+            "toolbarview",
+        ] {
+            native_plugins.push(name)?;
+        }
+        lua.globals()
+            .get::<LuaTable>("package")?
+            .set("native_plugins", native_plugins)?;
+    }
+    git_view::register_preload(lua)?;
+    commands_git::register_preload(lua)?;
     terminal_plugin::register_preload(lua)?;
     markdown_preview::register_preload(lua)?;
     node::register_preload(lua)?;

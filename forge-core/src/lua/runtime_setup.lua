@@ -1,5 +1,5 @@
 
-package.native_plugins = {}
+package.native_plugins = package.native_plugins or {}
 package.searchers = { package.searchers[1], package.searchers[2], function(modname)
   local path, err = package.searchpath(modname, package.cpath)
   if not path then return err end

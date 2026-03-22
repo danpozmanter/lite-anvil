@@ -1,5 +1,12 @@
 # Change Log
 
+## [0.17.0] - 2026-03-22 — Some plugins into Rust + fixes.
+
+* Translate all embedded Lua plugin bootstraps to pure Rust via mlua APIs. Autorestart, quote, terminal, findfile, lineguide, autoreload, folding, drawwhitespace, toolbarview, git commands and UI, autocomplete, and all three LSP modules (`plugins.lsp`, `plugins.lsp.server-manager`, `plugins.lsp.client`) are now registered as Rust closures; no Lua string is interpreted at runtime for any bundled plugin.
+* Fix LSP inline diagnostics (squiggly underlines and end-of-line ghost text) broken by an incorrect `core.add_thread` call pattern introduced during the Lua-to-Rust migration.
+* Fix all fully-Rust bundled plugins not loading on startup: populate `package.native_plugins` from Rust, teach `core.load_plugins()` to consume it, and guard `runtime_setup.lua` with `or {}` so it does not overwrite the list Rust built before Lua initialised.
+* Fix LSP diagnostic tooltip crash on mouse move: `mgr_wrap_tooltip_lines` called `font:get_width` without passing `font` as `self`, causing "bad argument #1: error converting Lua string to table" in every `on_mouse_moved` event. Also replace twelve other `table.get::<LuaFunction>("method")?.call((table, args))` OOP dispatch anti-patterns with `table.call_method("method", args)` throughout the LSP patches.
+
 ## [0.16.0] - 2026-03-20 — More progress on core modules to Rust and moving some plugins into core.
 
 * Move all `core.*` modules (config, style, syntax, tokenizer, highlighter, command, keymap, process, view, scrollbar, contextmenu, nagview, logview, commandview, all commands submodules, doc.search, doc.translate, common, object, strict, regex, storage, utf8string, gitignore, dirwatch, ime, project, plugin_api, modkeys, emptyview, titleview, and more) to Rust-owned `package.preload` entries. Every `require "core.*"` call is now intercepted before any disk lookup.

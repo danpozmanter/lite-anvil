@@ -586,6 +586,138 @@ function core.init()
   -- Load core and user plugins giving preference to user ones with same name.
   local plugins_success, plugins_refuse_list = core.load_plugins()
 
+  -- Initialize git as a core feature (not a plugin).
+  do
+    local git_native_m = require "git_native"
+    local common_m     = require "core.common"
+    local config_m     = require "core.config"
+    config_m.plugins.git = common_m.merge({
+      refresh_interval         = 5,
+      show_branch_in_statusbar = true,
+      treeview_highlighting    = true,
+    }, config_m.plugins.git)
+
+    local repos = {}
+    local function sync_repo(root)
+      local s = git_native_m.get_state(root)
+      if not s then return end
+      if not repos[root] then repos[root] = { root = root } end
+      local r = repos[root]
+      r.branch = s.branch; r.ahead = s.ahead; r.behind = s.behind
+      r.detached = s.detached; r.dirty = s.dirty; r.refreshing = s.refreshing
+      r.last_refresh = s.last_refresh; r.error = s.error
+      r.ordered = s.ordered; r.files = s.files
+    end
+
+    local git = {}
+    function git.get_repo(path)
+      local root = git_native_m.get_root(path)
+      if not root then return nil end
+      if not repos[root] then
+        repos[root] = {
+          root = root, branch = "", ahead = 0, behind = 0, detached = false,
+          dirty = false, refreshing = false, last_refresh = 0, error = nil,
+          ordered = {}, files = {},
+        }
+      end
+      return repos[root]
+    end
+    function git.get_active_repo()
+      local view = core.active_view
+      local path
+      if view and view.doc and view.doc.abs_filename then
+        path = view.doc.abs_filename
+      else
+        local project = core.root_project and core.root_project()
+        path = project and project.path or nil
+      end
+      return git.get_repo(path)
+    end
+    function git.get_file_status(path) return git_native_m.get_file_status(path) end
+    function git.refresh(path, force)
+      local root = git_native_m.get_root(path)
+      if not root then return nil end
+      git_native_m.maybe_refresh(root, force or false, config_m.plugins.git.refresh_interval or 5)
+      return git.get_repo(root)
+    end
+    function git.run(path, args, on_complete)
+      local root = git_native_m.get_root(path)
+      if not root then
+        if on_complete then on_complete(false, "", "Not inside a Git repository") end
+        return
+      end
+      local handle = git_native_m.start_command(root, args)
+      core.add_thread(function()
+        while true do
+          local result = git_native_m.check_command(handle)
+          if result then
+            local ok, stdout, stderr = result[1], result[2], result[3]
+            if ok and args[1] ~= "branch" then git_native_m.start_refresh(root) end
+            if on_complete then on_complete(ok, stdout, stderr, root) end
+            core.redraw = true
+            return
+          end
+          coroutine.yield(0.05)
+        end
+      end)
+    end
+    function git.list_branches(path, on_complete)
+      git.run(path, { "branch", "--all", "--format=%(refname:short)" }, function(ok, stdout, stderr)
+        if not ok then on_complete(nil, stderr); return end
+        local branches, seen = {}, {}
+        for line in stdout:gmatch("[^\r\n]+") do
+          if line ~= "" and not seen[line] then seen[line] = true; branches[#branches + 1] = line end
+        end
+        table.sort(branches)
+        on_complete(branches)
+      end)
+    end
+    function git.stage(path, on_complete)
+      local entry = git.get_file_status(path)
+      local rel = entry and entry.rel or common_m.basename(path)
+      git.run(path, { "add", "--", rel }, on_complete)
+    end
+    function git.unstage(path, on_complete)
+      local entry = git.get_file_status(path)
+      local rel = entry and entry.rel or common_m.basename(path)
+      git.run(path, { "reset", "HEAD", "--", rel }, on_complete)
+    end
+    function git.diff_file(path, cached, on_complete)
+      local entry = git.get_file_status(path)
+      local rel   = entry and entry.rel or common_m.basename(path)
+      local args  = { "diff" }
+      if cached then args[#args + 1] = "--cached" end
+      args[#args + 1] = "--"; args[#args + 1] = rel
+      git.run(path, args, on_complete)
+    end
+    function git.diff_repo(path, cached, on_complete)
+      local args = { "diff" }
+      if cached then args[#args + 1] = "--cached" end
+      git.run(path, args, on_complete)
+    end
+
+    package.loaded["core.git"] = git
+
+    core.add_thread(function()
+      while true do
+        local updated = git_native_m.poll_updates()
+        if updated then
+          for _, root in ipairs(updated) do sync_repo(root) end
+          core.redraw = true
+        end
+        coroutine.yield(0.1)
+      end
+    end)
+
+    require "core.git.ui"
+    require "core.commands.git"
+  end
+
+  -- Initialize LSP as a core feature (not a plugin).
+  if config.plugins.lsp ~= false then
+    require "plugins.lsp"
+  end
+
   local restored_window = renwindow._restore()
   core.window = core.window or restored_window or renwindow.create("")
   if not restored_window and session.window_mode == "normal" and type(session.window) == "table" then
@@ -1001,6 +1133,17 @@ function core.load_plugins()
       file = root_project.path .. PATHSEP .. ".lite_project.lua",
       name = "Project Module"
     }
+  end
+  -- Rust-native bundled plugins: loaded via package.preload without a .lua file on disk.
+  for _, name in ipairs(package.native_plugins or {}) do
+    files[name .. ".lua"] = true
+    table.insert(ordered, {
+      priority = 0,
+      load = require_lua_plugin,
+      version_match = true,
+      file = DATADIR .. PATHSEP .. "plugins" .. PATHSEP .. name .. ".lua",
+      name = name,
+    })
   end
   for _, root_dir in ipairs {DATADIR, USERDIR} do
     local plugin_dir = root_dir .. PATHSEP .. "plugins"
