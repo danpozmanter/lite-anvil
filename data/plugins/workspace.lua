@@ -1,2 +1,0 @@
--- mod-version:4
--- Built-in plugin manifest; implementation is preloaded by Rust.

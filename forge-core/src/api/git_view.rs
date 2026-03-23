@@ -1,33 +1,28 @@
 use mlua::prelude::*;
 
-/// Thin Lua skeleton for `core.git.ui` — extends View, sets context, calls native populate.
-const UI_BOOTSTRAP: &str = r#"local View = require "core.view"
-local native = require "native_git_view"
-local DiffView   = View:extend()
-local StatusView = View:extend()
-function DiffView:__tostring()   return "GitDiffView"   end
-function StatusView:__tostring() return "GitStatusView" end
-DiffView.context   = "session"
-StatusView.context = "session"
-native.populate_diff(DiffView)
-native.populate_status(StatusView)
-return native.make_ui(DiffView, StatusView)"#;
-
 fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     let require: LuaFunction = lua.globals().get("require")?;
     require.call(name)
 }
 
-/// Call a Lua class constructor (`Class(...)`) via a Lua trampoline.
+/// Call a Lua class constructor (`Class(...)`) via the __call metamethod.
 fn call_class(lua: &Lua, class: &LuaTable, args: impl IntoLuaMulti) -> LuaResult<LuaValue> {
-    let trampoline: LuaFunction = lua
-        .load("return function(cls, ...) return cls(...) end")
-        .eval()?;
-    let mut call_args = vec![LuaValue::Table(class.clone())];
-    for v in args.into_lua_multi(lua)?.into_iter() {
-        call_args.push(v);
+    let getmt: LuaFunction = lua.globals().get("getmetatable")?;
+    let mt: LuaValue = getmt.call(class.clone())?;
+    let call_fn = match &mt {
+        LuaValue::Table(t) => t.get::<LuaValue>("__call")?,
+        _ => class.get::<LuaValue>("__call")?,
+    };
+    match call_fn {
+        LuaValue::Function(f) => {
+            let mut call_args = vec![LuaValue::Table(class.clone())];
+            for v in args.into_lua_multi(lua)?.into_iter() {
+                call_args.push(v);
+            }
+            f.call(LuaMultiValue::from_vec(call_args))
+        }
+        _ => Err(LuaError::runtime("class has no __call metamethod")),
     }
-    trampoline.call::<LuaValue>(LuaMultiValue::from_vec(call_args))
 }
 
 fn populate_diff(lua: &Lua, class: LuaTable) -> LuaResult<()> {
@@ -709,7 +704,16 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
     preload.set(
         "core.git.ui",
         lua.create_function(|lua, ()| {
-            lua.load(UI_BOOTSTRAP).set_name("core.git.ui").eval::<LuaValue>()
+            let view: LuaTable = require_table(lua, "core.view")?;
+            let diff_view: LuaTable = view.call_method("extend", ())?;
+            let status_view: LuaTable = view.call_method("extend", ())?;
+            diff_view.set("__tostring", lua.create_function(|_, _: LuaValue| Ok("GitDiffView"))?)?;
+            status_view.set("__tostring", lua.create_function(|_, _: LuaValue| Ok("GitStatusView"))?)?;
+            diff_view.set("context", "session")?;
+            status_view.set("context", "session")?;
+            populate_diff(lua, diff_view.clone())?;
+            populate_status(lua, status_view.clone())?;
+            make_ui(lua, diff_view, status_view)
         })?,
     )?;
 

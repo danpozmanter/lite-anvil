@@ -73,10 +73,17 @@ fn build_core_module(lua: &Lua, _: ()) -> LuaResult<LuaValue> {
     register_run_loop(lua, &core)?;
     register_misc(lua, &core, &state_key, &prefix_key)?;
 
-    // Store core in package.loaded so later code can find it.
+    // Store core in package.loaded and as a global.
     let package: LuaTable = lua.globals().get("package")?;
     let loaded: LuaTable = package.get("loaded")?;
     loaded.set("core", core.clone())?;
+    // Register with strict so `core` is accessible as a global.
+    let global_fn: LuaValue = lua.globals().raw_get("global")?;
+    if let LuaValue::Function(gf) = global_fn {
+        let t = lua.create_table()?;
+        t.set("core", core.clone())?;
+        gf.call::<()>(t)?;
+    }
 
     // Load the default color theme (applies colors to the style table).
     require.call::<LuaValue>("colors.default")?;
@@ -1477,6 +1484,32 @@ fn register_init_fn(
                             }
                         }
                     }
+
+                    let storage = get_module(lua, "core.storage")?;
+                    let load_s: LuaFunction = storage.get("load")?;
+                    let af: LuaValue = load_s.call(("session", "active_file"))?;
+                    if let LuaValue::String(af_s) = af {
+                        let af_str = af_s.to_str()?.to_string();
+                        let root_view: LuaTable = core.get("root_view")?;
+                        let root_node: LuaTable = root_view.get("root_node")?;
+                        let get_children: LuaFunction = root_node.get("get_children")?;
+                        let children: LuaTable = get_children.call(root_node)?;
+                        for view in children.sequence_values::<LuaTable>() {
+                            let v = view?;
+                            if let Some(doc) = v.get::<Option<LuaTable>>("doc")? {
+                                let abs: LuaValue = doc.get("abs_filename")?;
+                                if let LuaValue::String(ref s) = abs {
+                                    if s.to_str()? == af_str.as_str() {
+                                        let set_active: LuaFunction =
+                                            core.get("set_active_view")?;
+                                        set_active.call::<()>(v)?;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Ok(())
                 })?;
                 add_thread.call::<()>(restore_fn)?;
@@ -2006,7 +2039,7 @@ fn register_core_git(lua: &Lua) -> LuaResult<()> {
 
     // Require git UI and commands.
     require.call::<()>("core.git.ui")?;
-    require.call::<()>("core.commands.git")?;
+    require.call::<LuaValue>("core.commands.git")?;
 
     Ok(())
 }
@@ -3396,7 +3429,18 @@ fn register_view_fns(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                     }
                 }
                 core.set("last_active_view", active_view)?;
-                core.set("active_view", view)?;
+                core.set("active_view", view.clone())?;
+
+                // Persist active file to storage immediately.
+                let doc_val2: LuaValue = view.get("doc")?;
+                if let LuaValue::Table(ref doc) = doc_val2 {
+                    let abs: LuaValue = doc.get("abs_filename")?;
+                    if let LuaValue::String(ref s) = abs {
+                        let storage = get_module(lua, "core.storage")?;
+                        let save_s: LuaFunction = storage.get("save")?;
+                        let _ = save_s.call::<()>(("session", "active_file", s.to_str()?.to_string()));
+                    }
+                }
             }
             Ok(())
         })?,
@@ -3921,14 +3965,19 @@ fn register_event_handling(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
             let active_view: LuaValue = core.get("active_view")?;
             let current_title: String = if let LuaValue::Table(ref av) = active_view {
                 let has_get_filename: LuaValue = av.get("get_filename")?;
-                if has_get_filename != LuaValue::Nil {
+                let title_val: LuaValue = if has_get_filename != LuaValue::Nil {
                     let gfn: LuaFunction = av.get("get_filename")?;
-                    let fname: String = gfn.call(av.clone())?;
-                    if fname != "---" { fname } else { String::new() }
+                    gfn.call(av.clone())?
                 } else {
                     let gn: LuaFunction = av.get("get_name")?;
-                    let name: String = gn.call(av.clone())?;
-                    if name != "---" { name } else { String::new() }
+                    gn.call(av.clone())?
+                };
+                match title_val {
+                    LuaValue::String(s) => {
+                        let s = s.to_str()?.to_string();
+                        if s == "---" { String::new() } else { s }
+                    }
+                    _ => String::new(),
                 }
             } else {
                 String::new()
@@ -4397,6 +4446,9 @@ fn register_misc(
         lua.create_function(|lua, (quit_fn, force): (LuaFunction, Option<bool>)| {
             let core = get_core(lua)?;
             if force.unwrap_or(false) {
+                // Save session BEFORE removing projects — views are still alive.
+                let save: LuaFunction = core.get("_save_session")?;
+                save.call::<()>(())?;
                 let delete_temp: LuaFunction = core.get("delete_temp_files")?;
                 delete_temp.call::<()>(())?;
                 let projects: LuaTable = core.get("projects")?;
@@ -4405,8 +4457,6 @@ fn register_misc(
                     let remove: LuaFunction = core.get("remove_project")?;
                     remove.call::<()>((last, true))?;
                 }
-                let save: LuaFunction = core.get("_save_session")?;
-                save.call::<()>(())?;
                 quit_fn.call::<()>(())?;
             } else {
                 let docs: LuaTable = core.get("docs")?;

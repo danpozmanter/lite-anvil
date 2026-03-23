@@ -1,615 +1,8 @@
+use std::sync::Arc;
+
 use mlua::prelude::*;
 
-/// Thin Lua bootstrap: View:extend OOP + StatusViewItem class +
-/// update_active_items (kept in Lua for predicate/font callbacks) +
-/// draw methods (kept in Lua for renderer.* calls) +
-/// register_docview_items / register_command_items.
-/// All pure-logic functions delegate to the Rust native module.
-const BOOTSTRAP: &str = r#"
-local core = require "core"
-local command = require "core.command"
-local common = require "core.common"
-local config = require "core.config"
-local style = require "core.style"
-local View = require "core.view"
-local Object = require "core.object"
-local native = require "statusview_native"
-
----@alias core.statusview.styledtext table<integer, renderer.font|renderer.color|string>
----@alias core.statusview.position '"left"' | '"right"'
-
----@class core.statusview : core.view
-local StatusView = View:extend()
-
-function StatusView:__tostring() return "StatusView" end
-
-StatusView.separator  = "      "
-StatusView.separator2 = "   |   "
-
----@class core.statusview.item : core.object
-local StatusViewItem = Object:extend()
-
-function StatusViewItem:__tostring() return "StatusViewItem" end
-
-StatusViewItem.LEFT = 1
-StatusViewItem.RIGHT = 2
-
-function StatusViewItem:new(options)
-  self:set_predicate(options.predicate)
-  self.name = options.name
-  self.alignment = options.alignment or StatusView.Item.LEFT
-  self.command = type(options.command) == "string" and options.command or nil
-  self.tooltip = options.tooltip or ""
-  self.on_click = type(options.command) == "function" and options.command or nil
-  self.on_draw = nil
-  self.background_color = nil
-  self.background_color_hover = nil
-  self.visible = options.visible == nil and true or options.visible
-  self.active = false
-  self.x = 0
-  self.w = 0
-  self.separator = options.separator or StatusView.separator
-  self.get_item = options.get_item
-end
-
-function StatusViewItem:get_item() return {} end
-function StatusViewItem:hide() self.visible = false end
-function StatusViewItem:show() self.visible = true end
-
-function StatusViewItem:set_predicate(predicate)
-  self.predicate = command.generate_predicate(predicate)
-end
-
-StatusView.Item = StatusViewItem
-
-function StatusView:new()
-  StatusView.super.new(self)
-  native.init(self)
-  self:register_docview_items()
-  self:register_command_items()
-end
-
--- Item management: create item in Lua (needs OOP constructor), delegate
--- position math to Rust.
-function StatusView:add_item(options)
-  assert(self:get_item(options.name) == nil, "status item already exists: " .. options.name)
-  local item = StatusView.Item(options)
-  local pos = native.normalize_position(
-    self.items,
-    options.position or -1,
-    options.alignment or StatusView.Item.LEFT
-  )
-  table.insert(self.items, pos, item)
-  return item
-end
-
-function StatusView:get_item(name)      return native.get_item(self, name) end
-function StatusView:remove_item(name)   return native.remove_item(self, name) end
-
-function StatusView:move_item(name, position, alignment)
-  return native.move_item(self, name, position, alignment)
-end
-
-function StatusView:order_items(names)       native.order_items(self, names) end
-function StatusView:get_items_list(alignment) return native.get_items_list(self, alignment) end
-
-function StatusView:hide()   self.visible = false end
-function StatusView:show()   self.visible = true end
-function StatusView:toggle() self.visible = not self.visible end
-
-function StatusView:hide_items(names)
-  if type(names) == "string" then names = {names} end
-  if not names then
-    for _, item in ipairs(self.items) do item:hide() end
-    return
-  end
-  for _, name in ipairs(names) do
-    local item = self:get_item(name)
-    if item then item:hide() end
-  end
-end
-
-function StatusView:show_items(names)
-  if type(names) == "string" then names = {names} end
-  if not names then
-    for _, item in ipairs(self.items) do item:show() end
-    return
-  end
-  for _, name in ipairs(names) do
-    local item = self:get_item(name)
-    if item then item:show() end
-  end
-end
-
-function StatusView:show_message(icon, icon_color, text)
-  native.show_message(self, icon, icon_color, text)
-end
-
-function StatusView:display_messages(enable)
-  self.hide_messages = not enable
-end
-
-function StatusView:show_tooltip(text)
-  self.tooltip = type(text) == "table" and text or { text }
-  self.tooltip_mode = true
-end
-
-function StatusView:remove_tooltip()
-  self.tooltip_mode = false
-end
-
-function StatusView:drag_panel(panel, dx)         native.drag_panel(self, panel, dx) end
-function StatusView:get_hovered_panel(x, y)       return native.get_hovered_panel(self, x, y) end
-function StatusView:get_item_visible_area(item)   return native.get_item_visible_area(self, item) end
-
--- ── Layout helpers used by update_active_items ───────────────────────────────
-
-local function text_width(font, _, text, _, x)
-  return x + font:get_width(text)
-end
-
-local function draw_items_with(self, items, x, y, draw_fn)
-  local font = style.font
-  local color = style.text
-  for _, item in ipairs(items) do
-    if Object.is(item, renderer.font) then
-      font = item
-    elseif type(item) == "table" then
-      color = item
-    else
-      x = draw_fn(font, color, item, nil, x, y, 0, self.size.y)
-    end
-  end
-  return x
-end
-
-local function measure_styled(self, items)
-  return draw_items_with(self, items, 0, 0, text_width)
-end
-
-local function styled_text_equals(a, b)
-  if a == b then return true end
-  if type(a) ~= "table" or type(b) ~= "table" then return false end
-  if #a ~= #b then return false end
-  for i = 1, #a do
-    if a[i] ~= b[i] then return false end
-  end
-  return true
-end
-
-local function remove_spacing(self, styled_text)
-  if not Object.is(styled_text[1], renderer.font)
-    and type(styled_text[1]) == "table"
-    and (styled_text[2] == self.separator or styled_text[2] == self.separator2)
-  then
-    table.remove(styled_text, 1)
-    table.remove(styled_text, 1)
-  end
-  if not Object.is(styled_text[#styled_text-1], renderer.font)
-    and type(styled_text[#styled_text-1]) == "table"
-    and (styled_text[#styled_text] == self.separator or styled_text[#styled_text] == self.separator2)
-  then
-    table.remove(styled_text, #styled_text)
-    table.remove(styled_text, #styled_text)
-  end
-end
-
-local function add_spacing(self, destination, separator, alignment, x)
-  local space = StatusView.Item({name = "space", alignment = alignment})
-  space.cached_item = separator == self.separator
-    and { style.text, separator }
-    or  { style.dim,  separator }
-  space.x = x
-  if separator == self.separator then
-    self._separator_width = self._separator_width or measure_styled(self, space.cached_item)
-    space.w = self._separator_width
-  else
-    self._separator2_width = self._separator2_width or measure_styled(self, space.cached_item)
-    space.w = self._separator2_width
-  end
-  table.insert(destination, space)
-  return space
-end
-
--- update_active_items stays in Lua: it calls item.predicate() and
--- font:get_width() on every frame, both of which are Lua method calls.
-function StatusView:update_active_items()
-  local x = self:get_content_offset()
-  local rx = x + self.size.x
-  local lx = x
-  local rw, lw = 0, 0
-
-  self.active_items = {}
-  local lfirst, rfirst = true, true
-
-  for _, item in ipairs(self.items) do
-    local previous_cached_item = item.cached_item
-    if item.visible and item:predicate() then
-      local styled_text = type(item.get_item) == "function"
-        and item.get_item(item) or item.get_item
-
-      if #styled_text > 0 then remove_spacing(self, styled_text) end
-
-      if #styled_text > 0 or item.on_draw then
-        item.active = true
-        local hovered = self.hovered_item == item
-        if item.alignment == StatusView.Item.LEFT then
-          if not lfirst then
-            local space = add_spacing(self, self.active_items, item.separator, item.alignment, lx)
-            lw = lw + space.w; lx = lx + space.w
-          else lfirst = false end
-          if item.on_draw then
-            item.w = item.on_draw(lx, self.position.y, self.size.y, hovered, true)
-          elseif styled_text_equals(previous_cached_item, styled_text) and item.cached_width then
-            item.w = item.cached_width
-          else
-            item.w = measure_styled(self, styled_text)
-          end
-          item.x = lx; lw = lw + item.w; lx = lx + item.w
-        else
-          if not rfirst then
-            local space = add_spacing(self, self.active_items, item.separator, item.alignment, rx)
-            rw = rw + space.w; rx = rx + space.w
-          else rfirst = false end
-          if item.on_draw then
-            item.w = item.on_draw(rx, self.position.y, self.size.y, hovered, true)
-          elseif styled_text_equals(previous_cached_item, styled_text) and item.cached_width then
-            item.w = item.cached_width
-          else
-            item.w = measure_styled(self, styled_text)
-          end
-          item.x = rx; rw = rw + item.w; rx = rx + item.w
-        end
-        item.cached_item = styled_text
-        item.cached_width = item.w
-        table.insert(self.active_items, item)
-      else
-        item.active = false
-        item.cached_item = {}
-        item.cached_width = 0
-      end
-    else
-      item.active = false
-      item.cached_item = {}
-      item.cached_width = 0
-    end
-  end
-
-  self.r_left_width, self.r_right_width = lw, rw
-  native.apply_panel_layout(self, lw, rw)
-
-  for _, item in ipairs(self.active_items) do
-    if item.alignment == StatusView.Item.RIGHT then
-      item.x = item.x - self.right_width - (style.padding.x * 2)
-    end
-    item.visible_x, item.visible_w = self:get_item_visible_area(item)
-  end
-end
-
-function StatusView:on_mouse_pressed(button, x, y, clicks)
-  return native.on_mouse_pressed(self, button, x, y, clicks)
-end
-
-function StatusView:on_mouse_left()
-  StatusView.super.on_mouse_left(self)
-  self.hovered_item = {}
-end
-
-function StatusView:on_mouse_moved(x, y, dx, dy)
-  native.on_mouse_moved(self, x, y, dx, dy)
-end
-
-function StatusView:on_mouse_released(button, x, y)
-  native.on_mouse_released(self, button, x, y)
-end
-
-function StatusView:on_mouse_wheel(y, x)
-  if not self.visible or self.hovered_panel == "" then return end
-  if x ~= 0 then
-    self:drag_panel(self.hovered_panel, x * self.left_width / 10)
-  else
-    self:drag_panel(self.hovered_panel, y * self.left_width / 10)
-  end
-end
-
-function StatusView:update()
-  if not self.visible and self.size.y <= 0 then return end
-  if not self.visible and self.size.y > 0 then
-    self:move_towards(self.size, "y", 0, nil, "statusbar")
-    return
-  end
-
-  local height = style.font:get_height() + style.padding.y * 2
-  if self.size.y + 1 < height then
-    self:move_towards(self.size, "y", height, nil, "statusbar")
-  else
-    self.size.y = height
-  end
-
-  if system.get_time() < self.message_timeout then
-    self.scroll.to.y = self.size.y
-  else
-    self.scroll.to.y = 0
-  end
-
-  StatusView.super.update(self)
-  self:update_active_items()
-end
-
--- ── Drawing (stays in Lua; calls renderer.* and style.*) ─────────────────────
-
-function StatusView:draw_items(items, right_align, xoffset, yoffset)
-  local x, y = self:get_content_offset()
-  x = x + (xoffset or 0)
-  y = y + (yoffset or 0)
-  if right_align then
-    local w = draw_items_with(self, items, 0, 0, text_width)
-    x = x + self.size.x - w - style.padding.x
-    draw_items_with(self, items, x, y, common.draw_text)
-  else
-    x = x + style.padding.x
-    draw_items_with(self, items, x, y, common.draw_text)
-  end
-end
-
-function StatusView:draw_item_tooltip(item)
-  core.root_view:defer_draw(function()
-    local text = item.tooltip
-    local w = style.font:get_width(text)
-    local h = style.font:get_height()
-    local x = self.pointer.x - (w / 2) - (style.padding.x * 2)
-    if x < 0 then x = 0 end
-    if (x + w + (style.padding.x * 3)) > self.size.x then
-      x = self.size.x - w - (style.padding.x * 3)
-    end
-    renderer.draw_rect(
-      x + style.padding.x,
-      self.position.y - h - (style.padding.y * 2),
-      w + (style.padding.x * 2),
-      h + (style.padding.y * 2),
-      style.background3
-    )
-    renderer.draw_text(
-      style.font, text,
-      x + (style.padding.x * 2),
-      self.position.y - h - style.padding.y,
-      style.text
-    )
-  end)
-end
-
-function StatusView:draw()
-  if not self.visible and self.size.y <= 0 then return end
-  self:draw_background(style.background2)
-
-  if self.message and system.get_time() <= self.message_timeout then
-    self:draw_items(self.message, false, 0, self.size.y)
-  else
-    if self.tooltip_mode then self:draw_items(self.tooltip) end
-    if #self.active_items > 0 then
-      core.push_clip_rect(0, self.position.y, self.left_width + style.padding.x, self.size.y)
-      for _, item in ipairs(self.active_items) do
-        local item_x = self.left_xoffset + item.x + style.padding.x
-        local hovered = self.hovered_item == item
-        local item_bg = hovered and item.background_color_hover or item.background_color
-        if item.alignment == StatusView.Item.LEFT and not self.tooltip_mode then
-          if type(item_bg) == "table" then
-            renderer.draw_rect(item_x, self.position.y, item.w, self.size.y, item_bg)
-          end
-          if item.on_draw then
-            core.push_clip_rect(item_x, self.position.y, item.w, self.size.y)
-            item.on_draw(item_x, self.position.y, self.size.y, hovered)
-            core.pop_clip_rect()
-          else
-            self:draw_items(item.cached_item, false, item_x - style.padding.x)
-          end
-        end
-      end
-      core.pop_clip_rect()
-
-      core.push_clip_rect(
-        self.size.x - (self.right_width + style.padding.x), self.position.y,
-        self.right_width + style.padding.x, self.size.y
-      )
-      for _, item in ipairs(self.active_items) do
-        local item_x = self.right_xoffset + item.x + style.padding.x
-        local hovered = self.hovered_item == item
-        local item_bg = hovered and item.background_color_hover or item.background_color
-        if item.alignment == StatusView.Item.RIGHT then
-          if type(item_bg) == "table" then
-            renderer.draw_rect(item_x, self.position.y, item.w, self.size.y, item_bg)
-          end
-          if item.on_draw then
-            core.push_clip_rect(item_x, self.position.y, item.w, self.size.y)
-            item.on_draw(item_x, self.position.y, self.size.y, hovered)
-            core.pop_clip_rect()
-          else
-            self:draw_items(item.cached_item, false, item_x - style.padding.x)
-          end
-        end
-      end
-      core.pop_clip_rect()
-
-      if self.hovered_item.tooltip ~= "" and self.hovered_item.active then
-        self:draw_item_tooltip(self.hovered_item)
-      end
-    end
-  end
-end
-
--- ── Default item registration (stays in Lua: callbacks close over Lua globals) ─
-
-function StatusView:register_docview_items()
-  if self:get_item("doc:file") then return end
-
-  local DocView = require "core.docview"
-  local CommandView = require "core.commandview"
-  local function predicate_docview()
-    return core.active_view:is(DocView) and not core.active_view:is(CommandView)
-  end
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:file",
-    alignment = StatusView.Item.LEFT,
-    get_item = function()
-      local dv = core.active_view
-      return {
-        dv.doc:is_dirty() and style.accent or style.text, style.icon_font, "f",
-        style.dim, style.font, self.separator2, style.text,
-        dv.doc.filename and style.text or style.dim, common.home_encode(dv.doc:get_name())
-      }
-    end
-  })
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:position",
-    alignment = StatusView.Item.LEFT,
-    get_item = function()
-      local dv = core.active_view
-      local line, col = dv.doc:get_selection()
-      local _, indent_size = dv.doc:get_indent_info()
-      local ntabs, last_idx = 0, 0
-      while last_idx < col do
-        local s, e = string.find(dv.doc.lines[line], "\t", last_idx, true)
-        if s and s < col then
-          ntabs = ntabs + 1
-          last_idx = e + 1
-        else break end
-      end
-      col = col + ntabs * (indent_size - 1)
-      return {
-        style.text, line, ":",
-        col > config.line_limit and style.accent or style.text, col,
-        style.text
-      }
-    end,
-    command = "doc:go-to-line",
-    tooltip = "line : column"
-  })
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:position-percent",
-    alignment = StatusView.Item.LEFT,
-    get_item = function()
-      local dv = core.active_view
-      local line = dv.doc:get_selection()
-      return { string.format("%.f%%", line / #dv.doc.lines * 100) }
-    end,
-    tooltip = "caret position"
-  })
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:selections",
-    alignment = StatusView.Item.LEFT,
-    get_item = function()
-      local dv = core.active_view
-      local nsel = math.floor(#dv.doc.selections / 4)
-      if nsel > 1 then return { style.text, nsel, " selections" } end
-      return {}
-    end
-  })
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:indentation",
-    alignment = StatusView.Item.RIGHT,
-    get_item = function()
-      local dv = core.active_view
-      local indent_type, indent_size, indent_confirmed = dv.doc:get_indent_info()
-      local indent_label = (indent_type == "hard") and "tabs: " or "spaces: "
-      return {
-        style.text, indent_label, indent_size,
-        indent_confirmed and "" or "*"
-      }
-    end,
-    command = function(button, x, y)
-      if button == "left" then
-        command.perform "indent:set-file-indent-size"
-      elseif button == "right" then
-        command.perform "indent:set-file-indent-type"
-      end
-    end,
-    separator = self.separator2
-  })
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:lines",
-    alignment = StatusView.Item.RIGHT,
-    get_item = function()
-      local dv = core.active_view
-      return { style.text, #dv.doc.lines, " lines" }
-    end,
-    separator = self.separator2
-  })
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:line-ending",
-    alignment = StatusView.Item.RIGHT,
-    get_item = function()
-      local dv = core.active_view
-      return { style.text, dv.doc.crlf and "CRLF" or "LF" }
-    end,
-    command = "doc:toggle-line-ending"
-  })
-
-  self:add_item {
-    predicate = predicate_docview,
-    name = "doc:overwrite-mode",
-    alignment = StatusView.Item.RIGHT,
-    get_item = function()
-      return { style.text, core.active_view.doc.overwrite and "OVR" or "INS" }
-    end,
-    command = "doc:toggle-overwrite",
-    separator = StatusView.separator2
-  }
-
-  self:add_item({
-    predicate = predicate_docview,
-    name = "doc:mode",
-    alignment = StatusView.Item.RIGHT,
-    get_item = function()
-      local dv = core.active_view
-      if not dv.doc.large_file_mode and not dv.doc.read_only then return {} end
-      local items = {}
-      if dv.doc.large_file_mode then
-        items[#items + 1] = style.warn
-        items[#items + 1] = "LARGE"
-      end
-      if dv.doc.read_only then
-        if #items > 0 then
-          items[#items + 1] = style.dim
-          items[#items + 1] = " "
-        end
-        items[#items + 1] = style.accent
-        items[#items + 1] = "RO"
-      end
-      return items
-    end,
-    separator = StatusView.separator2
-  })
-end
-
-function StatusView:register_command_items()
-  if self:get_item("command:files") then return end
-  self:add_item({
-    predicate = "core.commandview",
-    name = "command:files",
-    alignment = StatusView.Item.RIGHT,
-    get_item = function() return { style.icon_font, "g" } end
-  })
-end
-
-return StatusView
-"#;
-
-// ── Rust native helpers ──────────────────────────────────────────────────────
-
+/// Require a module by name, returning the loaded table.
 fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     let require: LuaFunction = lua.globals().get("require")?;
     require.call(name)
@@ -699,7 +92,6 @@ fn remove_item(_lua: &Lua, (self_table, name): (LuaTable, String)) -> LuaResult<
         let item: LuaTable = items.raw_get(i as i64)?;
         let item_name: String = item.get::<Option<String>>("name")?.unwrap_or_default();
         if item_name == name {
-            // Shift items down manually (Lua table.remove semantics).
             for j in i..len {
                 let next: LuaValue = items.raw_get((j + 1) as i64)?;
                 items.raw_set(j as i64, next)?;
@@ -727,7 +119,6 @@ fn move_item(
     let item_align: i64 = item.get::<Option<i64>>("alignment")?.unwrap_or(1);
     let items: LuaTable = self_table.get("items")?;
     let pos = normalize_position(&items, position, item_align)?;
-    // Re-insert: shift items up from pos.
     let len = items.raw_len();
     for i in (pos..=len as i64).rev() {
         let val: LuaValue = items.raw_get(i)?;
@@ -750,7 +141,6 @@ fn order_items(
         }
     }
     let items: LuaTable = self_table.get("items")?;
-    // Shift existing items to make room at front, then insert removed items.
     let existing_len = items.raw_len();
     let insert_count = removed.len() as i64;
     for i in (1..=existing_len as i64).rev() {
@@ -769,8 +159,8 @@ fn get_items_list(
     (self_table, alignment): (LuaTable, Option<i64>),
 ) -> LuaResult<LuaTable> {
     let items: LuaTable = self_table.get("items")?;
-    let result = lua.create_table()?;
     if let Some(align) = alignment {
+        let result = lua.create_table()?;
         let mut idx = 1i64;
         for item in items.sequence_values::<LuaTable>() {
             let item = item?;
@@ -780,10 +170,10 @@ fn get_items_list(
                 idx += 1;
             }
         }
+        Ok(result)
     } else {
-        return Ok(items);
+        Ok(items)
     }
-    Ok(result)
 }
 
 /// Set the timed message fields; no-op if hide_messages is set.
@@ -809,7 +199,7 @@ fn show_message(
     msg.raw_set(3, icon)?;
     msg.raw_set(4, style.get::<LuaValue>("dim")?)?;
     msg.raw_set(5, style.get::<LuaValue>("font")?)?;
-    msg.raw_set(6, "   |   ")?; // separator2
+    msg.raw_set(6, "   |   ")?;
     msg.raw_set(7, style.get::<LuaValue>("text")?)?;
     msg.raw_set(8, text)?;
     self_table.set("message", msg)?;
@@ -871,16 +261,14 @@ fn drag_panel(
 
 /// Return "left" or "right" depending on cursor position.
 fn get_hovered_panel(
-    _lua: &Lua,
+    lua: &Lua,
     (self_table, x, y): (LuaTable, f64, f64),
 ) -> LuaResult<&'static str> {
     let position: LuaTable = self_table.get("position")?;
     let pos_y: f64 = position.get("y")?;
     let left_width: f64 = self_table.get("left_width")?;
-    let style_res = _lua.globals().get::<Option<LuaTable>>("style");
-    let padding_x = style_res
+    let padding_x = require_table(lua, "core.style")
         .ok()
-        .flatten()
         .and_then(|s| s.get::<Option<LuaTable>>("padding").ok().flatten())
         .and_then(|p| p.get::<Option<f64>>("x").ok().flatten())
         .unwrap_or(4.0);
@@ -926,6 +314,7 @@ fn get_item_visible_area(
     item_visible_fn.call((is_left, panel_width, padding_x, item_ox, item_x, item_w))
 }
 
+/// Handle mouse press: activate view, check message timeout, start drag.
 fn on_mouse_pressed(
     lua: &Lua,
     (self_table, button, x, y, clicks): (LuaTable, String, f64, f64, i64),
@@ -973,6 +362,7 @@ fn on_mouse_pressed(
     Ok(true)
 }
 
+/// Handle mouse move: update hovered panel/item, apply drag.
 fn on_mouse_moved(
     lua: &Lua,
     (self_table, x, y, dx, _dy): (LuaTable, f64, f64, f64, f64),
@@ -1014,7 +404,8 @@ fn on_mouse_moved(
         let tooltip: String = item.get::<Option<String>>("tooltip")?.unwrap_or_default();
 
         if item_visible && item_active && (has_command || has_click || !tooltip.is_empty()) {
-            let (item_x, item_w) = get_item_visible_area(lua, (self_table.clone(), item.clone()))?;
+            let (item_x, item_w) =
+                get_item_visible_area(lua, (self_table.clone(), item.clone()))?;
             if x > item_x && (item_x + item_w) > x {
                 let pointer: LuaTable = self_table.get("pointer")?;
                 pointer.set("x", x)?;
@@ -1035,9 +426,10 @@ fn on_mouse_moved(
     Ok(())
 }
 
+/// Handle mouse release: execute item command or on_click callback.
 fn on_mouse_released(
     lua: &Lua,
-    (self_table, button, x, _y): (LuaTable, String, f64, f64),
+    (self_table, button, x, y): (LuaTable, String, f64, f64),
 ) -> LuaResult<()> {
     let visible: bool = self_table.get("visible")?;
     if !visible {
@@ -1057,7 +449,7 @@ fn on_mouse_released(
 
     let position: LuaTable = self_table.get("position")?;
     let pos_y: f64 = position.get("y")?;
-    if _y < pos_y {
+    if y < pos_y {
         return Ok(());
     }
     let hovered_item: LuaTable = self_table.get("hovered_item")?;
@@ -1074,15 +466,283 @@ fn on_mouse_released(
             let perform: LuaFunction = command.get("perform")?;
             perform.call::<()>(cmd)?;
         } else if let Some(on_click) = hovered_item.get::<Option<LuaFunction>>("on_click")? {
-            on_click.call::<()>((button, x, _y))?;
+            on_click.call::<()>((button, x, y))?;
         }
     }
     Ok(())
 }
 
-fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
+// ---- Lua helper functions reproduced from the Lua bootstrap ----
+
+/// Measure the width of styled text items (font + color + string sequences).
+fn text_width_fn(lua: &Lua) -> LuaResult<LuaFunction> {
+    lua.create_function(
+        |_lua, (font, _color, text, _nil, x): (LuaValue, LuaValue, String, LuaValue, f64)| {
+            let w: f64 = match &font {
+                LuaValue::Table(t) => t.call_method("get_width", text)?,
+                LuaValue::UserData(ud) => ud.call_method("get_width", text)?,
+                _ => 0.0,
+            };
+            Ok(x + w)
+        },
+    )
+}
+
+/// Walk styled text items and apply draw_fn to each text element.
+fn draw_items_with(
+    lua: &Lua,
+    self_table: &LuaTable,
+    items: &LuaTable,
+    x: f64,
+    y: f64,
+    draw_fn: &LuaFunction,
+) -> LuaResult<f64> {
+    let style = require_table(lua, "core.style")?;
+    let object = require_table(lua, "core.object")?;
+    let is_fn: LuaFunction = object.get("is")?;
+    let renderer_mod: LuaTable = lua.globals().get("renderer")?;
+    let font_class: LuaValue = renderer_mod.get("font")?;
+
+    let mut font: LuaValue = style.get("font")?;
+    let mut color: LuaValue = style.get("text")?;
+    let mut cur_x = x;
+    let size: LuaTable = self_table.get("size")?;
+    let size_y: f64 = size.get("y")?;
+
+    for val in items.clone().sequence_values::<LuaValue>() {
+        let val = val?;
+        match &val {
+            LuaValue::String(_) => {
+                let text_str = val.as_string().map(|s| s.to_string_lossy()).unwrap_or_default();
+                cur_x = draw_fn.call((
+                    font.clone(),
+                    color.clone(),
+                    text_str,
+                    LuaValue::Nil,
+                    cur_x,
+                    y,
+                    0.0,
+                    size_y,
+                ))?;
+            }
+            LuaValue::Integer(_) | LuaValue::Number(_) => {
+                let text_str = match &val {
+                    LuaValue::Integer(n) => n.to_string(),
+                    LuaValue::Number(n) => n.to_string(),
+                    _ => String::new(),
+                };
+                cur_x = draw_fn.call((
+                    font.clone(),
+                    color.clone(),
+                    text_str,
+                    LuaValue::Nil,
+                    cur_x,
+                    y,
+                    0.0,
+                    size_y,
+                ))?;
+            }
+            LuaValue::Table(_) | LuaValue::UserData(_) => {
+                let is_font: bool = is_fn.call((val.clone(), font_class.clone()))?;
+                if is_font {
+                    font = val;
+                } else {
+                    color = val;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(cur_x)
+}
+
+/// Measure styled text width (uses text_width as the draw function).
+fn measure_styled(lua: &Lua, self_table: &LuaTable, items: &LuaTable) -> LuaResult<f64> {
+    let tw_fn = text_width_fn(lua)?;
+    draw_items_with(lua, self_table, items, 0.0, 0.0, &tw_fn)
+}
+
+/// Check if two styled-text tables are element-wise equal.
+fn styled_text_equals(a: &LuaValue, b: &LuaValue) -> LuaResult<bool> {
+    if a == b {
+        return Ok(true);
+    }
+    let (a_t, b_t) = match (a, b) {
+        (LuaValue::Table(a), LuaValue::Table(b)) => (a, b),
+        _ => return Ok(false),
+    };
+    let a_len = a_t.raw_len();
+    let b_len = b_t.raw_len();
+    if a_len != b_len {
+        return Ok(false);
+    }
+    for i in 1..=a_len as i64 {
+        let va: LuaValue = a_t.raw_get(i)?;
+        let vb: LuaValue = b_t.raw_get(i)?;
+        if va != vb {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Strip leading/trailing separator+color pairs from styled text.
+fn remove_spacing(self_table: &LuaTable, styled_text: &LuaTable, lua: &Lua) -> LuaResult<()> {
+    let object = require_table(lua, "core.object")?;
+    let is_fn: LuaFunction = object.get("is")?;
+    let renderer_mod: LuaTable = lua.globals().get("renderer")?;
+    let font_class: LuaValue = renderer_mod.get("font")?;
+    let separator: String = self_table
+        .get::<Option<String>>("separator")?
+        .unwrap_or_else(|| "      ".to_string());
+    let separator2: String = self_table
+        .get::<Option<String>>("separator2")?
+        .unwrap_or_else(|| "   |   ".to_string());
+
+    let len = styled_text.raw_len() as i64;
+    if len < 2 {
+        return Ok(());
+    }
+
+    // Check front: if [1] is a color table (not font) and [2] is a separator string
+    let first: LuaValue = styled_text.raw_get(1)?;
+    let is_first_font: bool = is_fn.call((first.clone(), font_class.clone()))?;
+    if !is_first_font {
+        if let LuaValue::Table(_) = &first {
+            let second: LuaValue = styled_text.raw_get(2)?;
+            if let Some(s) = second.as_string().map(|s| s.to_string_lossy()) {
+                if s == separator || s == separator2 {
+                    lua_table_remove(styled_text, 1)?;
+                    lua_table_remove(styled_text, 1)?;
+                }
+            }
+        }
+    }
+
+    // Check back: if [n-1] is a color table (not font) and [n] is a separator string
+    let new_len = styled_text.raw_len() as i64;
+    if new_len >= 2 {
+        let second_last: LuaValue = styled_text.raw_get(new_len - 1)?;
+        let is_sl_font: bool = is_fn.call((second_last.clone(), font_class.clone()))?;
+        if !is_sl_font {
+            if let LuaValue::Table(_) = &second_last {
+                let last: LuaValue = styled_text.raw_get(new_len)?;
+                if let Some(s) = last.as_string().map(|s| s.to_string_lossy()) {
+                    if s == separator || s == separator2 {
+                        styled_text.raw_set(new_len, LuaValue::Nil)?;
+                        styled_text.raw_set(new_len - 1, LuaValue::Nil)?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove element at index `pos` from a Lua sequence table, shifting remaining elements down.
+fn lua_table_remove(t: &LuaTable, pos: i64) -> LuaResult<()> {
+    let len = t.raw_len() as i64;
+    for i in pos..len {
+        let next: LuaValue = t.raw_get(i + 1)?;
+        t.raw_set(i, next)?;
+    }
+    t.raw_set(len, LuaValue::Nil)?;
+    Ok(())
+}
+
+/// Create a spacing item between status bar items.
+fn add_spacing(
+    lua: &Lua,
+    self_table: &LuaTable,
+    destination: &LuaTable,
+    separator: &str,
+    alignment: i64,
+    x: f64,
+    item_class_key: &Arc<mlua::RegistryKey>,
+) -> LuaResult<LuaTable> {
+    let item_class: LuaTable = lua.registry_value(item_class_key)?;
+    let style = require_table(lua, "core.style")?;
+
+    let opts = lua.create_table()?;
+    opts.set("name", "space")?;
+    opts.set("alignment", alignment)?;
+    let space: LuaTable = lua
+        .load("return function(cls, ...) return cls(...) end")
+        .eval::<LuaFunction>()?
+        .call((item_class, opts))?;
+
+    let self_sep: String = self_table
+        .get::<Option<String>>("separator")?
+        .unwrap_or_else(|| "      ".to_string());
+
+    let cached = lua.create_table()?;
+    if separator == self_sep {
+        cached.push(style.get::<LuaValue>("text")?)?;
+    } else {
+        cached.push(style.get::<LuaValue>("dim")?)?;
+    }
+    cached.push(separator)?;
+    space.set("cached_item", cached.clone())?;
+    space.set("x", x)?;
+
+    if separator == self_sep {
+        let existing: LuaValue = self_table.get("_separator_width")?;
+        let w: f64 = if matches!(existing, LuaValue::Nil) {
+            let w = measure_styled(lua, self_table, &cached)?;
+            self_table.set("_separator_width", w)?;
+            w
+        } else {
+            self_table.get("_separator_width")?
+        };
+        space.set("w", w)?;
+    } else {
+        let existing: LuaValue = self_table.get("_separator2_width")?;
+        let w: f64 = if matches!(existing, LuaValue::Nil) {
+            let w = measure_styled(lua, self_table, &cached)?;
+            self_table.set("_separator2_width", w)?;
+            w
+        } else {
+            self_table.get("_separator2_width")?
+        };
+        space.set("w", w)?;
+    }
+
+    destination.push(space.clone())?;
+    Ok(space)
+}
+
+/// Registers `core.statusview` as a pure-Rust preloaded module.
+pub fn register_preload(lua: &Lua) -> LuaResult<()> {
+    let native_module = make_native_module(lua)?;
+    let native_key = Arc::new(lua.create_registry_value(native_module)?);
+
+    let package: LuaTable = lua.globals().get("package")?;
+    let preload: LuaTable = package.get("preload")?;
+
+    preload.set(
+        "statusview_native",
+        lua.create_function({
+            let k = Arc::clone(&native_key);
+            move |lua, ()| lua.registry_value::<LuaTable>(&k)
+        })?,
+    )?;
+
+    preload.set(
+        "core.statusview",
+        lua.create_function(|lua, ()| build_statusview_class(lua))?,
+    )?;
+
+    Ok(())
+}
+
+/// Build the native helper module table.
+fn make_native_module(lua: &Lua) -> LuaResult<LuaTable> {
     let m = lua.create_table()?;
-    m.set("init", lua.create_function(|lua, self_table: LuaTable| init(lua, self_table))?)?;
+    m.set(
+        "init",
+        lua.create_function(|lua, self_table: LuaTable| init(lua, self_table))?,
+    )?;
     m.set(
         "normalize_position",
         lua.create_function(|_, (items, pos, align): (LuaTable, i64, i64)| {
@@ -1095,31 +755,1431 @@ fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     m.set("order_items", lua.create_function(order_items)?)?;
     m.set("get_items_list", lua.create_function(get_items_list)?)?;
     m.set("show_message", lua.create_function(show_message)?)?;
-    m.set("apply_panel_layout", lua.create_function(apply_panel_layout)?)?;
+    m.set(
+        "apply_panel_layout",
+        lua.create_function(apply_panel_layout)?,
+    )?;
     m.set("drag_panel", lua.create_function(drag_panel)?)?;
-    m.set("get_hovered_panel", lua.create_function(get_hovered_panel)?)?;
-    m.set("get_item_visible_area", lua.create_function(get_item_visible_area)?)?;
-    m.set("on_mouse_pressed", lua.create_function(on_mouse_pressed)?)?;
+    m.set(
+        "get_hovered_panel",
+        lua.create_function(get_hovered_panel)?,
+    )?;
+    m.set(
+        "get_item_visible_area",
+        lua.create_function(get_item_visible_area)?,
+    )?;
+    m.set(
+        "on_mouse_pressed",
+        lua.create_function(on_mouse_pressed)?,
+    )?;
     m.set("on_mouse_moved", lua.create_function(on_mouse_moved)?)?;
-    m.set("on_mouse_released", lua.create_function(on_mouse_released)?)?;
+    m.set(
+        "on_mouse_released",
+        lua.create_function(on_mouse_released)?,
+    )?;
     Ok(m)
 }
 
-pub fn register_preload(lua: &Lua) -> LuaResult<()> {
-    let package: LuaTable = lua.globals().get("package")?;
-    let preload: LuaTable = package.get("preload")?;
-    let native_key = lua.create_registry_value(make_module(lua)?)?;
-    preload.set(
-        "statusview_native",
-        lua.create_function(move |lua, ()| lua.registry_value::<LuaTable>(&native_key))?,
+/// Build the StatusView class entirely in Rust -- replaces the Lua bootstrap.
+fn build_statusview_class(lua: &Lua) -> LuaResult<LuaValue> {
+    let view_class: LuaTable = require_table(lua, "core.view")?;
+    let object_class: LuaTable = require_table(lua, "core.object")?;
+    let native: LuaTable = require_table(lua, "statusview_native")?;
+
+    let status_view = view_class.call_method::<LuaTable>("extend", ())?;
+
+    status_view.set(
+        "__tostring",
+        lua.create_function(|_lua, _self: LuaTable| Ok("StatusView"))?,
     )?;
-    preload.set(
-        "core.statusview",
-        lua.create_function(|lua, ()| {
-            lua.load(BOOTSTRAP)
-                .set_name("core.statusview")
-                .eval::<LuaValue>()
+
+    status_view.set("separator", "      ")?;
+    status_view.set("separator2", "   |   ")?;
+
+    // StatusViewItem class
+    let item_class = object_class.call_method::<LuaTable>("extend", ())?;
+
+    item_class.set(
+        "__tostring",
+        lua.create_function(|_lua, _self: LuaTable| Ok("StatusViewItem"))?,
+    )?;
+    item_class.set("LEFT", 1i64)?;
+    item_class.set("RIGHT", 2i64)?;
+
+    // StatusViewItem:new(options)
+    item_class.set("new", {
+        let command_mod_fn = lua.create_function(|lua, predicate: LuaValue| {
+            let command: LuaTable = require_table(lua, "core.command")?;
+            let gen_pred: LuaFunction = command.get("generate_predicate")?;
+            gen_pred.call::<LuaFunction>(predicate)
+        })?;
+        lua.create_function(move |lua, (this, options): (LuaTable, LuaTable)| {
+            let predicate_val: LuaValue = options.get("predicate")?;
+            let pred_fn: LuaFunction = command_mod_fn.call(predicate_val)?;
+            this.set("predicate", pred_fn)?;
+
+            let name: String = options.get("name")?;
+            this.set("name", name)?;
+
+            let alignment: i64 = options.get::<Option<i64>>("alignment")?.unwrap_or(1);
+            this.set("alignment", alignment)?;
+
+            let cmd_val: LuaValue = options.get("command")?;
+            match &cmd_val {
+                LuaValue::String(_) => {
+                    this.set("command", cmd_val.clone())?;
+                    this.set("on_click", LuaValue::Nil)?;
+                }
+                LuaValue::Function(_) => {
+                    this.set("command", LuaValue::Nil)?;
+                    this.set("on_click", cmd_val.clone())?;
+                }
+                _ => {
+                    this.set("command", LuaValue::Nil)?;
+                    this.set("on_click", LuaValue::Nil)?;
+                }
+            }
+
+            let tooltip: String =
+                options.get::<Option<String>>("tooltip")?.unwrap_or_default();
+            this.set("tooltip", tooltip)?;
+
+            this.set("on_draw", LuaValue::Nil)?;
+            this.set("background_color", LuaValue::Nil)?;
+            this.set("background_color_hover", LuaValue::Nil)?;
+
+            let visible: LuaValue = options.get("visible")?;
+            let vis = match visible {
+                LuaValue::Nil => true,
+                LuaValue::Boolean(b) => b,
+                _ => true,
+            };
+            this.set("visible", vis)?;
+            this.set("active", false)?;
+            this.set("x", 0.0f64)?;
+            this.set("w", 0.0f64)?;
+
+            let sep: LuaValue = options.get("separator")?;
+            if matches!(sep, LuaValue::Nil) {
+                this.set("separator", "      ")?;
+            } else {
+                this.set("separator", sep)?;
+            }
+
+            let get_item_fn: LuaValue = options.get("get_item")?;
+            if matches!(get_item_fn, LuaValue::Nil) {
+                this.set(
+                    "get_item",
+                    lua.create_function(|lua, _: LuaTable| lua.create_table())?,
+                )?;
+            } else {
+                this.set("get_item", get_item_fn)?;
+            }
+
+            Ok(())
+        })?
+    })?;
+
+    item_class.set(
+        "hide",
+        lua.create_function(|_lua, this: LuaTable| this.set("visible", false))?,
+    )?;
+    item_class.set(
+        "show",
+        lua.create_function(|_lua, this: LuaTable| this.set("visible", true))?,
+    )?;
+    item_class.set(
+        "set_predicate",
+        lua.create_function(|lua, (this, predicate): (LuaTable, LuaValue)| {
+            let command: LuaTable = require_table(lua, "core.command")?;
+            let gen_pred: LuaFunction = command.get("generate_predicate")?;
+            let pred_fn: LuaFunction = gen_pred.call(predicate)?;
+            this.set("predicate", pred_fn)
         })?,
     )?;
-    Ok(())
+
+    status_view.set("Item", item_class.clone())?;
+
+    let class_key = Arc::new(lua.create_registry_value(status_view.clone())?);
+    let item_class_key = Arc::new(lua.create_registry_value(item_class)?);
+    let native_key = Arc::new(lua.create_registry_value(native)?);
+
+    // StatusView:new()
+    status_view.set("new", {
+        let ck = Arc::clone(&class_key);
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, this: LuaTable| {
+            let class: LuaTable = lua.registry_value(&ck)?;
+            let super_tbl: LuaTable = class.get("super")?;
+            let super_new: LuaFunction = super_tbl.get("new")?;
+            super_new.call::<()>(this.clone())?;
+
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let init_fn: LuaFunction = native.get("init")?;
+            init_fn.call::<()>(this.clone())?;
+
+            this.call_method::<()>("register_docview_items", ())?;
+            this.call_method::<()>("register_command_items", ())?;
+            Ok(())
+        })?
+    })?;
+
+    // StatusView:add_item(options)
+    status_view.set("add_item", {
+        let nk = Arc::clone(&native_key);
+        let ick = Arc::clone(&item_class_key);
+        lua.create_function(move |lua, (this, options): (LuaTable, LuaTable)| {
+            let name: String = options.get("name")?;
+            let existing: LuaValue = this.call_method("get_item", name.clone())?;
+            if !matches!(existing, LuaValue::Nil) {
+                return Err(LuaError::RuntimeError(format!(
+                    "status item already exists: {name}"
+                )));
+            }
+
+            let item_class: LuaTable = lua.registry_value(&ick)?;
+            let item: LuaValue = lua
+                .load("return function(cls, ...) return cls(...) end")
+                .eval::<LuaFunction>()?
+                .call((item_class, options.clone()))?;
+
+            let items: LuaTable = this.get("items")?;
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let norm_fn: LuaFunction = native.get("normalize_position")?;
+            let position: i64 = options.get::<Option<i64>>("position")?.unwrap_or(-1);
+            let alignment: i64 = options.get::<Option<i64>>("alignment")?.unwrap_or(1);
+            let pos: i64 = norm_fn.call((items.clone(), position, alignment))?;
+
+            let len = items.raw_len() as i64;
+            for i in (pos..=len).rev() {
+                let val: LuaValue = items.raw_get(i)?;
+                items.raw_set(i + 1, val)?;
+            }
+            items.raw_set(pos, item.clone())?;
+
+            Ok(item)
+        })?
+    })?;
+
+    // StatusView:get_item(name)
+    status_view.set("get_item", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, (this, name): (LuaTable, String)| {
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let f: LuaFunction = native.get("get_item")?;
+            f.call::<LuaValue>((this, name))
+        })?
+    })?;
+
+    // StatusView:remove_item(name)
+    status_view.set("remove_item", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, (this, name): (LuaTable, String)| {
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let f: LuaFunction = native.get("remove_item")?;
+            f.call::<LuaValue>((this, name))
+        })?
+    })?;
+
+    // StatusView:move_item(name, position, alignment)
+    status_view.set("move_item", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(
+            move |lua,
+                  (this, name, position, alignment): (LuaTable, String, i64, Option<i64>)| {
+                let native: LuaTable = lua.registry_value(&nk)?;
+                let f: LuaFunction = native.get("move_item")?;
+                f.call::<bool>((this, name, position, alignment))
+            },
+        )?
+    })?;
+
+    // StatusView:order_items(names)
+    status_view.set("order_items", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, (this, names): (LuaTable, LuaTable)| {
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let f: LuaFunction = native.get("order_items")?;
+            f.call::<()>((this, names))
+        })?
+    })?;
+
+    // StatusView:get_items_list(alignment)
+    status_view.set("get_items_list", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, (this, alignment): (LuaTable, Option<i64>)| {
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let f: LuaFunction = native.get("get_items_list")?;
+            f.call::<LuaTable>((this, alignment))
+        })?
+    })?;
+
+    // StatusView:hide/show/toggle
+    status_view.set(
+        "hide",
+        lua.create_function(|_lua, this: LuaTable| this.set("visible", false))?,
+    )?;
+    status_view.set(
+        "show",
+        lua.create_function(|_lua, this: LuaTable| this.set("visible", true))?,
+    )?;
+    status_view.set(
+        "toggle",
+        lua.create_function(|_lua, this: LuaTable| {
+            let v: bool = this.get("visible")?;
+            this.set("visible", !v)
+        })?,
+    )?;
+
+    // StatusView:hide_items(names)
+    status_view.set(
+        "hide_items",
+        lua.create_function(|lua, (this, names): (LuaTable, LuaValue)| {
+            let names = match names {
+                LuaValue::String(s) => {
+                    let t = lua.create_table()?;
+                    t.raw_set(1, s)?;
+                    Some(t)
+                }
+                LuaValue::Table(t) => Some(t),
+                _ => None,
+            };
+            let items: LuaTable = this.get("items")?;
+            match names {
+                None => {
+                    for item in items.sequence_values::<LuaTable>() {
+                        item?.set("visible", false)?;
+                    }
+                }
+                Some(names) => {
+                    for name in names.sequence_values::<String>() {
+                        let name = name?;
+                        let item: LuaValue = this.call_method("get_item", name)?;
+                        if let LuaValue::Table(t) = item {
+                            t.set("visible", false)?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // StatusView:show_items(names)
+    status_view.set(
+        "show_items",
+        lua.create_function(|lua, (this, names): (LuaTable, LuaValue)| {
+            let names = match names {
+                LuaValue::String(s) => {
+                    let t = lua.create_table()?;
+                    t.raw_set(1, s)?;
+                    Some(t)
+                }
+                LuaValue::Table(t) => Some(t),
+                _ => None,
+            };
+            let items: LuaTable = this.get("items")?;
+            match names {
+                None => {
+                    for item in items.sequence_values::<LuaTable>() {
+                        item?.set("visible", true)?;
+                    }
+                }
+                Some(names) => {
+                    for name in names.sequence_values::<String>() {
+                        let name = name?;
+                        let item: LuaValue = this.call_method("get_item", name)?;
+                        if let LuaValue::Table(t) = item {
+                            t.set("visible", true)?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // StatusView:show_message(icon, icon_color, text)
+    status_view.set("show_message", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(
+            move |lua,
+                  (this, icon, icon_color, text): (LuaTable, String, LuaValue, String)| {
+                let native: LuaTable = lua.registry_value(&nk)?;
+                let f: LuaFunction = native.get("show_message")?;
+                f.call::<()>((this, icon, icon_color, text))
+            },
+        )?
+    })?;
+
+    // StatusView:display_messages(enable)
+    status_view.set(
+        "display_messages",
+        lua.create_function(|_lua, (this, enable): (LuaTable, bool)| {
+            this.set("hide_messages", !enable)
+        })?,
+    )?;
+
+    // StatusView:show_tooltip(text)
+    status_view.set(
+        "show_tooltip",
+        lua.create_function(|lua, (this, text): (LuaTable, LuaValue)| {
+            let tooltip = match &text {
+                LuaValue::Table(_) => text,
+                _ => {
+                    let t = lua.create_table()?;
+                    t.raw_set(1, text)?;
+                    LuaValue::Table(t)
+                }
+            };
+            this.set("tooltip", tooltip)?;
+            this.set("tooltip_mode", true)
+        })?,
+    )?;
+
+    // StatusView:remove_tooltip()
+    status_view.set(
+        "remove_tooltip",
+        lua.create_function(|_lua, this: LuaTable| this.set("tooltip_mode", false))?,
+    )?;
+
+    // StatusView:drag_panel(panel, dx)
+    status_view.set("drag_panel", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, (this, panel, dx): (LuaTable, String, f64)| {
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let f: LuaFunction = native.get("drag_panel")?;
+            f.call::<()>((this, panel, dx))
+        })?
+    })?;
+
+    // StatusView:get_hovered_panel(x, y)
+    status_view.set("get_hovered_panel", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, (this, x, y): (LuaTable, f64, f64)| {
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let f: LuaFunction = native.get("get_hovered_panel")?;
+            f.call::<String>((this, x, y))
+        })?
+    })?;
+
+    // StatusView:get_item_visible_area(item)
+    status_view.set("get_item_visible_area", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(move |lua, (this, item): (LuaTable, LuaTable)| {
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let f: LuaFunction = native.get("get_item_visible_area")?;
+            f.call::<(f64, f64)>((this, item))
+        })?
+    })?;
+
+    // StatusView:update_active_items()
+    status_view.set("update_active_items", {
+        let nk = Arc::clone(&native_key);
+        let ick = Arc::clone(&item_class_key);
+        lua.create_function(move |lua, this: LuaTable| {
+            let (x, _y): (f64, f64) = this.call_method("get_content_offset", ())?;
+            let size: LuaTable = this.get("size")?;
+            let size_x: f64 = size.get("x")?;
+            let mut rx = x + size_x;
+            let mut lx = x;
+            let mut rw: f64 = 0.0;
+            let mut lw: f64 = 0.0;
+
+            let active_items = lua.create_table()?;
+            this.set("active_items", active_items.clone())?;
+            let mut lfirst = true;
+            let mut rfirst = true;
+
+            let items: LuaTable = this.get("items")?;
+            let style = require_table(lua, "core.style")?;
+            let hovered_item: LuaValue = this.get("hovered_item")?;
+
+            for item_val in items.clone().sequence_values::<LuaTable>() {
+                let item = item_val?;
+                let previous_cached: LuaValue = item.get("cached_item")?;
+                let visible: bool = item.get::<Option<bool>>("visible")?.unwrap_or(true);
+                let pred: Option<LuaFunction> = item.get("predicate")?;
+
+                let pred_result = if visible {
+                    pred.map_or(Ok(false), |f| f.call::<bool>(()))?
+                } else {
+                    false
+                };
+
+                if visible && pred_result {
+                    let get_item_val: LuaValue = item.get("get_item")?;
+                    let styled_text: LuaTable = match &get_item_val {
+                        LuaValue::Function(f) => f.call(item.clone())?,
+                        LuaValue::Table(t) => t.clone(),
+                        _ => lua.create_table()?,
+                    };
+
+                    let st_len = styled_text.raw_len() as i64;
+                    if st_len > 0 {
+                        remove_spacing(&this, &styled_text, lua)?;
+                    }
+
+                    let new_len = styled_text.raw_len() as i64;
+                    let has_on_draw: bool = item.get::<LuaValue>("on_draw")?.is_function();
+
+                    if new_len > 0 || has_on_draw {
+                        item.set("active", true)?;
+                        let is_hovered = hovered_item == LuaValue::Table(item.clone());
+                        let alignment: i64 =
+                            item.get::<Option<i64>>("alignment")?.unwrap_or(1);
+
+                        if alignment == 1 {
+                            if !lfirst {
+                                let sep: String = item
+                                    .get::<Option<String>>("separator")?
+                                    .unwrap_or_else(|| "      ".to_string());
+                                let space = add_spacing(
+                                    lua,
+                                    &this,
+                                    &active_items,
+                                    &sep,
+                                    1,
+                                    lx,
+                                    &ick,
+                                )?;
+                                let sw: f64 = space.get("w")?;
+                                lw += sw;
+                                lx += sw;
+                            } else {
+                                lfirst = false;
+                            }
+
+                            if has_on_draw {
+                                let on_draw: LuaFunction = item.get("on_draw")?;
+                                let pos: LuaTable = this.get("position")?;
+                                let pos_y: f64 = pos.get("y")?;
+                                let sz: LuaTable = this.get("size")?;
+                                let sz_y: f64 = sz.get("y")?;
+                                let w: f64 =
+                                    on_draw.call((lx, pos_y, sz_y, is_hovered, true))?;
+                                item.set("w", w)?;
+                            } else {
+                                let cached_item_val =
+                                    LuaValue::Table(styled_text.clone());
+                                let cached_w: Option<f64> = item.get("cached_width")?;
+                                if styled_text_equals(
+                                    &previous_cached,
+                                    &cached_item_val,
+                                )? && cached_w.is_some()
+                                {
+                                    item.set("w", cached_w)?;
+                                } else {
+                                    let w =
+                                        measure_styled(lua, &this, &styled_text)?;
+                                    item.set("w", w)?;
+                                }
+                            }
+                            let w: f64 = item.get("w")?;
+                            item.set("x", lx)?;
+                            lw += w;
+                            lx += w;
+                        } else {
+                            if !rfirst {
+                                let sep: String = item
+                                    .get::<Option<String>>("separator")?
+                                    .unwrap_or_else(|| "      ".to_string());
+                                let space = add_spacing(
+                                    lua,
+                                    &this,
+                                    &active_items,
+                                    &sep,
+                                    2,
+                                    rx,
+                                    &ick,
+                                )?;
+                                let sw: f64 = space.get("w")?;
+                                rw += sw;
+                                rx += sw;
+                            } else {
+                                rfirst = false;
+                            }
+
+                            if has_on_draw {
+                                let on_draw: LuaFunction = item.get("on_draw")?;
+                                let pos: LuaTable = this.get("position")?;
+                                let pos_y: f64 = pos.get("y")?;
+                                let sz: LuaTable = this.get("size")?;
+                                let sz_y: f64 = sz.get("y")?;
+                                let w: f64 =
+                                    on_draw.call((rx, pos_y, sz_y, is_hovered, true))?;
+                                item.set("w", w)?;
+                            } else {
+                                let cached_item_val =
+                                    LuaValue::Table(styled_text.clone());
+                                let cached_w: Option<f64> = item.get("cached_width")?;
+                                if styled_text_equals(
+                                    &previous_cached,
+                                    &cached_item_val,
+                                )? && cached_w.is_some()
+                                {
+                                    item.set("w", cached_w)?;
+                                } else {
+                                    let w =
+                                        measure_styled(lua, &this, &styled_text)?;
+                                    item.set("w", w)?;
+                                }
+                            }
+                            let w: f64 = item.get("w")?;
+                            item.set("x", rx)?;
+                            rw += w;
+                            rx += w;
+                        }
+                        item.set("cached_item", styled_text)?;
+                        let w: f64 = item.get("w")?;
+                        item.set("cached_width", w)?;
+                        active_items.push(item)?;
+                    } else {
+                        item.set("active", false)?;
+                        item.set("cached_item", lua.create_table()?)?;
+                        item.set("cached_width", 0.0f64)?;
+                    }
+                } else {
+                    item.set("active", false)?;
+                    item.set("cached_item", lua.create_table()?)?;
+                    item.set("cached_width", 0.0f64)?;
+                }
+            }
+
+            this.set("r_left_width", lw)?;
+            this.set("r_right_width", rw)?;
+
+            let native: LuaTable = lua.registry_value(&nk)?;
+            let apply_fn: LuaFunction = native.get("apply_panel_layout")?;
+            apply_fn.call::<()>((this.clone(), lw, rw))?;
+
+            let right_width: f64 = this.get("right_width")?;
+            let padding: LuaTable = style.get("padding")?;
+            let padding_x: f64 = padding.get("x")?;
+
+            for item in active_items.sequence_values::<LuaTable>() {
+                let item = item?;
+                let alignment: i64 =
+                    item.get::<Option<i64>>("alignment")?.unwrap_or(1);
+                if alignment == 2 {
+                    let ix: f64 = item.get("x")?;
+                    item.set("x", ix - right_width - padding_x * 2.0)?;
+                }
+                let native2: LuaTable = lua.registry_value(&nk)?;
+                let vis_fn: LuaFunction = native2.get("get_item_visible_area")?;
+                let (vx, vw): (f64, f64) =
+                    vis_fn.call((this.clone(), item.clone()))?;
+                item.set("visible_x", vx)?;
+                item.set("visible_w", vw)?;
+            }
+
+            Ok(())
+        })?
+    })?;
+
+    // StatusView:on_mouse_pressed(button, x, y, clicks)
+    status_view.set("on_mouse_pressed", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(
+            move |lua,
+                  (this, button, x, y, clicks): (
+                LuaTable,
+                String,
+                f64,
+                f64,
+                i64,
+            )| {
+                let native: LuaTable = lua.registry_value(&nk)?;
+                let f: LuaFunction = native.get("on_mouse_pressed")?;
+                f.call::<bool>((this, button, x, y, clicks))
+            },
+        )?
+    })?;
+
+    // StatusView:on_mouse_left()
+    status_view.set("on_mouse_left", {
+        let ck = Arc::clone(&class_key);
+        lua.create_function(move |lua, this: LuaTable| {
+            let class: LuaTable = lua.registry_value(&ck)?;
+            let super_tbl: LuaTable = class.get("super")?;
+            let super_fn: LuaFunction = super_tbl.get("on_mouse_left")?;
+            super_fn.call::<()>(this.clone())?;
+            this.set("hovered_item", lua.create_table()?)
+        })?
+    })?;
+
+    // StatusView:on_mouse_moved(x, y, dx, dy)
+    status_view.set("on_mouse_moved", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(
+            move |lua, (this, x, y, dx, dy): (LuaTable, f64, f64, f64, f64)| {
+                let native: LuaTable = lua.registry_value(&nk)?;
+                let f: LuaFunction = native.get("on_mouse_moved")?;
+                f.call::<()>((this, x, y, dx, dy))
+            },
+        )?
+    })?;
+
+    // StatusView:on_mouse_released(button, x, y)
+    status_view.set("on_mouse_released", {
+        let nk = Arc::clone(&native_key);
+        lua.create_function(
+            move |lua, (this, button, x, y): (LuaTable, String, f64, f64)| {
+                let native: LuaTable = lua.registry_value(&nk)?;
+                let f: LuaFunction = native.get("on_mouse_released")?;
+                f.call::<()>((this, button, x, y))
+            },
+        )?
+    })?;
+
+    // StatusView:on_mouse_wheel(y, x)
+    status_view.set(
+        "on_mouse_wheel",
+        lua.create_function(|_lua, (this, y, x): (LuaTable, f64, f64)| {
+            let visible: bool = this.get("visible")?;
+            let hovered_panel: String = this.get("hovered_panel")?;
+            if !visible || hovered_panel.is_empty() {
+                return Ok(());
+            }
+            let left_width: f64 = this.get("left_width")?;
+            let amount = if x != 0.0 {
+                x * left_width / 10.0
+            } else {
+                y * left_width / 10.0
+            };
+            this.call_method("drag_panel", (hovered_panel, amount))
+        })?,
+    )?;
+
+    // StatusView:update()
+    status_view.set("update", {
+        let ck = Arc::clone(&class_key);
+        lua.create_function(move |lua, this: LuaTable| {
+            let visible: bool = this.get("visible")?;
+            let size: LuaTable = this.get("size")?;
+            let size_y: f64 = size.get("y")?;
+
+            if !visible && size_y <= 0.0 {
+                return Ok(());
+            }
+            if !visible && size_y > 0.0 {
+                this.call_method::<()>(
+                    "move_towards",
+                    (size.clone(), "y", 0.0, LuaValue::Nil, "statusbar"),
+                )?;
+                return Ok(());
+            }
+
+            let style = require_table(lua, "core.style")?;
+            let font: LuaValue = style.get("font")?;
+            let fh: f64 = match &font {
+                LuaValue::Table(t) => t.call_method("get_height", ())?,
+                LuaValue::UserData(ud) => ud.call_method("get_height", ())?,
+                _ => 14.0,
+            };
+            let padding: LuaTable = style.get("padding")?;
+            let py: f64 = padding.get("y")?;
+            let height = fh + py * 2.0;
+
+            if size_y + 1.0 < height {
+                this.call_method::<()>(
+                    "move_towards",
+                    (size.clone(), "y", height, LuaValue::Nil, "statusbar"),
+                )?;
+            } else {
+                size.set("y", height)?;
+            }
+
+            let system = require_table(lua, "system")?;
+            let get_time: LuaFunction = system.get("get_time")?;
+            let now: f64 = get_time.call(())?;
+            let msg_timeout: f64 = this.get("message_timeout")?;
+            let scroll: LuaTable = this.get("scroll")?;
+            let scroll_to: LuaTable = scroll.get("to")?;
+            let cur_size_y: f64 = size.get("y")?;
+            if now < msg_timeout {
+                scroll_to.set("y", cur_size_y)?;
+            } else {
+                scroll_to.set("y", 0.0f64)?;
+            }
+
+            let class: LuaTable = lua.registry_value(&ck)?;
+            let super_tbl: LuaTable = class.get("super")?;
+            let super_update: LuaFunction = super_tbl.get("update")?;
+            super_update.call::<()>(this.clone())?;
+            this.call_method::<()>("update_active_items", ())
+        })?
+    })?;
+
+    // StatusView:draw_items(items, right_align, xoffset, yoffset)
+    status_view.set(
+        "draw_items",
+        lua.create_function(
+            |lua,
+             (this, items, right_align, xoffset, yoffset): (
+                LuaTable,
+                LuaTable,
+                Option<bool>,
+                Option<f64>,
+                Option<f64>,
+            )| {
+                let (mut x, y_base): (f64, f64) =
+                    this.call_method("get_content_offset", ())?;
+                x += xoffset.unwrap_or(0.0);
+                let y = y_base + yoffset.unwrap_or(0.0);
+                let style = require_table(lua, "core.style")?;
+                let padding: LuaTable = style.get("padding")?;
+                let padding_x: f64 = padding.get("x")?;
+                let common: LuaTable = require_table(lua, "core.common")?;
+                let draw_text_fn: LuaFunction = common.get("draw_text")?;
+                let tw_fn = text_width_fn(lua)?;
+
+                if right_align.unwrap_or(false) {
+                    let w = draw_items_with(lua, &this, &items, 0.0, 0.0, &tw_fn)?;
+                    let size: LuaTable = this.get("size")?;
+                    let size_x: f64 = size.get("x")?;
+                    x = x + size_x - w - padding_x;
+                    draw_items_with(lua, &this, &items, x, y, &draw_text_fn)?;
+                } else {
+                    x += padding_x;
+                    draw_items_with(lua, &this, &items, x, y, &draw_text_fn)?;
+                }
+                Ok(())
+            },
+        )?,
+    )?;
+
+    // StatusView:draw_item_tooltip(item)
+    status_view.set(
+        "draw_item_tooltip",
+        lua.create_function(|lua, (this, item): (LuaTable, LuaTable)| {
+            let core = require_table(lua, "core")?;
+            let root_view: LuaTable = core.get("root_view")?;
+            let text: String = item.get("tooltip")?;
+            let pos_y: f64 = {
+                let position: LuaTable = this.get("position")?;
+                position.get("y")?
+            };
+            let size_x: f64 = {
+                let size: LuaTable = this.get("size")?;
+                size.get("x")?
+            };
+            let pointer: LuaTable = this.get("pointer")?;
+            let pointer_x: f64 = pointer.get("x")?;
+            let style = require_table(lua, "core.style")?;
+            let bg3: LuaValue = style.get("background3")?;
+            let style_text: LuaValue = style.get("text")?;
+
+            let draw_fn = lua.create_function(move |lua, ()| {
+                let style = require_table(lua, "core.style")?;
+                let renderer: LuaTable = lua.globals().get("renderer")?;
+                let font: LuaValue = style.get("font")?;
+                let padding: LuaTable = style.get("padding")?;
+                let px: f64 = padding.get("x")?;
+                let py: f64 = padding.get("y")?;
+
+                let w: f64 = match &font {
+                    LuaValue::Table(t) => t.call_method("get_width", text.clone())?,
+                    LuaValue::UserData(ud) => {
+                        ud.call_method("get_width", text.clone())?
+                    }
+                    _ => 0.0,
+                };
+                let h: f64 = match &font {
+                    LuaValue::Table(t) => t.call_method("get_height", ())?,
+                    LuaValue::UserData(ud) => ud.call_method("get_height", ())?,
+                    _ => 14.0,
+                };
+
+                let mut x = pointer_x - (w / 2.0) - (px * 2.0);
+                if x < 0.0 {
+                    x = 0.0;
+                }
+                if (x + w + px * 3.0) > size_x {
+                    x = size_x - w - px * 3.0;
+                }
+
+                renderer.call_function::<()>(
+                    "draw_rect",
+                    (
+                        x + px,
+                        pos_y - h - py * 2.0,
+                        w + px * 2.0,
+                        h + py * 2.0,
+                        bg3.clone(),
+                    ),
+                )?;
+                renderer.call_function::<()>(
+                    "draw_text",
+                    (
+                        font,
+                        text.clone(),
+                        x + px * 2.0,
+                        pos_y - h - py,
+                        style_text.clone(),
+                    ),
+                )?;
+                Ok(())
+            })?;
+            root_view.call_method::<()>("defer_draw", draw_fn)
+        })?,
+    )?;
+
+    // StatusView:draw()
+    status_view.set(
+        "draw",
+        lua.create_function(|lua, this: LuaTable| {
+            let visible: bool = this.get("visible")?;
+            let size: LuaTable = this.get("size")?;
+            let size_y: f64 = size.get("y")?;
+            if !visible && size_y <= 0.0 {
+                return Ok(());
+            }
+
+            let style = require_table(lua, "core.style")?;
+            let bg2: LuaValue = style.get("background2")?;
+            this.call_method::<()>("draw_background", bg2)?;
+
+            let system = require_table(lua, "system")?;
+            let get_time: LuaFunction = system.get("get_time")?;
+            let now: f64 = get_time.call(())?;
+            let msg_timeout: f64 = this.get("message_timeout")?;
+            let message: LuaValue = this.get("message")?;
+
+            if message.is_table() && now <= msg_timeout {
+                let msg_tbl: LuaTable = this.get("message")?;
+                this.call_method::<()>("draw_items", (msg_tbl, false, 0.0, size_y))?;
+            } else {
+                let tooltip_mode: bool = this.get("tooltip_mode")?;
+                if tooltip_mode {
+                    let tooltip: LuaTable = this.get("tooltip")?;
+                    this.call_method::<()>("draw_items", tooltip)?;
+                }
+
+                let active_items: LuaTable = this.get("active_items")?;
+                if active_items.raw_len() > 0 {
+                    let core = require_table(lua, "core")?;
+                    let push_clip: LuaFunction = core.get("push_clip_rect")?;
+                    let pop_clip: LuaFunction = core.get("pop_clip_rect")?;
+                    let renderer: LuaTable = lua.globals().get("renderer")?;
+                    let padding: LuaTable = style.get("padding")?;
+                    let padding_x: f64 = padding.get("x")?;
+                    let position: LuaTable = this.get("position")?;
+                    let pos_y: f64 = position.get("y")?;
+                    let left_width: f64 = this.get("left_width")?;
+                    let right_width: f64 = this.get("right_width")?;
+                    let left_xoffset: f64 = this.get("left_xoffset")?;
+                    let right_xoffset: f64 = this.get("right_xoffset")?;
+                    let size_x: f64 = size.get("x")?;
+                    let hovered_item: LuaValue = this.get("hovered_item")?;
+
+                    // Draw left panel items
+                    push_clip.call::<()>((
+                        0.0,
+                        pos_y,
+                        left_width + padding_x,
+                        size_y,
+                    ))?;
+                    for item in active_items.clone().sequence_values::<LuaTable>() {
+                        let item = item?;
+                        let alignment: i64 =
+                            item.get::<Option<i64>>("alignment")?.unwrap_or(1);
+                        if alignment != 1 || tooltip_mode {
+                            continue;
+                        }
+                        let item_x_raw: f64 = item.get("x")?;
+                        let item_x = left_xoffset + item_x_raw + padding_x;
+                        let is_hovered =
+                            hovered_item == LuaValue::Table(item.clone());
+                        let item_bg: LuaValue = if is_hovered {
+                            item.get("background_color_hover")?
+                        } else {
+                            item.get("background_color")?
+                        };
+                        let item_w: f64 = item.get("w")?;
+                        if let LuaValue::Table(_) = &item_bg {
+                            renderer.call_function::<()>(
+                                "draw_rect",
+                                (item_x, pos_y, item_w, size_y, item_bg),
+                            )?;
+                        }
+                        let has_on_draw: bool =
+                            item.get::<LuaValue>("on_draw")?.is_function();
+                        if has_on_draw {
+                            let on_draw: LuaFunction = item.get("on_draw")?;
+                            push_clip.call::<()>((
+                                item_x, pos_y, item_w, size_y,
+                            ))?;
+                            on_draw.call::<()>((
+                                item_x, pos_y, size_y, is_hovered,
+                            ))?;
+                            pop_clip.call::<()>(())?;
+                        } else {
+                            let cached: LuaTable = item.get("cached_item")?;
+                            this.call_method::<()>(
+                                "draw_items",
+                                (cached, false, item_x - padding_x),
+                            )?;
+                        }
+                    }
+                    pop_clip.call::<()>(())?;
+
+                    // Draw right panel items
+                    push_clip.call::<()>((
+                        size_x - (right_width + padding_x),
+                        pos_y,
+                        right_width + padding_x,
+                        size_y,
+                    ))?;
+                    for item in active_items.clone().sequence_values::<LuaTable>() {
+                        let item = item?;
+                        let alignment: i64 =
+                            item.get::<Option<i64>>("alignment")?.unwrap_or(1);
+                        if alignment != 2 {
+                            continue;
+                        }
+                        let item_x_raw: f64 = item.get("x")?;
+                        let item_x = right_xoffset + item_x_raw + padding_x;
+                        let is_hovered =
+                            hovered_item == LuaValue::Table(item.clone());
+                        let item_bg: LuaValue = if is_hovered {
+                            item.get("background_color_hover")?
+                        } else {
+                            item.get("background_color")?
+                        };
+                        let item_w: f64 = item.get("w")?;
+                        if let LuaValue::Table(_) = &item_bg {
+                            renderer.call_function::<()>(
+                                "draw_rect",
+                                (item_x, pos_y, item_w, size_y, item_bg),
+                            )?;
+                        }
+                        let has_on_draw: bool =
+                            item.get::<LuaValue>("on_draw")?.is_function();
+                        if has_on_draw {
+                            let on_draw: LuaFunction = item.get("on_draw")?;
+                            push_clip.call::<()>((
+                                item_x, pos_y, item_w, size_y,
+                            ))?;
+                            on_draw.call::<()>((
+                                item_x, pos_y, size_y, is_hovered,
+                            ))?;
+                            pop_clip.call::<()>(())?;
+                        } else {
+                            let cached: LuaTable = item.get("cached_item")?;
+                            this.call_method::<()>(
+                                "draw_items",
+                                (cached, false, item_x - padding_x),
+                            )?;
+                        }
+                    }
+                    pop_clip.call::<()>(())?;
+
+                    // Draw tooltip for hovered item
+                    if let LuaValue::Table(ref hi) = hovered_item {
+                        let tooltip: String = hi
+                            .get::<Option<String>>("tooltip")?
+                            .unwrap_or_default();
+                        let active: bool =
+                            hi.get::<Option<bool>>("active")?.unwrap_or(false);
+                        if !tooltip.is_empty() && active {
+                            this.call_method::<()>(
+                                "draw_item_tooltip",
+                                hi.clone(),
+                            )?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // StatusView:register_docview_items()
+    status_view.set(
+        "register_docview_items",
+        lua.create_function(|lua, this: LuaTable| {
+            let existing: LuaValue = this.call_method("get_item", "doc:file")?;
+            if !matches!(existing, LuaValue::Nil) {
+                return Ok(());
+            }
+
+            // doc:file
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:file")?;
+            opts.set("alignment", 1i64)?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let common = require_table(lua, "core.common")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let is_dirty: bool = doc.call_method("is_dirty", ())?;
+                    let t = lua.create_table()?;
+                    t.push(if is_dirty {
+                        style.get::<LuaValue>("accent")?
+                    } else {
+                        style.get::<LuaValue>("text")?
+                    })?;
+                    t.push(style.get::<LuaValue>("icon_font")?)?;
+                    t.push("f")?;
+                    t.push(style.get::<LuaValue>("dim")?)?;
+                    t.push(style.get::<LuaValue>("font")?)?;
+                    t.push("   |   ")?;
+                    t.push(style.get::<LuaValue>("text")?)?;
+                    let filename: LuaValue = doc.get("filename")?;
+                    t.push(if filename.is_nil() {
+                        style.get::<LuaValue>("dim")?
+                    } else {
+                        style.get::<LuaValue>("text")?
+                    })?;
+                    let name: String = doc.call_method("get_name", ())?;
+                    let encoded: String =
+                        common.call_function("home_encode", name)?;
+                    t.push(encoded)?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:position
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:position")?;
+            opts.set("alignment", 1i64)?;
+            opts.set("command", "doc:go-to-line")?;
+            opts.set("tooltip", "line : column")?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let config = require_table(lua, "core.config")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let sel: LuaMultiValue =
+                        doc.call_method("get_selection", ())?;
+                    let mut iter = sel.into_iter();
+                    let line: i64 = match iter.next() {
+                        Some(LuaValue::Integer(n)) => n,
+                        _ => 1,
+                    };
+                    let mut col: i64 = match iter.next() {
+                        Some(LuaValue::Integer(n)) => n,
+                        _ => 1,
+                    };
+
+                    let indent_info: LuaMultiValue =
+                        doc.call_method("get_indent_info", ())?;
+                    let mut ii = indent_info.into_iter();
+                    let _indent_type = ii.next();
+                    let indent_size: i64 = match ii.next() {
+                        Some(LuaValue::Integer(n)) => n,
+                        _ => 4,
+                    };
+
+                    let lines: LuaTable = doc.get("lines")?;
+                    let line_str: String =
+                        lines.get::<Option<String>>(line)?.unwrap_or_default();
+                    let mut ntabs: i64 = 0;
+                    let mut last_idx = 0usize;
+                    while last_idx < col as usize {
+                        if let Some(pos) = line_str[last_idx..].find('\t') {
+                            let s = last_idx + pos;
+                            if (s + 1) < col as usize {
+                                ntabs += 1;
+                                last_idx = s + 1;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    col += ntabs * (indent_size - 1);
+
+                    let line_limit: i64 = config.get("line_limit")?;
+                    let t = lua.create_table()?;
+                    t.push(style.get::<LuaValue>("text")?)?;
+                    t.push(line.to_string())?;
+                    t.push(":")?;
+                    t.push(if col > line_limit {
+                        style.get::<LuaValue>("accent")?
+                    } else {
+                        style.get::<LuaValue>("text")?
+                    })?;
+                    t.push(col.to_string())?;
+                    t.push(style.get::<LuaValue>("text")?)?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:position-percent
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:position-percent")?;
+            opts.set("alignment", 1i64)?;
+            opts.set("tooltip", "caret position")?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let sel: LuaMultiValue =
+                        doc.call_method("get_selection", ())?;
+                    let line: f64 = match sel.into_iter().next() {
+                        Some(LuaValue::Integer(n)) => n as f64,
+                        Some(LuaValue::Number(n)) => n,
+                        _ => 1.0,
+                    };
+                    let lines: LuaTable = doc.get("lines")?;
+                    let total = lines.raw_len() as f64;
+                    let pct = line / total * 100.0;
+                    let t = lua.create_table()?;
+                    t.push(format!("{:.0}%", pct))?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:selections
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:selections")?;
+            opts.set("alignment", 1i64)?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let selections: LuaTable = doc.get("selections")?;
+                    let nsel = selections.raw_len() / 4;
+                    let t = lua.create_table()?;
+                    if nsel > 1 {
+                        t.push(style.get::<LuaValue>("text")?)?;
+                        t.push(nsel.to_string())?;
+                        t.push(" selections")?;
+                    }
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:indentation (RIGHT)
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:indentation")?;
+            opts.set("alignment", 2i64)?;
+            let sep2 = this
+                .get::<Option<String>>("separator2")?
+                .unwrap_or_else(|| "   |   ".to_string());
+            opts.set("separator", sep2)?;
+            opts.set(
+                "command",
+                lua.create_function(
+                    |lua, (button, _x, _y): (String, f64, f64)| {
+                        let command = require_table(lua, "core.command")?;
+                        let perform: LuaFunction = command.get("perform")?;
+                        if button == "left" {
+                            perform
+                                .call::<()>("indent:set-file-indent-size")?;
+                        } else if button == "right" {
+                            perform
+                                .call::<()>("indent:set-file-indent-type")?;
+                        }
+                        Ok(())
+                    },
+                )?,
+            )?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let info: LuaMultiValue =
+                        doc.call_method("get_indent_info", ())?;
+                    let mut vals = info.into_iter();
+                    let indent_type: String = match vals.next() {
+                        Some(LuaValue::String(s)) => {
+                            s.to_str()?.to_string()
+                        }
+                        _ => "soft".to_string(),
+                    };
+                    let indent_size: i64 = match vals.next() {
+                        Some(LuaValue::Integer(n)) => n,
+                        _ => 4,
+                    };
+                    let indent_confirmed: bool = match vals.next() {
+                        Some(LuaValue::Boolean(b)) => b,
+                        _ => false,
+                    };
+                    let label = if indent_type == "hard" {
+                        "tabs: "
+                    } else {
+                        "spaces: "
+                    };
+                    let t = lua.create_table()?;
+                    t.push(style.get::<LuaValue>("text")?)?;
+                    t.push(label)?;
+                    t.push(indent_size.to_string())?;
+                    t.push(if indent_confirmed { "" } else { "*" })?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:lines (RIGHT)
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:lines")?;
+            opts.set("alignment", 2i64)?;
+            let sep2 = this
+                .get::<Option<String>>("separator2")?
+                .unwrap_or_else(|| "   |   ".to_string());
+            opts.set("separator", sep2)?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let lines: LuaTable = doc.get("lines")?;
+                    let count = lines.raw_len();
+                    let t = lua.create_table()?;
+                    t.push(style.get::<LuaValue>("text")?)?;
+                    t.push(count.to_string())?;
+                    t.push(" lines")?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:line-ending (RIGHT)
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:line-ending")?;
+            opts.set("alignment", 2i64)?;
+            opts.set("command", "doc:toggle-line-ending")?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let crlf: bool =
+                        doc.get::<Option<bool>>("crlf")?.unwrap_or(false);
+                    let t = lua.create_table()?;
+                    t.push(style.get::<LuaValue>("text")?)?;
+                    t.push(if crlf { "CRLF" } else { "LF" })?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:overwrite-mode (RIGHT)
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:overwrite-mode")?;
+            opts.set("alignment", 2i64)?;
+            opts.set("command", "doc:toggle-overwrite")?;
+            opts.set("separator", "   |   ")?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let overwrite: bool =
+                        doc.get::<Option<bool>>("overwrite")?.unwrap_or(false);
+                    let t = lua.create_table()?;
+                    t.push(style.get::<LuaValue>("text")?)?;
+                    t.push(if overwrite { "OVR" } else { "INS" })?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            // doc:mode (RIGHT)
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.docview")?;
+            opts.set("name", "doc:mode")?;
+            opts.set("alignment", 2i64)?;
+            opts.set("separator", "   |   ")?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let core = require_table(lua, "core")?;
+                    let style = require_table(lua, "core.style")?;
+                    let dv: LuaTable = core.get("active_view")?;
+                    let doc: LuaTable = dv.get("doc")?;
+                    let large: bool = doc
+                        .get::<Option<bool>>("large_file_mode")?
+                        .unwrap_or(false);
+                    let read_only: bool =
+                        doc.get::<Option<bool>>("read_only")?.unwrap_or(false);
+                    let t = lua.create_table()?;
+                    if !large && !read_only {
+                        return Ok(t);
+                    }
+                    if large {
+                        t.push(style.get::<LuaValue>("warn")?)?;
+                        t.push("LARGE")?;
+                    }
+                    if read_only {
+                        if large {
+                            t.push(style.get::<LuaValue>("dim")?)?;
+                            t.push(" ")?;
+                        }
+                        t.push(style.get::<LuaValue>("accent")?)?;
+                        t.push("RO")?;
+                    }
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)?;
+
+            Ok(())
+        })?,
+    )?;
+
+    // StatusView:register_command_items()
+    status_view.set(
+        "register_command_items",
+        lua.create_function(|lua, this: LuaTable| {
+            let existing: LuaValue =
+                this.call_method("get_item", "command:files")?;
+            if !matches!(existing, LuaValue::Nil) {
+                return Ok(());
+            }
+            let opts = lua.create_table()?;
+            opts.set("predicate", "core.commandview")?;
+            opts.set("name", "command:files")?;
+            opts.set("alignment", 2i64)?;
+            opts.set(
+                "get_item",
+                lua.create_function(|lua, _item: LuaTable| {
+                    let style = require_table(lua, "core.style")?;
+                    let t = lua.create_table()?;
+                    t.push(style.get::<LuaValue>("icon_font")?)?;
+                    t.push("g")?;
+                    Ok(t)
+                })?,
+            )?;
+            this.call_method::<()>("add_item", opts)
+        })?,
+    )?;
+
+    Ok(LuaValue::Table(status_view))
 }

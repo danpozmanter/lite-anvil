@@ -361,11 +361,22 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
             "drawwhitespace",
             "findfile",
             "folding",
+            "language_md",
             "lineguide",
             "linewrapping",
+            "macro",
+            "markdown_preview",
+            "projectreplace",
+            "projectsearch",
             "quote",
+            "reflow",
+            "remotessh",
+            "scale",
+            "tabularize",
             "terminal",
+            "theme_toggle",
             "toolbarview",
+            "trimwhitespace",
         ] {
             native_plugins.push(name)?;
         }
@@ -1136,29 +1147,36 @@ fn make_renderer(lua: &Lua) -> LuaResult<LuaTable> {
 /// Headless renderer stub — used when SDL is not compiled in.
 #[cfg(not(feature = "sdl"))]
 fn make_renderer(lua: &Lua) -> LuaResult<LuaTable> {
-    lua.load(
-        r#"
-local Font = {}
-Font.__index = Font
-function Font.load(_path, _size, _opts) return setmetatable({}, Font) end
-function Font:copy(_size) return setmetatable({}, Font) end
-function Font:get_width(_text) return 0 end
-function Font:get_height() return 14 end
-function Font:get_size() return 14 end
-function Font:set_size(_size) end
-function Font:set_tab_size(_n) end
-function Font:get_tab_size() return 4 end
-local r = {}
-r.font = Font
-function r.begin_frame(_win) end
-function r.end_frame() end
-function r.set_clip_rect(_x, _y, _w, _h) end
-function r.draw_rect(_x, _y, _w, _h, _color) end
-function r.draw_text(_font, _text, _x, _y, _color) return _x end
-return r
-    "#,
-    )
-    .eval()
+    let font_mt = lua.create_table()?;
+    font_mt.set("__index", font_mt.clone())?;
+    font_mt.set("load", lua.create_function(|lua, _: LuaMultiValue| {
+        let mt: LuaTable = lua.globals().get::<LuaTable>("renderer")?.get::<LuaTable>("font")?;
+        let obj = lua.create_table()?;
+        obj.set_metatable(Some(mt))?;
+        Ok(obj)
+    })?)?;
+    font_mt.set("copy", lua.create_function(|lua, _: LuaMultiValue| {
+        let mt: LuaTable = lua.globals().get::<LuaTable>("renderer")?.get::<LuaTable>("font")?;
+        let obj = lua.create_table()?;
+        obj.set_metatable(Some(mt))?;
+        Ok(obj)
+    })?)?;
+    font_mt.set("get_width", lua.create_function(|_, _: LuaMultiValue| Ok(0))?)?;
+    font_mt.set("get_height", lua.create_function(|_, _: LuaMultiValue| Ok(14))?)?;
+    font_mt.set("get_size", lua.create_function(|_, _: LuaMultiValue| Ok(14))?)?;
+    font_mt.set("set_size", lua.create_function(|_, _: LuaMultiValue| Ok(()))?)?;
+    font_mt.set("set_tab_size", lua.create_function(|_, _: LuaMultiValue| Ok(()))?)?;
+    font_mt.set("get_tab_size", lua.create_function(|_, _: LuaMultiValue| Ok(4))?)?;
+    let r = lua.create_table()?;
+    r.set("font", font_mt)?;
+    r.set("begin_frame", lua.create_function(|_, _: LuaMultiValue| Ok(()))?)?;
+    r.set("end_frame", lua.create_function(|_, _: LuaMultiValue| Ok(()))?)?;
+    r.set("set_clip_rect", lua.create_function(|_, _: LuaMultiValue| Ok(()))?)?;
+    r.set("draw_rect", lua.create_function(|_, _: LuaMultiValue| Ok(()))?)?;
+    r.set("draw_text", lua.create_function(
+        |_, (_f, _t, x, _y, _c): (LuaValue, LuaValue, f64, LuaValue, LuaValue)| Ok(x),
+    )?)?;
+    Ok(r)
 }
 
 // ── regex module ──────────────────────────────────────────────────────────────
@@ -1250,18 +1268,13 @@ fn make_renwindow(lua: &Lua) -> LuaResult<LuaTable> {
 
     #[cfg(not(feature = "sdl"))]
     {
-        let win: LuaTable = lua
-            .load(
-                r#"
-local W = {}
-W.__index = W
-function W:get_size() return 800, 600 end
-function W:get_content_scale() return 1.0 end
-function W:_persist() end
-return setmetatable({}, W)
-            "#,
-            )
-            .eval()?;
+        let win_mt = lua.create_table()?;
+        win_mt.set("__index", win_mt.clone())?;
+        win_mt.set("get_size", lua.create_function(|_, _: LuaMultiValue| Ok((800, 600)))?)?;
+        win_mt.set("get_content_scale", lua.create_function(|_, _: LuaMultiValue| Ok(1.0f64))?)?;
+        win_mt.set("_persist", lua.create_function(|_, _: LuaMultiValue| Ok(()))?)?;
+        let win = lua.create_table()?;
+        win.set_metatable(Some(win_mt))?;
         let win_clone = win.clone();
         t.set(
             "_restore",

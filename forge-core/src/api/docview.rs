@@ -1,6 +1,5 @@
 use mlua::prelude::*;
 
-const BOOTSTRAP: &str = include_str!("lua/docview.lua");
 
 fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     let require: LuaFunction = lua.globals().get("require")?;
@@ -440,7 +439,13 @@ fn docview_new(lua: &Lua, (this, doc): (LuaTable, Option<LuaTable>)) -> LuaResul
     } else if let Some(doc) = this.get::<Option<LuaTable>>("doc")? {
         doc
     } else {
-        lua.load(r#"return require("core.doc")()"#).eval::<LuaTable>()?
+        {
+            let doc_cls: LuaTable = require_table(lua, "core.doc")?;
+            let getmt: LuaFunction = lua.globals().get("getmetatable")?;
+            let mt: LuaTable = getmt.call(doc_cls.clone())?;
+            let call_fn: LuaFunction = mt.get("__call")?;
+            call_fn.call::<LuaTable>(doc_cls)?
+        }
     };
     this.set("doc", doc.clone())?;
     this.set("font", "code_font")?;
@@ -1601,7 +1606,19 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
     )?;
     preload.set(
         "core.docview",
-        lua.create_function(|lua, ()| lua.load(BOOTSTRAP).set_name("core.docview").eval::<LuaValue>())?,
+        lua.create_function(|lua, ()| {
+            let view: LuaTable = require_table(lua, "core.view")?;
+            let context_menu: LuaTable = require_table(lua, "core.contextmenu")?;
+            let docview: LuaTable = view.call_method("extend", ())?;
+            docview.set("__tostring", lua.create_function(|_, _: LuaValue| Ok("DocView"))?)?;
+            docview.set("context", "session")?;
+            let divider: LuaValue = context_menu.get("DIVIDER")?;
+            docview.set("_context_menu_divider", divider)?;
+            let native: LuaTable = require_table(lua, "docview_native")?;
+            let populate: LuaFunction = native.get("populate")?;
+            populate.call::<()>(docview.clone())?;
+            Ok(LuaValue::Table(docview))
+        })?,
     )?;
     Ok(())
 }

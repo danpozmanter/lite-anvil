@@ -1,7 +1,0 @@
-{
-  "files": [
-    "%.md$",
-    "%.markdown$"
-  ],
-  "headers": []
-}

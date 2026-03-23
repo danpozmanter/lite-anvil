@@ -1,5 +1,14 @@
 # Change Log
 
+## [0.19.0] - 2026-03-23 — All embedded Lua eliminated from Rust source; all plugins native.
+* Converted all remaining embedded Lua to pure Rust mlua closures. Modules converted: doc, syntax, highlighter, statusview, node, rootview, git_view, treeview, toolbarview, terminal_view, tokenizer_shim.
+* Converted all 13 bundled plugin .lua files (3,550 lines) to pure Rust: projectsearch, projectreplace, markdown_preview, remotessh, scale, trimwhitespace, theme_toggle, macro, reflow, tabularize, language_md. Delete data/plugins/ .lua files.
+* Converted all 6 color theme .lua files (277 lines) to pure load from json.
+* Fixed scale plugin missing storage persistence and session hooks (text size now remembered across restarts).
+* Fixed `core` not registered as a strict-mode global, causing "cannot get undefined variable: core" on quit.
+* Fixed Lua truthiness bug in `get_selections` iterator — numeric `idx_reverse` values were treated as falsy, breaking backspace, delete, and left/right arrow keys.
+* Color themes now loaded from JSON files (`data/assets/themes/*.json`) instead of hardcoded Rust data tables.
+
 ## [0.18.2] - 2026-03-23 — Lua iterator and UTF-8 navigation fixes.
 
 * Fix freeze when arrow-key navigating through multi-byte UTF-8 text near document boundaries. `previous_char` and `next_char` in `doc_translate` looped on continuation bytes without checking whether `position_offset` actually advanced; at the start/end of a document the position stays unchanged, producing an infinite loop. Added boundary guards that break when the position stops moving.

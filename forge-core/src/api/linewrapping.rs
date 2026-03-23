@@ -5,6 +5,13 @@ fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     require.call(name)
 }
 
+/// Persists line-wrapping preference to storage.
+fn save_wrap_preference(lua: &Lua, enabled: bool) -> LuaResult<()> {
+    let storage = require_table(lua, "core.storage")?;
+    let save: LuaFunction = storage.get("save")?;
+    save.call::<()>(("linewrapping", "enabled", enabled))
+}
+
 fn register_commands(lua: &Lua) -> LuaResult<()> {
     let command = require_table(lua, "core.command")?;
     let cmds = lua.create_table()?;
@@ -17,6 +24,7 @@ fn register_commands(lua: &Lua) -> LuaResult<()> {
                 if av.get::<Option<LuaTable>>("doc")?.is_some() {
                     av.set("wrapping_enabled", true)?;
                     super::linewrap::update_docview_breaks(lua, &av)?;
+                    save_wrap_preference(lua, true)?;
                 }
             }
             Ok(())
@@ -32,6 +40,7 @@ fn register_commands(lua: &Lua) -> LuaResult<()> {
                     av.set("wrapping_enabled", false)?;
                     let font = av.call_method::<LuaValue>("get_font", ())?;
                     super::linewrap::reconstruct_breaks(lua, &av, &font, f64::INFINITY)?;
+                    save_wrap_preference(lua, false)?;
                 }
             }
             Ok(())
@@ -121,6 +130,38 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
             translate.set("end_of_line", lua.create_function(translate_end_of_line)?)?;
             translate.set("start_of_line", lua.create_function(translate_start_of_line)?)?;
             register_commands(lua)?;
+
+            // Restore wrapping preference from storage.
+            // The enable/disable commands already save to storage on toggle.
+            // Here we read it back and apply to all views after init.
+            let storage = require_table(lua, "core.storage")?;
+            let load_fn: LuaFunction = storage.get("load")?;
+            let saved: LuaValue = load_fn.call(("linewrapping", "enabled"))?;
+            if matches!(saved, LuaValue::Boolean(true)) {
+                let core = require_table(lua, "core")?;
+                let add_thread: LuaFunction = core.get("add_thread")?;
+                let apply = lua.create_function(|lua, ()| {
+                    let core = require_table(lua, "core")?;
+                    if let LuaValue::Table(rv) = core.get::<LuaValue>("root_view")? {
+                        if let LuaValue::Table(rn) = rv.get::<LuaValue>("root_node")? {
+                            if let LuaValue::Function(gc) = rn.get::<LuaValue>("get_children")? {
+                                if let LuaValue::Table(ch) = gc.call::<LuaValue>(rn)? {
+                                    for view in ch.sequence_values::<LuaTable>() {
+                                        let v = view?;
+                                        if v.get::<Option<LuaTable>>("doc")?.is_some() {
+                                            v.set("wrapping_enabled", true)?;
+                                            let _ = super::linewrap::update_docview_breaks(lua, &v);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                })?;
+                add_thread.call::<()>(apply)?;
+            }
+
             Ok(LuaValue::Boolean(true))
         })?,
     )?;

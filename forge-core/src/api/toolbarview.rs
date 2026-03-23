@@ -2,12 +2,6 @@ use mlua::prelude::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-/// Thin Lua skeleton for `plugins.toolbarview` — only extends View and calls native populate.
-const BOOTSTRAP: &str = r#"local View = require "core.view"
-local ToolbarView = View:extend()
-function ToolbarView:__tostring() return "ToolbarView" end
-require("native_toolbarview").populate(ToolbarView)
-return ToolbarView"#;
 
 fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     let require: LuaFunction = lua.globals().get("require")?;
@@ -432,26 +426,21 @@ fn populate(lua: &Lua, class: LuaTable) -> LuaResult<()> {
     Ok(())
 }
 
-/// Registers `plugins.toolbarview` (thin skeleton) and `native_toolbarview` (Rust populate).
+/// Registers `plugins.toolbarview` as a pure-Rust preload module.
 pub fn register_preload(lua: &Lua) -> LuaResult<()> {
     let preload: LuaTable = lua.globals().get::<LuaTable>("package")?.get("preload")?;
 
     preload.set(
         "plugins.toolbarview",
         lua.create_function(|lua, ()| {
-            lua.load(BOOTSTRAP).set_name("plugins.toolbarview").eval::<LuaValue>()
-        })?,
-    )?;
-
-    preload.set(
-        "native_toolbarview",
-        lua.create_function(|lua, ()| {
-            let t = lua.create_table()?;
-            t.set(
-                "populate",
-                lua.create_function(|lua, class: LuaTable| populate(lua, class))?,
+            let view_class: LuaTable = require_table(lua, "core.view")?;
+            let toolbar_view = view_class.call_method::<LuaTable>("extend", ())?;
+            toolbar_view.set(
+                "__tostring",
+                lua.create_function(|_lua, _self: LuaTable| Ok("ToolbarView"))?,
             )?;
-            Ok(LuaValue::Table(t))
+            populate(lua, toolbar_view.clone())?;
+            Ok(LuaValue::Table(toolbar_view))
         })?,
     )
 }

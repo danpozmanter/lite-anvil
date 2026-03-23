@@ -1,236 +1,6 @@
 use mlua::prelude::*;
 
-const BOOTSTRAP: &str = r#"
-local core = require "core"
-local command = require "core.command"
-local common = require "core.common"
-local config = require "core.config"
-local keymap = require "core.keymap"
-local style = require "core.style"
-local View = require "core.view"
-local native = require "terminal_view_native"
-
-local TerminalView = View:extend()
-
-function TerminalView:__tostring() return "TerminalView" end
-
-TerminalView.context = "session"
-
-function TerminalView:new(options)
-  TerminalView.super.new(self)
-  native.init(self, options or {})
-end
-
-function TerminalView:get_name()
-  local suffix = self.handle and self.handle:running() and "" or " [done]"
-  return self.title .. suffix
-end
-
-function TerminalView:get_line_height()
-  return math.floor(self.font:get_height() * config.line_height)
-end
-
-function TerminalView:get_char_width()
-  return self.font:get_width("M")
-end
-
-function TerminalView:get_line_text_y_offset()
-  local lh = self:get_line_height()
-  local th = self.font:get_height()
-  return (lh - th) / 2
-end
-
-function TerminalView:get_content_size()
-  return self.cols * self:get_char_width(), self.rows * self:get_line_height()
-end
-
-function TerminalView:get_scrollable_size()
-  return (self.buffer:total_rows()) * self:get_line_height() + style.padding.y * 2
-end
-
-function TerminalView:supports_text_input()
-  return true
-end
-
-function TerminalView:resize_screen(cols, rows)
-  native.resize_screen(self, cols, rows)
-end
-
-function TerminalView:spawn(command_argv)
-  native.spawn(self, command_argv)
-end
-
-function TerminalView:try_close(do_close)
-  if self.handle and self.handle:running() then
-    core.nag_view:show(
-      "Close Terminal",
-      "This terminal is still running. Terminate it and close the tab?",
-      {
-        { text = "Terminate", default_yes = true },
-        { text = "Cancel", default_no = true },
-      },
-      function(item)
-        if item.text == "Terminate" then
-          pcall(function() self.handle:terminate() end)
-          do_close()
-        end
-      end
-    )
-    return
-  end
-  do_close()
-end
-
-function TerminalView:send_input(text)
-  if self.handle and self.handle:running() then
-    core.blink_reset()
-    self.handle:write(text)
-  end
-end
-
-function TerminalView:on_text_input(text)
-  self:send_input(text)
-end
-
-function TerminalView:on_mouse_wheel(dy, dx)
-  self.scroll.to.y = math.max(0, self.scroll.to.y - dy * self:get_line_height() * 3)
-  return true
-end
-
-function TerminalView:clear()
-  self.buffer:clear()
-  self:resize_screen(self.cols, self.rows)
-  native.scroll_to_bottom(self, true)
-end
-
-function TerminalView:scroll_to_bottom(force)
-  native.scroll_to_bottom(self, force)
-end
-
-function TerminalView:get_dimensions()
-  return native.get_dimensions(self)
-end
-
-function TerminalView:update()
-  TerminalView.super.update(self)
-  native.update(self)
-end
-
-function TerminalView:draw_row(row, x, y)
-  local cell_w = self:get_char_width()
-  local cell_h = self:get_line_height()
-  for _, run in ipairs(row.runs or {}) do
-    if run.bg then
-      renderer.draw_rect(
-        x + (run.start_col - 1) * cell_w,
-        y,
-        (run.end_col - run.start_col + 1) * cell_w,
-        cell_h,
-        run.bg
-      )
-    end
-  end
-  for _, run in ipairs(row.runs or {}) do
-    renderer.draw_text(
-      self.font,
-      run.text,
-      x + (run.start_col - 1) * cell_w,
-      y + self:get_line_text_y_offset(),
-      run.fg or self.default_fg
-    )
-  end
-end
-
-function TerminalView:draw_cursor()
-  native.draw_cursor(self)
-end
-
-function TerminalView:draw()
-  self:draw_background(style.background)
-  renderer.draw_rect(self.position.x, self.position.y, self.size.x, self.size.y, self.default_bg)
-
-  local total_rows = self.buffer:total_rows()
-  local first_row = math.max(1, math.floor(self.scroll.y / self:get_line_height()) + 1)
-  local last_row = math.min(total_rows, math.ceil((self.scroll.y + self.size.y) / self:get_line_height()) + 1)
-  local x = self.position.x + style.padding.x
-
-  core.push_clip_rect(self.position.x, self.position.y, self.size.x, self.size.y)
-  for _, row in ipairs(self.buffer:render_rows(first_row, last_row)) do
-    local y = self.position.y + style.padding.y + (row.index - 1) * self:get_line_height() - self.scroll.y
-    self:draw_row(row, x, y)
-  end
-  self:draw_cursor()
-  core.pop_clip_rect()
-
-  self:draw_scrollbar()
-end
-
-function TerminalView.open(cwd, command_argv, title, placement)
-  return native.open(TerminalView, cwd, command_argv, title, placement)
-end
-
-function TerminalView:rename()
-  core.command_view:enter("Rename Terminal", {
-    text = self.title:gsub("^Terminal:%s*", ""),
-    submit = function(text)
-      if text == "" then
-        return
-      end
-      self.title = text
-      core.redraw = true
-    end,
-  })
-end
-
-function TerminalView:switch_color_scheme(direction)
-  native.switch_color_scheme(self, direction)
-end
-
-command.add(TerminalView, {
-  ["terminal:send-enter"] = function(view) view:send_input("\r") end,
-  ["terminal:send-backspace"] = function(view) view:send_input(string.char(0x7f)) end,
-  ["terminal:send-tab"] = function(view) view:send_input("\t") end,
-  ["terminal:send-escape"] = function(view) view:send_input("\27") end,
-  ["terminal:send-up"] = function(view) view:send_input("\27[A") end,
-  ["terminal:send-down"] = function(view) view:send_input("\27[B") end,
-  ["terminal:send-right"] = function(view) view:send_input("\27[C") end,
-  ["terminal:send-left"] = function(view) view:send_input("\27[D") end,
-  ["terminal:send-home"] = function(view) view:send_input("\27[H") end,
-  ["terminal:send-end"] = function(view) view:send_input("\27[F") end,
-  ["terminal:interrupt"] = function(view) view:send_input(string.char(3)) end,
-  ["terminal:send-eof"] = function(view) view:send_input(string.char(4)) end,
-  ["terminal:suspend"] = function(view) view:send_input(string.char(26)) end,
-  ["terminal:clear"] = function(view)
-    view:clear()
-    view:send_input(string.char(12))
-  end,
-  ["terminal:rename"] = function(view) view:rename() end,
-  ["terminal:next-colorscheme"] = function(view) view:switch_color_scheme(1) end,
-  ["terminal:previous-colorscheme"] = function(view) view:switch_color_scheme(-1) end,
-})
-
-keymap.add {
-  ["return"] = "terminal:send-enter",
-  ["backspace"] = "terminal:send-backspace",
-  ["tab"] = "terminal:send-tab",
-  ["escape"] = "terminal:send-escape",
-  ["up"] = "terminal:send-up",
-  ["down"] = "terminal:send-down",
-  ["left"] = "terminal:send-left",
-  ["right"] = "terminal:send-right",
-  ["home"] = "terminal:send-home",
-  ["end"] = "terminal:send-end",
-  ["ctrl+c"] = "terminal:interrupt",
-  ["ctrl+d"] = "terminal:send-eof",
-  ["ctrl+l"] = "terminal:clear",
-  ["ctrl+z"] = "terminal:suspend",
-  ["ctrl+alt+s"] = "terminal:rename",
-  ["ctrl+alt+]"] = "terminal:next-colorscheme",
-  ["ctrl+alt+["] = "terminal:previous-colorscheme",
-}
-
-return TerminalView
-"#;
+use std::sync::Arc;
 
 fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     let require: LuaFunction = lua.globals().get("require")?;
@@ -1009,39 +779,460 @@ fn switch_color_scheme(lua: &Lua, (view, direction): (LuaTable, i64)) -> LuaResu
     Ok(())
 }
 
-fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
-    let module = lua.create_table()?;
-    module.set("init", lua.create_function(init)?)?;
-    module.set("apply_color_scheme", lua.create_function(|lua, (view, name): (LuaTable, String)| {
-        apply_color_scheme(lua, &view, Some(name))
+/// Populates the TerminalView class with all methods, commands, and keymaps.
+fn populate_class(lua: &Lua, class: &LuaTable) -> LuaResult<()> {
+    let class_key = Arc::new(lua.create_registry_value(class.clone())?);
+
+    class.set("context", "session")?;
+
+    // new(self, options)
+    class.set("new", {
+        let k = Arc::clone(&class_key);
+        lua.create_function(move |lua, (this, options): (LuaTable, Option<LuaTable>)| {
+            let class: LuaTable = lua.registry_value(&k)?;
+            let super_tbl: LuaTable = class.get("super")?;
+            let super_new: LuaFunction = super_tbl.get("new")?;
+            super_new.call::<()>(this.clone())?;
+            let opts = options.unwrap_or(lua.create_table()?);
+            init(lua, (this, opts))
+        })?
+    })?;
+
+    // get_name(self)
+    class.set("get_name", lua.create_function(|_lua, this: LuaTable| {
+        let title: String = this.get("title")?;
+        let suffix = if let Some(handle) = this.get::<Option<LuaAnyUserData>>("handle")? {
+            if handle.call_method::<bool>("running", ())? { "" } else { " [done]" }
+        } else {
+            " [done]"
+        };
+        Ok(format!("{title}{suffix}"))
     })?)?;
-    module.set("resize_screen", lua.create_function(|_, (view, cols, rows): (LuaTable, i64, i64)| {
-        resize_screen(&view, cols, rows)
+
+    // get_line_height(self)
+    class.set("get_line_height", lua.create_function(|lua, this: LuaTable| {
+        let font: LuaValue = this.get("font")?;
+        let font_h: f64 = match &font {
+            LuaValue::Table(t) => t.call_method("get_height", ())?,
+            LuaValue::UserData(ud) => ud.call_method("get_height", ())?,
+            _ => return Err(LuaError::RuntimeError("expected font".into())),
+        };
+        let config: LuaTable = require_table(lua, "core.config")?;
+        let line_height: f64 = config.get("line_height")?;
+        Ok((font_h * line_height).floor())
     })?)?;
-    module.set("spawn", lua.create_function(spawn)?)?;
-    module.set("scroll_to_bottom", lua.create_function(|_, (view, force): (LuaTable, Option<bool>)| {
-        scroll_to_bottom(&view, force.unwrap_or(false))
+
+    // get_char_width(self)
+    class.set("get_char_width", lua.create_function(|_lua, this: LuaTable| {
+        let font: LuaValue = this.get("font")?;
+        let w: f64 = match &font {
+            LuaValue::Table(t) => t.call_method("get_width", "M".to_owned())?,
+            LuaValue::UserData(ud) => ud.call_method("get_width", "M".to_owned())?,
+            _ => return Err(LuaError::RuntimeError("expected font".into())),
+        };
+        Ok(w)
     })?)?;
-    module.set("get_dimensions", lua.create_function(|lua, view: LuaTable| get_dimensions(lua, &view))?)?;
-    module.set("update", lua.create_function(update)?)?;
-    module.set("draw_cursor", lua.create_function(draw_cursor)?)?;
-    module.set("open", lua.create_function(open)?)?;
-    module.set("switch_color_scheme", lua.create_function(switch_color_scheme)?)?;
-    Ok(module)
+
+    // get_line_text_y_offset(self)
+    class.set("get_line_text_y_offset", lua.create_function(|_lua, this: LuaTable| {
+        let lh: f64 = this.call_method("get_line_height", ())?;
+        let font: LuaValue = this.get("font")?;
+        let th: f64 = match &font {
+            LuaValue::Table(t) => t.call_method("get_height", ())?,
+            LuaValue::UserData(ud) => ud.call_method("get_height", ())?,
+            _ => return Err(LuaError::RuntimeError("expected font".into())),
+        };
+        Ok((lh - th) / 2.0)
+    })?)?;
+
+    // get_content_size(self)
+    class.set("get_content_size", lua.create_function(|_lua, this: LuaTable| {
+        let cols: f64 = this.get("cols")?;
+        let rows: f64 = this.get("rows")?;
+        let char_w: f64 = this.call_method("get_char_width", ())?;
+        let line_h: f64 = this.call_method("get_line_height", ())?;
+        Ok((cols * char_w, rows * line_h))
+    })?)?;
+
+    // get_scrollable_size(self)
+    class.set("get_scrollable_size", lua.create_function(|lua, this: LuaTable| {
+        let buffer: LuaAnyUserData = this.get("buffer")?;
+        let total_rows: f64 = buffer.call_method("total_rows", ())?;
+        let line_h: f64 = this.call_method("get_line_height", ())?;
+        let style: LuaTable = require_table(lua, "core.style")?;
+        let padding: LuaTable = style.get("padding")?;
+        let py: f64 = padding.get("y")?;
+        Ok(total_rows * line_h + py * 2.0)
+    })?)?;
+
+    // supports_text_input(self)
+    class.set("supports_text_input", lua.create_function(|_lua, _this: LuaTable| {
+        Ok(true)
+    })?)?;
+
+    // resize_screen(self, cols, rows)
+    class.set("resize_screen", lua.create_function(|_lua, (this, cols, rows): (LuaTable, i64, i64)| {
+        resize_screen(&this, cols, rows)
+    })?)?;
+
+    // spawn(self, command_argv)
+    class.set("spawn", lua.create_function(|lua, (this, command_argv): (LuaTable, LuaTable)| {
+        spawn(lua, (this, command_argv))
+    })?)?;
+
+    // try_close(self, do_close)
+    class.set("try_close", lua.create_function(|lua, (this, do_close): (LuaTable, LuaFunction)| {
+        if let Some(handle) = this.get::<Option<LuaAnyUserData>>("handle")? {
+            if handle.call_method::<bool>("running", ())? {
+                let core: LuaTable = require_table(lua, "core")?;
+                let nag_view: LuaTable = core.get("nag_view")?;
+                let choices = lua.create_table()?;
+                let yes = lua.create_table()?;
+                yes.set("text", "Terminate")?;
+                yes.set("default_yes", true)?;
+                choices.push(yes)?;
+                let no = lua.create_table()?;
+                no.set("text", "Cancel")?;
+                no.set("default_no", true)?;
+                choices.push(no)?;
+                let handle_ref = Arc::new(lua.create_registry_value(handle)?);
+                let close_ref = Arc::new(lua.create_registry_value(do_close)?);
+                let callback = lua.create_function(move |lua, item: LuaTable| {
+                    let text: String = item.get("text")?;
+                    if text == "Terminate" {
+                        let h: LuaAnyUserData = lua.registry_value(&handle_ref)?;
+                        let _ = h.call_method::<()>("terminate", ());
+                        let close_fn: LuaFunction = lua.registry_value(&close_ref)?;
+                        close_fn.call::<()>(())?;
+                    }
+                    Ok(())
+                })?;
+                nag_view.call_method::<()>("show", (
+                    "Close Terminal",
+                    "This terminal is still running. Terminate it and close the tab?",
+                    choices,
+                    callback,
+                ))?;
+                return Ok(());
+            }
+        }
+        do_close.call::<()>(())
+    })?)?;
+
+    // send_input(self, text)
+    class.set("send_input", lua.create_function(|lua, (this, text): (LuaTable, String)| {
+        if let Some(handle) = this.get::<Option<LuaAnyUserData>>("handle")? {
+            if handle.call_method::<bool>("running", ())? {
+                let core: LuaTable = require_table(lua, "core")?;
+                core.call_function::<()>("blink_reset", ())?;
+                handle.call_method::<()>("write", text)?;
+            }
+        }
+        Ok(())
+    })?)?;
+
+    // on_text_input(self, text)
+    class.set("on_text_input", lua.create_function(|_lua, this: LuaTable| {
+        // Delegate to send_input; on_text_input receives text as second arg
+        // but mlua calls it with (self, text), so we call send_input via the table
+        Ok(this)
+    })?)?;
+
+    // Actually, on_text_input needs to forward text to send_input properly
+    class.set("on_text_input", lua.create_function(|_lua, (this, text): (LuaTable, String)| {
+        this.call_method::<()>("send_input", text)
+    })?)?;
+
+    // on_mouse_wheel(self, dy, dx)
+    class.set("on_mouse_wheel", lua.create_function(|_lua, (this, dy): (LuaTable, f64)| {
+        let scroll: LuaTable = this.get("scroll")?;
+        let to: LuaTable = scroll.get("to")?;
+        let current_y: f64 = to.get("y")?;
+        let line_h: f64 = this.call_method("get_line_height", ())?;
+        let new_y = (current_y - dy * line_h * 3.0).max(0.0);
+        to.set("y", new_y)?;
+        Ok(true)
+    })?)?;
+
+    // clear(self)
+    class.set("clear", lua.create_function(|_lua, this: LuaTable| {
+        let buffer: LuaAnyUserData = this.get("buffer")?;
+        buffer.call_method::<()>("clear", ())?;
+        let cols: i64 = this.get("cols")?;
+        let rows: i64 = this.get("rows")?;
+        resize_screen(&this, cols, rows)?;
+        scroll_to_bottom(&this, true)
+    })?)?;
+
+    // scroll_to_bottom(self, force)
+    class.set("scroll_to_bottom", lua.create_function(|_lua, (this, force): (LuaTable, Option<bool>)| {
+        scroll_to_bottom(&this, force.unwrap_or(false))
+    })?)?;
+
+    // get_dimensions(self)
+    class.set("get_dimensions", lua.create_function(|lua, this: LuaTable| {
+        get_dimensions(lua, &this)
+    })?)?;
+
+    // update(self)
+    class.set("update", {
+        let k = Arc::clone(&class_key);
+        lua.create_function(move |lua, this: LuaTable| {
+            let class: LuaTable = lua.registry_value(&k)?;
+            let super_tbl: LuaTable = class.get("super")?;
+            let super_update: LuaFunction = super_tbl.get("update")?;
+            super_update.call::<()>(this.clone())?;
+            update(lua, this)
+        })?
+    })?;
+
+    // draw_row(self, row, x, y)
+    class.set("draw_row", lua.create_function(|lua, (this, row, x, y): (LuaTable, LuaTable, f64, f64)| {
+        let cell_w: f64 = this.call_method("get_char_width", ())?;
+        let cell_h: f64 = this.call_method("get_line_height", ())?;
+        let renderer: LuaTable = lua.globals().get("renderer")?;
+        let draw_rect: LuaFunction = renderer.get("draw_rect")?;
+        let draw_text: LuaFunction = renderer.get("draw_text")?;
+        let runs: LuaTable = row.get::<Option<LuaTable>>("runs")?.unwrap_or(lua.create_table()?);
+
+        // Draw backgrounds first
+        for run in runs.sequence_values::<LuaTable>() {
+            let run = run?;
+            if let Some(bg) = run.get::<Option<LuaValue>>("bg")? {
+                if !matches!(bg, LuaValue::Nil | LuaValue::Boolean(false)) {
+                    let start_col: f64 = run.get("start_col")?;
+                    let end_col: f64 = run.get("end_col")?;
+                    draw_rect.call::<()>((
+                        x + (start_col - 1.0) * cell_w,
+                        y,
+                        (end_col - start_col + 1.0) * cell_w,
+                        cell_h,
+                        bg,
+                    ))?;
+                }
+            }
+        }
+
+        // Draw text
+        let runs: LuaTable = row.get::<Option<LuaTable>>("runs")?.unwrap_or(lua.create_table()?);
+        let y_offset: f64 = this.call_method("get_line_text_y_offset", ())?;
+        let default_fg: LuaValue = this.get("default_fg")?;
+        let font: LuaValue = this.get("font")?;
+        for run in runs.sequence_values::<LuaTable>() {
+            let run = run?;
+            let text: String = run.get("text")?;
+            let start_col: f64 = run.get("start_col")?;
+            let fg: LuaValue = run.get::<Option<LuaValue>>("fg")?.unwrap_or(default_fg.clone());
+            let fg = if matches!(fg, LuaValue::Nil | LuaValue::Boolean(false)) {
+                default_fg.clone()
+            } else {
+                fg
+            };
+            draw_text.call::<()>((
+                font.clone(),
+                text,
+                x + (start_col - 1.0) * cell_w,
+                y + y_offset,
+                fg,
+            ))?;
+        }
+        Ok(())
+    })?)?;
+
+    // draw_cursor(self)
+    class.set("draw_cursor", lua.create_function(|lua, this: LuaTable| {
+        draw_cursor(lua, this)
+    })?)?;
+
+    // draw(self)
+    class.set("draw", lua.create_function(|lua, this: LuaTable| {
+        let style: LuaTable = require_table(lua, "core.style")?;
+        let bg: LuaValue = style.get("background")?;
+        this.call_method::<()>("draw_background", bg)?;
+
+        let renderer: LuaTable = lua.globals().get("renderer")?;
+        let draw_rect: LuaFunction = renderer.get("draw_rect")?;
+        let position: LuaTable = this.get("position")?;
+        let size: LuaTable = this.get("size")?;
+        let pos_x: f64 = position.get("x")?;
+        let pos_y: f64 = position.get("y")?;
+        let size_x: f64 = size.get("x")?;
+        let size_y: f64 = size.get("y")?;
+        let default_bg: LuaValue = this.get("default_bg")?;
+        draw_rect.call::<()>((pos_x, pos_y, size_x, size_y, default_bg))?;
+
+        let buffer: LuaAnyUserData = this.get("buffer")?;
+        let total_rows: i64 = buffer.call_method("total_rows", ())?;
+        let line_h: f64 = this.call_method("get_line_height", ())?;
+        let scroll: LuaTable = this.get("scroll")?;
+        let scroll_y: f64 = scroll.get("y")?;
+        let first_row = ((scroll_y / line_h).floor() as i64 + 1).max(1);
+        let last_row = (((scroll_y + size_y) / line_h).ceil() as i64 + 1).min(total_rows);
+        let padding: LuaTable = style.get("padding")?;
+        let pad_x: f64 = padding.get("x")?;
+        let pad_y: f64 = padding.get("y")?;
+        let x = pos_x + pad_x;
+
+        let core: LuaTable = require_table(lua, "core")?;
+        core.call_function::<()>("push_clip_rect", (pos_x, pos_y, size_x, size_y))?;
+
+        let rows: LuaTable = buffer.call_method("render_rows", (first_row, last_row))?;
+        for row in rows.sequence_values::<LuaTable>() {
+            let row = row?;
+            let index: f64 = row.get("index")?;
+            let y = pos_y + pad_y + (index - 1.0) * line_h - scroll_y;
+            this.call_method::<()>("draw_row", (row, x, y))?;
+        }
+        this.call_method::<()>("draw_cursor", ())?;
+
+        core.call_function::<()>("pop_clip_rect", ())?;
+        this.call_method::<()>("draw_scrollbar", ())
+    })?)?;
+
+    // open(cwd, command_argv, title, placement) — static method
+    class.set("open", {
+        let k = Arc::clone(&class_key);
+        lua.create_function(move |lua, (cwd, command_argv, title, placement): (Option<String>, Option<LuaTable>, Option<String>, Option<String>)| {
+            let class: LuaTable = lua.registry_value(&k)?;
+            open(lua, (class, cwd, command_argv, title, placement))
+        })?
+    })?;
+
+    // rename(self)
+    class.set("rename", lua.create_function(|lua, this: LuaTable| {
+        let core: LuaTable = require_table(lua, "core")?;
+        let command_view: LuaTable = core.get("command_view")?;
+        let title: String = this.get("title")?;
+        // Strip "Terminal: " prefix if present
+        let default_text = title
+            .strip_prefix("Terminal: ")
+            .or_else(|| title.strip_prefix("Terminal:"))
+            .map(|s| s.trim_start().to_string())
+            .unwrap_or_else(|| title.clone());
+        let this_key = Arc::new(lua.create_registry_value(this)?);
+        let opts = lua.create_table()?;
+        opts.set("text", default_text)?;
+        opts.set("submit", lua.create_function(move |lua, text: String| {
+            if text.is_empty() {
+                return Ok(());
+            }
+            let this: LuaTable = lua.registry_value(&this_key)?;
+            this.set("title", text)?;
+            let core: LuaTable = require_table(lua, "core")?;
+            core.set("redraw", true)?;
+            Ok(())
+        })?)?;
+        command_view.call_method::<()>("enter", ("Rename Terminal", opts))
+    })?)?;
+
+    // switch_color_scheme(self, direction)
+    class.set("switch_color_scheme", lua.create_function(|lua, (this, direction): (LuaTable, i64)| {
+        switch_color_scheme(lua, (this, direction))
+    })?)?;
+
+    Ok(())
 }
 
+/// Registers terminal commands and keymaps for the given TerminalView class.
+fn register_commands_and_keymaps(lua: &Lua, class: &LuaTable) -> LuaResult<()> {
+    let command: LuaTable = require_table(lua, "core.command")?;
+    let keymap: LuaTable = require_table(lua, "core.keymap")?;
+
+    let cmds = lua.create_table()?;
+
+    // Helper: create a command that calls send_input with a given string
+    let send = |s: &'static str| -> LuaResult<LuaFunction> {
+        lua.create_function(move |_lua, view: LuaTable| {
+            view.call_method::<()>("send_input", s.to_string())
+        })
+    };
+
+    cmds.set("terminal:send-enter", send("\r")?)?;
+    cmds.set("terminal:send-backspace", send("\x7f")?)?;
+    cmds.set("terminal:send-tab", send("\t")?)?;
+    cmds.set("terminal:send-escape", send("\x1b")?)?;
+    cmds.set("terminal:send-up", send("\x1b[A")?)?;
+    cmds.set("terminal:send-down", send("\x1b[B")?)?;
+    cmds.set("terminal:send-right", send("\x1b[C")?)?;
+    cmds.set("terminal:send-left", send("\x1b[D")?)?;
+    cmds.set("terminal:send-home", send("\x1b[H")?)?;
+    cmds.set("terminal:send-end", send("\x1b[F")?)?;
+    cmds.set("terminal:interrupt", send("\x03")?)?;
+    cmds.set("terminal:send-eof", send("\x04")?)?;
+    cmds.set("terminal:suspend", send("\x1a")?)?;
+
+    cmds.set("terminal:clear", lua.create_function(|_lua, view: LuaTable| {
+        view.call_method::<()>("clear", ())?;
+        view.call_method::<()>("send_input", "\x0c".to_string())
+    })?)?;
+
+    cmds.set("terminal:rename", lua.create_function(|_lua, view: LuaTable| {
+        view.call_method::<()>("rename", ())
+    })?)?;
+
+    cmds.set("terminal:next-colorscheme", lua.create_function(|_lua, view: LuaTable| {
+        view.call_method::<()>("switch_color_scheme", 1)
+    })?)?;
+
+    cmds.set("terminal:previous-colorscheme", lua.create_function(|_lua, view: LuaTable| {
+        view.call_method::<()>("switch_color_scheme", -1)
+    })?)?;
+
+    let add_fn: LuaFunction = command.get("add")?;
+    add_fn.call::<()>((class.clone(), cmds))?;
+
+    let keybindings = lua.create_table()?;
+    for (key, cmd) in [
+        ("return", "terminal:send-enter"),
+        ("backspace", "terminal:send-backspace"),
+        ("tab", "terminal:send-tab"),
+        ("escape", "terminal:send-escape"),
+        ("up", "terminal:send-up"),
+        ("down", "terminal:send-down"),
+        ("left", "terminal:send-left"),
+        ("right", "terminal:send-right"),
+        ("home", "terminal:send-home"),
+        ("end", "terminal:send-end"),
+        ("ctrl+c", "terminal:interrupt"),
+        ("ctrl+d", "terminal:send-eof"),
+        ("ctrl+l", "terminal:clear"),
+        ("ctrl+z", "terminal:suspend"),
+        ("ctrl+alt+s", "terminal:rename"),
+        ("ctrl+alt+]", "terminal:next-colorscheme"),
+        ("ctrl+alt+[", "terminal:previous-colorscheme"),
+    ] {
+        keybindings.set(key, cmd)?;
+    }
+
+    let add_fn: LuaFunction = keymap.get("add")?;
+    add_fn.call::<()>(keybindings)?;
+
+    Ok(())
+}
+
+/// Registers `plugins.terminal.view` as a pure-Rust preload module.
 pub fn register_preload(lua: &Lua) -> LuaResult<()> {
     let package: LuaTable = lua.globals().get("package")?;
     let preload: LuaTable = package.get("preload")?;
-    let native_key = lua.create_registry_value(make_module(lua)?)?;
-    preload.set(
-        "terminal_view_native",
-        lua.create_function(move |lua, ()| lua.registry_value::<LuaTable>(&native_key))?,
-    )?;
+
     preload.set(
         "plugins.terminal.view",
-        lua.create_function(|lua, ()| lua.load(BOOTSTRAP).set_name("plugins.terminal.view").eval::<LuaValue>())?,
+        lua.create_function(|lua, ()| {
+            let view_class: LuaTable = require_table(lua, "core.view")?;
+            let terminal_view = view_class.call_method::<LuaTable>("extend", ())?;
+
+            terminal_view.set(
+                "__tostring",
+                lua.create_function(|_lua, _self: LuaTable| Ok("TerminalView"))?,
+            )?;
+
+            populate_class(lua, &terminal_view)?;
+            register_commands_and_keymaps(lua, &terminal_view)?;
+
+            Ok(LuaValue::Table(terminal_view))
+        })?,
     )?;
+
     Ok(())
 }
 

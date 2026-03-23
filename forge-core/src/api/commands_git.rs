@@ -341,7 +341,14 @@ fn patch_treeview(lua: &Lua) -> LuaResult<()> {
     if patched { return Ok(()); }
     treeview.set("__git_highlighting_patched", true)?;
 
-    let old_fn: LuaFunction = treeview.get("get_item_text")?;
+    let git_val: LuaValue = treeview.get("get_item_text")?;
+    let old_fn: LuaFunction = match git_val {
+        LuaValue::Function(f) => f,
+        _ => return Err(LuaError::runtime(format!(
+            "plugins.treeview.get_item_text is {:?}, expected function",
+            git_val
+        ))),
+    };
     let old_key = std::sync::Arc::new(lua.create_registry_value(old_fn)?);
 
     treeview.set("get_item_text", lua.create_function(move |lua, (this, item, active, hovered): (LuaTable, LuaTable, bool, bool)| {
