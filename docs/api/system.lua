@@ -448,4 +448,24 @@ function system.save_file_dialog(window, id, options) end
 ---@return "none"|"unknown"|"flatpak"|"snap"|"macos"
 function system.get_sandbox() end
 
+---
+---Returns the value of the given environment variable, or nil if not set.
+---
+---@param name string
+---
+---@return string?
+function system.get_env(name) end
+
+---
+---Shows the main window. Called during startup after initial setup.
+---
+function system.show_window() end
+
+---
+---Returns the screen size in pixels.
+---
+---@return integer width
+---@return integer height
+function system.get_screen_size() end
+
 return system

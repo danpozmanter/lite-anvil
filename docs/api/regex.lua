@@ -76,6 +76,46 @@ function regex:cmatch(subject, offset, options) end
 function regex.gmatch(pattern, subject, offset) end
 
 ---
+---Searches for the first match of `pattern` in `subject` and returns
+---the start and end offsets (1-based, end inclusive) followed by any
+---captured group strings.
+---
+---@param pattern regex|string
+---@param subject string
+---@param offset? integer Starting position in subject (default 1).
+---@param options? integer Bit field of matching options.
+---
+---@return integer? start
+---@return integer? end_
+---@return string? ... Captured group strings.
+function regex.find(pattern, subject, offset, options) end
+
+---
+---Like `regex.find` but returns only captured group strings (or the
+---full match string when the pattern has no captures).
+---
+---@param pattern regex|string
+---@param subject string
+---@param offset? integer Starting position in subject (default 1).
+---@param options? integer Bit field of matching options.
+---
+---@return string? ... Captured strings or the full match.
+function regex.match(pattern, subject, offset, options) end
+
+---
+---Searches for the first match of `pattern` in `subject` and returns
+---all offsets (1-based, end inclusive) as pairs: overall start/end
+---followed by each capture group's start/end.
+---
+---@param pattern regex|string
+---@param subject string
+---@param offset? integer Starting position in subject (default 1).
+---@param options? integer Bit field of matching options.
+---
+---@return integer? ... Pairs of start/end offsets.
+function regex.find_offsets(pattern, subject, offset, options) end
+
+---
 ---Replaces the matched pattern globally on the subject with the given
 ---replacement, supports named captures ((?'name'<pattern>), ${name}) and
 ---$[1-9][0-9]* substitutions. Raises an error when failing to compile the

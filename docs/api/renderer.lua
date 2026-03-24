@@ -66,6 +66,12 @@ function renderer.font:copy(size, options) end
 function renderer.font:set_tab_size(chars) end
 
 ---
+---Get the current tab size (number of characters per tab).
+---
+---@return integer
+function renderer.font:get_tab_size() end
+
+---
 ---Get the width in pixels of the given text when
 ---rendered with this font.
 ---

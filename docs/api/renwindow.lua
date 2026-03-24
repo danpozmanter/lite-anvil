@@ -6,26 +6,38 @@
 renwindow = {}
 
 ---
----Create a new window
+---Create a new window.
 ---
----@param title string the title given to the newly created window
----@param width integer? if nil or less than 1 will be calculated from display
----@param height integer? if nil or less than 1 will be calculated from display
+---@param title? string The title given to the newly created window.
 ---
 ---@return renwindow
-function renwindow.create(title, width, height) end
+function renwindow.create(title) end
 
 ---
----Get width and height of a window
+---Mark the window as persistent so it survives a restart.
 ---
----@param window renwindow
----
----@return number width
----@return number height
-function renwindow.get_size(window) end
+function renwindow.persist() end
 
 ---
----Restore Window
+---Restore a previously persisted window.
 ---
----@return number
+---@return renwindow?
 function renwindow._restore() end
+
+---
+---Get the logical width and height of the window.
+---
+---@return integer width
+---@return integer height
+function renwindow:get_size() end
+
+---
+---Get the ratio of drawable pixels to logical window points.
+---
+---@return number scale
+function renwindow:get_content_scale() end
+
+---
+---Mark this window handle as persistent so it survives a restart.
+---
+function renwindow:_persist() end

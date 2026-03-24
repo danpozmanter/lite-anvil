@@ -6,37 +6,6 @@
 ---@class process
 process = {}
 
----Error triggered when the stdout, stderr or stdin fails while reading
----or writing, its value is platform dependent, so the value declared on this
----interface does not represents the real one.
----@type integer
-process.ERROR_PIPE = -1
-
----Error triggered when a read or write action is blocking,
----its value is platform dependent, so the value declared on this
----interface does not represents the real one.
----@type integer
-process.ERROR_WOULDBLOCK = -2
-
----Error triggered when a process takes more time than that specified
----by the deadline parameter given on process:start(),
----its value is platform dependent, so the value declared on this
----interface does not represents the real one.
----@type integer
-process.ERROR_TIMEDOUT = -3
-
----Error triggered when trying to terminate or kill a non running process,
----its value is platform dependent, so the value declared on this
----interface does not represents the real one.
----@type integer
-process.ERROR_INVAL = -4
-
----Error triggered when no memory is available to allocate the process,
----its value is platform dependent, so the value declared on this
----interface does not represents the real one.
----@type integer
-process.ERROR_NOMEM = -5
-
 ---Used for the process:close_stream() method to close stdin.
 ---@type integer
 process.STREAM_STDIN = 0
@@ -49,43 +18,39 @@ process.STREAM_STDOUT = 1
 ---@type integer
 process.STREAM_STDERR = 2
 
+---Do not wait; return immediately if the process has not exited.
+---@type integer
+process.WAIT_NONE = 0
+
+---Instruct process:wait() to wait until the deadline given on process:start().
+---@type integer
+process.WAIT_DEADLINE = -1
+
 ---Instruct process:wait() to wait until the process ends.
 ---@type integer
-process.WAIT_INFINITE = -1
-
----Instruct process:wait() to wait until the deadline given on process:start()
----@type integer
-process.WAIT_DEADLINE = -2
+process.WAIT_INFINITE = -2
 
 ---Default behavior for redirecting streams.
----This flag is deprecated and for backwards compatibility with reproc only.
----The behavior of this flag may change in future versions of Lite-Anvil.
 ---@type integer
-process.REDIRECT_DEFAULT = 0
-
----Allow Process API to read this stream via process:read functions.
----@type integer
-process.REDIRECT_PIPE = 1
-
----Redirect this stream to the parent.
----@type integer
-process.REDIRECT_PARENT = 2
-
----Discard this stream (piping it to /dev/null)
----@type integer
-process.REDIRECT_DISCARD = 3
+process.REDIRECT_DEFAULT = -1
 
 ---Redirect this stream to stdout.
 ---This flag can only be used on process.options.stderr.
 ---@type integer
-process.REDIRECT_STDOUT = 4
+process.REDIRECT_STDOUT = 1
 
----@alias process.errortype
----| `process.ERROR_PIPE`
----| `process.ERROR_WOULDBLOCK`
----| `process.ERROR_TIMEDOUT`
----| `process.ERROR_INVAL`
----| `process.ERROR_NOMEM`
+---Redirect this stream to stderr.
+---This flag can only be used on process.options.stdout.
+---@type integer
+process.REDIRECT_STDERR = 2
+
+---Redirect this stream to the parent.
+---@type integer
+process.REDIRECT_PARENT = -3
+
+---Discard this stream (piping it to /dev/null).
+---@type integer
+process.REDIRECT_DISCARD = -2
 
 ---@alias process.streamtype
 ---| `process.STREAM_STDIN`
@@ -93,15 +58,16 @@ process.REDIRECT_STDOUT = 4
 ---| `process.STREAM_STDERR`
 
 ---@alias process.waittype
+---| `process.WAIT_NONE`
 ---| `process.WAIT_INFINITE`
 ---| `process.WAIT_DEADLINE`
 
 ---@alias process.redirecttype
 ---| `process.REDIRECT_DEFAULT`
----| `process.REDIRECT_PIPE`
+---| `process.REDIRECT_STDOUT`
+---| `process.REDIRECT_STDERR`
 ---| `process.REDIRECT_PARENT`
 ---| `process.REDIRECT_DISCARD`
----| `process.REDIRECT_STDOUT`
 
 ---
 --- Options that can be passed to process.start()
@@ -122,7 +88,7 @@ process.REDIRECT_STDOUT = 4
 ---
 ---@return process | nil
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process.start(command_and_params, options) end
 
 ---
@@ -148,7 +114,7 @@ function process:pid() end
 ---
 ---@return string | nil
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:read(stream, len) end
 
 ---
@@ -159,7 +125,7 @@ function process:read(stream, len) end
 ---
 ---@return string | nil
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:read_stdout(len) end
 
 ---
@@ -170,7 +136,7 @@ function process:read_stdout(len) end
 ---
 ---@return string | nil
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:read_stderr(len) end
 
 ---
@@ -181,7 +147,7 @@ function process:read_stderr(len) end
 ---
 ---@return integer | nil bytes The amount of bytes written or nil if error
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:write(data) end
 
 ---
@@ -191,7 +157,7 @@ function process:write(data) end
 ---
 ---@return integer | nil
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:close_stream(stream) end
 
 ---
@@ -202,7 +168,7 @@ function process:close_stream(stream) end
 ---
 ---@return integer | nil exit_status The process exit status or nil on error
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:wait(timeout) end
 
 ---
@@ -210,7 +176,7 @@ function process:wait(timeout) end
 ---
 ---@return boolean | nil
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:terminate() end
 
 ---
@@ -218,8 +184,14 @@ function process:terminate() end
 ---
 ---@return boolean | nil
 ---@return string errmsg
----@return process.errortype | integer errcode
+---@return integer errcode
 function process:kill() end
+
+---
+---Sends SIGINT to the process.
+---
+---@return boolean
+function process:interrupt() end
 
 ---
 ---Get the exit code of the process or nil if still running.
