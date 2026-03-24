@@ -1,6 +1,6 @@
 # Lite-Anvil
 
-A lightweight code editor. 99.9% Rust, with Lua for user plugins.
+A lightweight code editor built in Rust, with Lua for user plugins.
 
 Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
 
