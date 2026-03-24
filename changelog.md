@@ -1,5 +1,8 @@
 # Change Log
 
+## [0.19.4] - 2026-03-24 — macOS "Open With" fix.
+* Fix macOS "Open With" not opening the file. macOS sends files via Apple Events (converted to `SDL_EVENT_DROP_FILE`), not command-line args. The `on_file_dropped` handler required x/y coordinates that the drop event doesn't provide, crashing on nil-to-f64 conversion. Made coordinates optional.
+
 ## [0.19.3] - 2026-03-24 — Cross-platform "Open With" file associations.
 * Register Lite-Anvil for "Open With" on all platforms for 100+ file extensions matching supported syntax types plus .txt, .log, .conf, .env, .diff, .patch, Dockerfile, and other common text files.
 * Linux: updated .desktop file with full MimeType list; included in .tar.gz and .deb archives.

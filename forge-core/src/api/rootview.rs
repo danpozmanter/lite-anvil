@@ -1587,8 +1587,9 @@ fn build_rootview(lua: &Lua) -> LuaResult<LuaTable> {
     // RootView:on_file_dropped(filename, x, y)
     root_view.set(
         "on_file_dropped",
-        lua.create_function(|lua, (this, filename, x, y): (LuaTable, String, f64, f64)| {
+        lua.create_function(|lua, (this, filename, x, y): (LuaTable, String, Option<f64>, Option<f64>)| {
             let root_node: LuaTable = this.get("root_node")?;
+            let (x, y) = (x.unwrap_or(0.0), y.unwrap_or(0.0));
             let node: LuaTable = root_node.call_method("get_child_overlapping_point", (x, y))?;
             let active_view: LuaTable = node.get("active_view")?;
             let result: LuaValue =
