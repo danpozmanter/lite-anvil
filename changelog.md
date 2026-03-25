@@ -1,6 +1,11 @@
 # Change Log
 
-## [0.19.5] - 2026-03-24 — Key repeat, typeahead, undo improvement, and wrap rendering fixes.
+## [0.19.6] - 2026-03-25 — Undo grouping and input latency improvements.
+* Consecutive single-character inserts (typing/key repeat) merge into a single undo entry. A new undo group starts on: pause >1s, newline, delete, cursor movement, or batch edit. Holding a key then pressing Ctrl+Z undoes the entire run at once.
+* Reduced per-frame overhead: cached `core.try`'s error handler and `xpcall` (previously recreated every event), cached `poll_event`/`renderer` via named registry slots, replaced Lua `math.min/max/ceil` with native Rust in the run loop, cached `fps`/`blink_period`/`wait_event`/`has_focus` outside the loop.
+* Fixed 75% rendering regression from integer-to-float window size conversion.
+
+## [0.19.5] - 2026-03-24 — Key repeat, typeahead, and wrap rendering fixes.
 * Improved key repeat stutter.
 * Fix ghost character at end of wrapped lines.
 * Fix aggressive command palette typeahead after typing a path separator (/ or \).

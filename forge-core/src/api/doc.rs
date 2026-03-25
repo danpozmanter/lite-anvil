@@ -1666,4 +1666,58 @@ mod tests {
         assert_eq!(state.sig_cache, (5, sig));
         assert_ne!(sig, 0);
     }
+
+    #[test]
+    fn consecutive_single_char_inserts_merge_undo() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["hello\n".to_string()];
+        state.change_id = 1;
+
+        // Type "abc" rapidly (within timeout).
+        apply_insert_to_buffer(&mut state, 1, 6, "a");
+        assert_eq!(state.undo.len(), 1);
+
+        apply_insert_to_buffer(&mut state, 1, 7, "b");
+        assert_eq!(state.undo.len(), 1, "second char should merge");
+
+        apply_insert_to_buffer(&mut state, 1, 8, "c");
+        assert_eq!(state.undo.len(), 1, "third char should merge");
+
+        assert_eq!(state.lines, vec!["helloabc\n".to_string()]);
+
+        // A single undo should remove all three characters.
+        let last = state.undo.last().unwrap().clone();
+        apply_record_to_state(&mut state, &last, true).unwrap();
+        assert_eq!(state.lines, vec!["hello\n".to_string()]);
+    }
+
+    #[test]
+    fn newline_breaks_undo_merge() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["hello\n".to_string()];
+        state.change_id = 1;
+
+        apply_insert_to_buffer(&mut state, 1, 6, "a");
+        assert_eq!(state.undo.len(), 1);
+
+        apply_insert_to_buffer(&mut state, 1, 7, "\n");
+        assert_eq!(state.undo.len(), 2, "newline should start new undo group");
+    }
+
+    #[test]
+    fn delete_breaks_undo_merge() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["hello\n".to_string()];
+        state.change_id = 1;
+
+        apply_insert_to_buffer(&mut state, 1, 6, "a");
+        apply_insert_to_buffer(&mut state, 1, 7, "b");
+        assert_eq!(state.undo.len(), 1);
+
+        apply_remove_to_buffer(&mut state, 1, 7, 1, 8);
+        assert_eq!(state.undo.len(), 2, "delete should not merge with insert");
+
+        apply_insert_to_buffer(&mut state, 1, 7, "c");
+        assert_eq!(state.undo.len(), 3, "insert after delete should start new group");
+    }
 }

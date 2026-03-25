@@ -3,7 +3,7 @@ members = ["forge-core"]
 resolver = "2"
 
 [workspace.package]
-version = "0.19.5"
+version = "0.19.6"
 
 [profile.release]
 opt-level = "z"

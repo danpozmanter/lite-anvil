@@ -4402,10 +4402,28 @@ fn register_misc(
 ) -> LuaResult<()> {
     let _ = state_key;
 
-    // try(fn, ...)
+    // try(fn, ...) — pre-build the error handler and cache xpcall.
+    {
+        let xpcall: LuaFunction = lua.globals().get("xpcall")?;
+        let error_fn: LuaFunction = core.get("error")?;
+        let debug_mod: LuaTable = lua.globals().get("debug")?;
+        let traceback: LuaFunction = debug_mod.get("traceback")?;
+        let err_key = lua.create_registry_value(error_fn)?;
+        let tb_key = lua.create_registry_value(traceback)?;
+        let handler = lua.create_function(move |lua, msg: LuaValue| {
+            let error_fn: LuaFunction = lua.registry_value(&err_key)?;
+            let item: LuaTable = error_fn.call(("%s", msg.clone()))?;
+            let traceback: LuaFunction = lua.registry_value(&tb_key)?;
+            let tb: String = traceback.call(("", 2))?;
+            item.set("info", tb.replace('\t', ""))?;
+            Ok(msg)
+        })?;
+        let handler_key = lua.create_registry_value(handler)?;
+        let xpcall_key = lua.create_registry_value(xpcall)?;
+
     core.set(
         "try",
-        lua.create_function(|lua, args: LuaMultiValue| {
+        lua.create_function(move |lua, args: LuaMultiValue| {
             let vals: Vec<LuaValue> = args.into_vec();
             let func = match vals.first() {
                 Some(v) => v.clone(),
@@ -4413,25 +4431,8 @@ fn register_misc(
             };
             let fn_args: Vec<LuaValue> = vals.into_iter().skip(1).collect();
 
-            let core = get_core(lua)?;
-            let error_fn: LuaFunction = core.get("error")?;
-            let debug_mod: LuaTable = lua.globals().get("debug")?;
-            let traceback: LuaFunction = debug_mod.get("traceback")?;
-
-            let xpcall: LuaFunction = lua.globals().get("xpcall")?;
-
-            let error_fn_key = lua.create_registry_value(error_fn)?;
-            let traceback_key = lua.create_registry_value(traceback)?;
-            let handler = lua.create_function(move |lua, msg: LuaValue| {
-                let _core = get_core(lua)?;
-                let error_fn: LuaFunction = lua.registry_value(&error_fn_key)?;
-                let item: LuaTable = error_fn.call(("%s", msg.clone()))?;
-                let traceback: LuaFunction = lua.registry_value(&traceback_key)?;
-                let tb: String = traceback.call(("", 2))?;
-                let cleaned = tb.replace('\t', "");
-                item.set("info", cleaned)?;
-                Ok(msg)
-            })?;
+            let xpcall: LuaFunction = lua.registry_value(&xpcall_key)?;
+            let handler: LuaFunction = lua.registry_value(&handler_key)?;
 
             let mut call_args = vec![func, LuaValue::Function(handler)];
             call_args.extend(fn_args);
@@ -4448,6 +4449,7 @@ fn register_misc(
             }
         })?,
     )?;
+    } // end try() block
 
     // exit(quit_fn, force?)
     core.set(
