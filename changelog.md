@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.19.5] - 2026-03-24 — Key repeat, typeahead, undo improvement, and wrap rendering fixes.
+* Improved key repeat stutter.
+* Fix ghost character at end of wrapped lines.
+* Fix aggressive command palette typeahead after typing a path separator (/ or \).
+* Undo now handles edits cohesively.
+
 ## [0.19.4] - 2026-03-24 — macOS "Open With" fix.
 * Fix macOS "Open With" not opening the file. macOS sends files via Apple Events (converted to `SDL_EVENT_DROP_FILE`), not command-line args. The `on_file_dropped` handler required x/y coordinates that the drop event doesn't provide, crashing on nil-to-f64 conversion. Made coordinates optional.
 

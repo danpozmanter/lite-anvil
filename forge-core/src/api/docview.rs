@@ -1108,19 +1108,23 @@ fn docview_draw_line_text_wrapped(
                 let line_text: String = doc.get::<LuaTable>("lines")?.get(line)?;
                 line_text.len()
             } else {
-                next_col - 1
+                next_col
             };
             let max_len = next_line_start.saturating_sub(total_offset);
             let available = text.len() - token_offset;
             let render_len = max_len.min(available);
             let rendered = &text[token_offset..token_offset + render_len];
-            tx = renderer.call_function("draw_text", (font.clone(), rendered, tx, ty, color.clone()))?;
-            total_offset += rendered.len();
+            // Strip trailing newline — the font renders it as a visible glyph.
+            let draw_text = rendered.trim_end_matches('\n');
+            if !draw_text.is_empty() {
+                tx = renderer.call_function("draw_text", (font.clone(), draw_text, tx, ty, color.clone()))?;
+            }
+            total_offset += render_len;
 
             if total_offset < next_line_start || max_len == 0 {
                 break;
             }
-            token_offset += rendered.len();
+            token_offset += render_len;
             vis_idx += 1;
             tx = x + begin_width;
             ty += lh;

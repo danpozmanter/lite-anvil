@@ -3891,15 +3891,38 @@ fn register_event_handling(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
         "step",
         lua.create_function(|lua, ()| {
             let core = get_core(lua)?;
-            let system_t: LuaTable = lua.globals().get("system")?;
-            let table_mod: LuaTable = lua.globals().get("table")?;
-            let renderer: LuaTable = lua.globals().get("renderer")?;
 
-            // Handle events.
+            // Cache on first call via a named registry slot.
+            let poll_event: LuaFunction = match lua.named_registry_value::<LuaValue>("_step_poll")? {
+                LuaValue::Function(f) => f,
+                _ => {
+                    let s: LuaTable = lua.globals().get("system")?;
+                    let f: LuaFunction = s.get("poll_event")?;
+                    lua.set_named_registry_value("_step_poll", f.clone())?;
+                    f
+                }
+            };
+            let try_fn: LuaFunction = match lua.named_registry_value::<LuaValue>("_step_try")? {
+                LuaValue::Function(f) => f,
+                _ => {
+                    let f: LuaFunction = core.get("try")?;
+                    lua.set_named_registry_value("_step_try", f.clone())?;
+                    f
+                }
+            };
+            let renderer: LuaTable = match lua.named_registry_value::<LuaValue>("_step_renderer")? {
+                LuaValue::Table(t) => t,
+                _ => {
+                    let t: LuaTable = lua.globals().get("renderer")?;
+                    lua.set_named_registry_value("_step_renderer", t.clone())?;
+                    t
+                }
+            };
+
+            let on_event: LuaFunction = core.get("on_event")?;
+
             let mut did_keymap = false;
-            let poll_event: LuaFunction = system_t.get("poll_event")?;
 
-            // Use system.poll_event as iterator.
             loop {
                 let result: LuaMultiValue = poll_event.call(())?;
                 let vals: Vec<LuaValue> = result.into_vec();
@@ -3911,17 +3934,13 @@ fn register_event_handling(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                 if event_type == "textinput" && did_keymap {
                     did_keymap = false;
                 } else if event_type == "mousemoved" {
-                    let try_fn: LuaFunction = core.get("try")?;
-                    let on_event: LuaFunction = core.get("on_event")?;
-                    try_fn.call::<()>((on_event, LuaMultiValue::from_vec(vals)))?;
+                    try_fn.call::<()>((on_event.clone(), LuaMultiValue::from_vec(vals)))?;
                 } else if event_type == "enteringforeground" {
                     core.set("redraw", true)?;
                     break;
                 } else {
-                    let try_fn: LuaFunction = core.get("try")?;
-                    let on_event: LuaFunction = core.get("on_event")?;
                     let result: LuaMultiValue =
-                        try_fn.call((on_event, LuaMultiValue::from_vec(vals)))?;
+                        try_fn.call((on_event.clone(), LuaMultiValue::from_vec(vals)))?;
                     let result_vals: Vec<LuaValue> = result.into_vec();
                     if let Some(LuaValue::Boolean(true)) = result_vals.get(1) {
                         did_keymap = true;
@@ -3930,24 +3949,20 @@ fn register_event_handling(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                 core.set("redraw", true)?;
             }
 
+            // Get window size.
             let window: LuaValue = core.get("window")?;
-            let get_size: LuaFunction = match &window {
-                LuaValue::Table(t) => t.get("get_size")?,
-                LuaValue::UserData(ud) => ud.get("get_size")?,
+            let (width, height): (i64, i64) = match &window {
+                LuaValue::Table(t) => t.call_method("get_size", ())?,
+                LuaValue::UserData(ud) => ud.call_method("get_size", ())?,
                 _ => return Ok(LuaValue::Boolean(false)),
             };
-            let size_result: LuaMultiValue = get_size.call(window.clone())?;
-            let size_vals: Vec<LuaValue> = size_result.into_vec();
-            let width = size_vals.first().cloned().unwrap_or(LuaValue::Integer(0));
-            let height = size_vals.get(1).cloned().unwrap_or(LuaValue::Integer(0));
 
-            // Update.
+            // Update root view.
             let root_view: LuaTable = core.get("root_view")?;
             let size: LuaTable = root_view.get("size")?;
-            size.set("x", width.clone())?;
-            size.set("y", height.clone())?;
-            let update: LuaFunction = root_view.get("update")?;
-            update.call::<()>(root_view.clone())?;
+            size.set("x", width)?;
+            size.set("y", height)?;
+            root_view.call_method::<()>("update", ())?;
 
             let redraw: bool = core
                 .get::<LuaValue>("redraw")?
@@ -3961,17 +3976,10 @@ fn register_event_handling(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
             let close_unref: LuaFunction = core.get("_close_unreferenced_docs")?;
             close_unref.call::<()>(())?;
 
-            // Update window title.
+            // Update window title only if changed.
             let active_view: LuaValue = core.get("active_view")?;
-            let current_title: String = if let LuaValue::Table(ref av) = active_view {
-                let has_get_filename: LuaValue = av.get("get_filename")?;
-                let title_val: LuaValue = if has_get_filename != LuaValue::Nil {
-                    let gfn: LuaFunction = av.get("get_filename")?;
-                    gfn.call(av.clone())?
-                } else {
-                    let gn: LuaFunction = av.get("get_name")?;
-                    gn.call(av.clone())?
-                };
+            let current_title = if let LuaValue::Table(ref av) = active_view {
+                let title_val: LuaValue = av.call_method("get_name", ())?;
                 match title_val {
                     LuaValue::String(s) => {
                         let s = s.to_str()?.to_string();
@@ -3983,14 +3991,14 @@ fn register_event_handling(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                 String::new()
             };
 
-            let window_title: LuaValue = core.get("window_title")?;
-            let old_title = match window_title {
+            let old_title = match core.get::<LuaValue>("window_title")? {
                 LuaValue::String(s) => s.to_str()?.to_string(),
                 _ => String::new(),
             };
             if current_title != old_title {
                 let compose: LuaFunction = core.get("compose_window_title")?;
                 let new_title: String = compose.call(current_title.clone())?;
+                let system_t: LuaTable = lua.globals().get("system")?;
                 let set_title: LuaFunction = system_t.get("set_window_title")?;
                 set_title.call::<()>((window.clone(), new_title))?;
                 core.set("window_title", current_title)?;
@@ -4003,15 +4011,12 @@ fn register_event_handling(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
             let first_rect = lua.create_table()?;
             first_rect.set(1, 0)?;
             first_rect.set(2, 0)?;
-            first_rect.set(3, width.clone())?;
-            first_rect.set(4, height.clone())?;
+            first_rect.set(3, width)?;
+            first_rect.set(4, height)?;
             clip_stack.set(1, first_rect)?;
             let set_clip: LuaFunction = renderer.get("set_clip_rect")?;
-            let unpack: LuaFunction = table_mod.get("unpack")?;
-            let clip1: LuaTable = clip_stack.get(1)?;
-            set_clip.call::<()>(unpack.call::<LuaMultiValue>(clip1)?)?;
-            let draw: LuaFunction = root_view.get("draw")?;
-            draw.call::<()>(root_view)?;
+            set_clip.call::<()>((0, 0, width, height))?;
+            root_view.call_method::<()>("draw", ())?;
             let end_frame: LuaFunction = renderer.get("end_frame")?;
             end_frame.call::<()>(())?;
 
@@ -4274,10 +4279,6 @@ fn register_run_loop(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
             let core = get_core(lua)?;
             let system_t: LuaTable = lua.globals().get("system")?;
             let config: LuaTable = get_module(lua, "core.config")?;
-            let math_mod: LuaTable = lua.globals().get("math")?;
-            let math_min: LuaFunction = math_mod.get("min")?;
-            let math_max: LuaFunction = math_mod.get("max")?;
-            let math_ceil: LuaFunction = math_mod.get("ceil")?;
             let get_time: LuaFunction = system_t.get("get_time")?;
 
             let run_threads: LuaFunction = lua.registry_value(&run_threads_key)?;
@@ -4286,11 +4287,47 @@ fn register_run_loop(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
             let mut last_frame_time: Option<f64> = None;
             let mut run_threads_full: i64 = 0;
 
+            // Cache hot-path values to avoid repeated Lua lookups.
+            let step_fn: LuaFunction = core.get("step")?;
+            let fps: f64 = config.get("fps")?;
+            let blink_period: f64 = config.get("blink_period")?;
+            let wait_event_fn: LuaFunction = system_t.get("wait_event")?;
+            let has_focus_fn: LuaFunction = system_t.get("window_has_focus")?;
+            let window_val: LuaValue = core.get("window")?;
+            let frame_budget = 1.0 / fps - 0.002;
+            let frame_interval = 1.0 / fps;
+
             loop {
                 let frame_start: f64 = get_time.call(())?;
                 core.set("frame_start", frame_start)?;
 
-                let result: LuaMultiValue = run_threads.call(())?;
+                let mut did_redraw = false;
+                let mut did_step = false;
+
+                let redraw: bool = core
+                    .get::<LuaValue>("redraw")?
+                    .eq(&LuaValue::Boolean(true));
+                let force_draw = redraw
+                    && last_frame_time.is_some()
+                    && (frame_start - last_frame_time.unwrap_or(0.0)) > (1.0 / fps);
+
+                if force_draw || next_step.is_none() || frame_start >= next_step.unwrap_or(0.0) {
+                    let stepped: bool = step_fn.call(())?;
+                    if stepped {
+                        did_redraw = true;
+                        last_frame_time = Some(frame_start);
+                    }
+                    next_step = None;
+                    did_step = true;
+                }
+
+                // Run threads AFTER event processing — skip if frame budget exhausted.
+                let now_post_step: f64 = get_time.call(())?;
+                let result: LuaMultiValue = if now_post_step - frame_start < frame_budget {
+                    run_threads.call(())?
+                } else {
+                    LuaMultiValue::from_vec(vec![LuaValue::Number(0.0), LuaValue::Boolean(false)])
+                };
                 let rt_vals: Vec<LuaValue> = result.into_vec();
                 let time_to_wake: f64 = rt_vals.first().and_then(|v| match v {
                     LuaValue::Number(n) => Some(*n),
@@ -4303,29 +4340,6 @@ fn register_run_loop(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                     run_threads_full += 1;
                 }
 
-                let mut did_redraw = false;
-                let mut did_step = false;
-                let fps: f64 = config.get("fps")?;
-
-                let redraw: bool = core
-                    .get::<LuaValue>("redraw")?
-                    .eq(&LuaValue::Boolean(true));
-                let force_draw = redraw
-                    && last_frame_time.is_some()
-                    && (frame_start - last_frame_time.unwrap_or(0.0)) > (1.0 / fps);
-
-                let now: f64 = get_time.call(())?;
-                if force_draw || next_step.is_none() || now >= next_step.unwrap_or(0.0) {
-                    let step: LuaFunction = core.get("step")?;
-                    let stepped: bool = step.call(())?;
-                    if stepped {
-                        did_redraw = true;
-                        last_frame_time = Some(frame_start);
-                    }
-                    next_step = None;
-                    did_step = true;
-                }
-
                 let restart: LuaValue = core.get("restart_request")?;
                 let quit: LuaValue = core.get("quit_request")?;
                 if restart == LuaValue::Boolean(true) || quit == LuaValue::Boolean(true) {
@@ -4333,45 +4347,40 @@ fn register_run_loop(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                 }
 
                 if !did_redraw {
-                    let has_focus: LuaFunction = system_t.get("window_has_focus")?;
-                    let window: LuaValue = core.get("window")?;
-                    let focused: bool = has_focus.call(window.clone())?;
+                    let focused: bool = has_focus_fn.call(window_val.clone())?;
 
                     if focused || !did_step || run_threads_full < 2 {
                         let now2: f64 = get_time.call(())?;
                         if next_step.is_none() {
                             let blink_start: f64 = core.get("blink_start")?;
-                            let blink_period: f64 = config.get("blink_period")?;
                             let t = now2 - blink_start;
                             let h = blink_period / 2.0;
-                            let dt: f64 =
-                                math_ceil.call::<f64>(t / h)? * h - t;
-                            let cursor_time = dt + 1.0 / fps;
+                            let dt = (t / h).ceil() * h - t;
+                            let cursor_time = dt + frame_interval;
                             next_step = Some(now2 + cursor_time);
                         }
-                        let wait_event: LuaFunction = system_t.get("wait_event")?;
-                        let wait_time: f64 =
-                            math_min.call((next_step.unwrap_or(0.0) - now2, time_to_wake))?;
-                        let got_event: bool = wait_event.call(wait_time)?;
+                        let wait_time = (next_step.unwrap_or(0.0) - now2).min(time_to_wake);
+                        let got_event: bool = wait_event_fn.call(wait_time)?;
                         if got_event {
                             next_step = None;
                         }
                     } else {
-                        let wait_event: LuaFunction = system_t.get("wait_event")?;
-                        wait_event.call::<()>(())?;
+                        wait_event_fn.call::<()>(())?;
                         next_step = None;
                     }
                 } else {
                     run_threads_full = 0;
                     let now3: f64 = get_time.call(())?;
                     let elapsed = now3 - frame_start;
-                    let next_frame: f64 = math_max.call((0.0, 1.0 / fps - elapsed))?;
-                    if next_step.is_none() {
-                        next_step = Some(now3 + next_frame);
+                    let next_frame = (frame_interval - elapsed).max(0.0);
+                    next_step = next_step.or(Some(now3 + next_frame));
+                    if next_frame > 0.001 {
+                        let wait_time = next_frame.min(time_to_wake);
+                        let got_event: bool = wait_event_fn.call(wait_time)?;
+                        if got_event {
+                            next_step = None;
+                        }
                     }
-                    let sleep: LuaFunction = system_t.get("sleep")?;
-                    let sleep_time: f64 = math_min.call((next_frame, time_to_wake))?;
-                    sleep.call::<()>(sleep_time)?;
                 }
             }
             Ok(())

@@ -4,6 +4,13 @@ use parking_lot::Mutex;
 use pcre2::bytes::Regex;
 use std::collections::HashMap;
 use std::fs;
+use std::time::Instant;
+
+static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
+
+fn now_secs() -> f64 {
+    START_TIME.elapsed().as_secs_f64()
+}
 
 #[derive(Clone)]
 struct EditRecord {
@@ -24,7 +31,12 @@ struct BufferState {
     crlf: bool,
     /// Cached content signature and the change_id it was computed at.
     sig_cache: (i64, u32),
+    /// Tracks last edit for undo merging: (timestamp, line, col, was_insert, was_single_char).
+    last_edit: Option<(f64, usize, usize, bool, bool)>,
 }
+
+/// Max seconds between edits to merge them into one undo entry.
+const UNDO_MERGE_TIMEOUT: f64 = 1.0;
 
 static BUFFERS: Lazy<Mutex<HashMap<u64, BufferState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static NEXT_BUFFER_ID: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(1));
@@ -47,6 +59,7 @@ fn default_buffer_state() -> BufferState {
         change_id: 1,
         crlf: false,
         sig_cache: (1, sig),
+        last_edit: None,
     }
 }
 
@@ -784,31 +797,80 @@ fn apply_record_to_state(state: &mut BufferState, packed: &[u8], push_redo: bool
         clamp_history(&mut state.undo);
         state.change_id += 1;
     }
+    state.last_edit = None;
     Ok(())
 }
 
 fn apply_insert_to_buffer(state: &mut BufferState, line: usize, col: usize, text: &str) -> isize {
     let (line, col) = normalize_position(&state.lines, line, col);
-    let selection_restore = state.selections.clone();
+    let now = now_secs();
+    let is_single = text.len() == 1 && text != "\n";
     let before_len = state.lines.len() as isize;
-    apply_insert_internal(&mut state.lines, &mut state.selections, line, col, text);
-    sanitize_selections(&state.lines, &mut state.selections);
-    let (line2, col2) = position_offset(&state.lines, line, col, text.len() as isize);
-    state.undo.push(pack_record(
-        &selection_restore,
-        &[EditRecord {
-            kind: b'r',
-            line1: line,
-            col1: col,
-            line2,
-            col2,
-            text: String::new(),
-        }],
-    ));
+
+    // Check if we can merge with the previous undo entry.
+    let can_merge = is_single
+        && state.last_edit.is_some_and(|(t, l, c, was_insert, was_single)| {
+            was_insert && was_single && l == line && c == col && (now - t) < UNDO_MERGE_TIMEOUT
+        })
+        && !state.undo.is_empty();
+
+    let selection_restore = if can_merge {
+        // Merge: pop the last undo entry, extract its original selection restore,
+        // and extend its removal range to cover the new character too.
+        let prev = state.undo.pop().unwrap();
+        let (prev_sel, prev_edits) = unpack_record(&prev).unwrap_or_default();
+        apply_insert_internal(&mut state.lines, &mut state.selections, line, col, text);
+        sanitize_selections(&state.lines, &mut state.selections);
+        let (line2, col2) = if let Some(e) = prev_edits.first() {
+            // The previous removal range started at (e.line1, e.col1) and ended at (e.line2, e.col2).
+            // Extend the end by the new character.
+            position_offset(&state.lines, e.line1, e.col1, (col - e.col1 + text.len()) as isize)
+        } else {
+            position_offset(&state.lines, line, col, text.len() as isize)
+        };
+        let start_line = prev_edits.first().map(|e| e.line1).unwrap_or(line);
+        let start_col = prev_edits.first().map(|e| e.col1).unwrap_or(col);
+        state.undo.push(pack_record(
+            &prev_sel,
+            &[EditRecord {
+                kind: b'r',
+                line1: start_line,
+                col1: start_col,
+                line2,
+                col2,
+                text: String::new(),
+            }],
+        ));
+        prev_sel
+    } else {
+        let selection_restore = state.selections.clone();
+        apply_insert_internal(&mut state.lines, &mut state.selections, line, col, text);
+        sanitize_selections(&state.lines, &mut state.selections);
+        let (line2, col2) = position_offset(&state.lines, line, col, text.len() as isize);
+        state.undo.push(pack_record(
+            &selection_restore,
+            &[EditRecord {
+                kind: b'r',
+                line1: line,
+                col1: col,
+                line2,
+                col2,
+                text: String::new(),
+            }],
+        ));
+        selection_restore
+    };
+    let _ = selection_restore;
+
     clamp_history(&mut state.undo);
     state.redo.clear();
     state.redo.shrink_to_fit();
     state.change_id += 1;
+
+    // Track this edit for future merging.
+    let end_col = col + text.len();
+    state.last_edit = Some((now, line, end_col, true, is_single));
+
     state.lines.len() as isize - before_len
 }
 
@@ -847,6 +909,8 @@ fn apply_remove_to_buffer(
     state.redo.clear();
     state.redo.shrink_to_fit();
     state.change_id += 1;
+    // Deletes break the insert merge chain.
+    state.last_edit = None;
     state.lines.len() as isize - before_len
 }
 
@@ -904,6 +968,7 @@ fn apply_edits_to_buffer(state: &mut BufferState, edits: LuaTable) -> LuaResult<
     state.redo.clear();
     state.redo.shrink_to_fit();
     state.change_id += 1;
+    state.last_edit = None;
     Ok(state.lines.len() as isize - before_len)
 }
 
