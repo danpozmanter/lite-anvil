@@ -60,7 +60,7 @@ fn multiline_selection_ranges(
     for (idx, line1, col1, mut line2, mut col2) in selection_ranges(doc, sort, false)? {
         if line2 > line1 && col2 == 1 {
             line2 -= 1;
-            col2 = lines.get::<String>(line2)?.len();
+            col2 = lines.get::<Option<String>>(line2)?.map(|s| s.len()).unwrap_or(1);
         }
         out.push((idx, line1, col1, line2, col2));
     }
@@ -1011,7 +1011,7 @@ fn register_commands(lua: &Lua) -> LuaResult<()> {
                 if line1 == line2 && col1 == col2 {
                     let lines: LuaTable = doc.get("lines")?;
                     col1 = 1;
-                    col2 = lines.get::<String>(line2)?.len();
+                    col2 = lines.get::<Option<String>>(line2)?.map(|s| s.len()).unwrap_or(1);
                 }
 
                 let (l1, c1, l2, c2) = block_comment(&doc, comment, line1, col1, line2, col2)?;

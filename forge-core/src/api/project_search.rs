@@ -570,7 +570,9 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
                     continue;
                 }
                 if opts.backup_originals {
-                    let _ = fs::write(format!("{file}.bak"), &content);
+                    if let Err(e) = fs::write(format!("{file}.bak"), &content) {
+                        log::warn!("failed to write backup {file}.bak: {e}");
+                    }
                 }
                 fs::write(path, new_content).map_err(|e| LuaError::RuntimeError(e.to_string()))?;
                 replaced_count += count;
@@ -626,7 +628,9 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
                         continue;
                     }
                     if opts.backup_originals {
-                        let _ = fs::write(format!("{file}.bak"), &content);
+                        if let Err(e) = fs::write(format!("{file}.bak"), &content) {
+                        log::warn!("failed to write backup {file}.bak: {e}");
+                    }
                     }
                     if let Err(err) = fs::write(path, new_content) {
                         let _ = tx.send(ReplaceMsg::Error(err.to_string()));

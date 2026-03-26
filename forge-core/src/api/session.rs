@@ -1,7 +1,21 @@
 use mlua::prelude::*;
 use serde_json::{Map, Number, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+/// Write content to a temporary file, flush, then rename over the target.
+fn write_atomic(path: &Path, content: &str) -> LuaResult<()> {
+    let tmp = path.with_extension("tmp");
+    let mut f =
+        fs::File::create(&tmp).map_err(|e| LuaError::RuntimeError(e.to_string()))?;
+    f.write_all(content.as_bytes())
+        .map_err(|e| LuaError::RuntimeError(e.to_string()))?;
+    f.sync_all()
+        .map_err(|e| LuaError::RuntimeError(e.to_string()))?;
+    fs::rename(&tmp, path).map_err(|e| LuaError::RuntimeError(e.to_string()))?;
+    Ok(())
+}
 
 fn user_dir(lua: &Lua) -> LuaResult<PathBuf> {
     let globals = lua.globals();
@@ -174,8 +188,7 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
             let json = table_to_json(session)?;
             let content = serde_json::to_string_pretty(&json)
                 .map_err(|err| LuaError::RuntimeError(err.to_string()))?;
-            fs::write(session_path(&base), content)
-                .map_err(|err| LuaError::RuntimeError(err.to_string()))?;
+            write_atomic(&session_path(&base), &content)?;
             Ok(true)
         })?,
     )?;

@@ -1,5 +1,14 @@
 # Change Log
 
+## [0.20.0] - 2026-03-25 — Stability hardening for 1.0.
+* Atomic file writes for doc save and session save (write to .tmp, fsync, rename). Prevents data corruption on power loss or crash mid-write.
+* Guard undo merge stack pop against empty stack.
+* Safe defaults for terminal view property access (nil → 0.0 instead of crash).
+* Safe hex color parsing in terminal (malformed escape sequences → 0 instead of panic).
+* Bounds-safe line content extraction in doc commands.
+* Fix Lua truthiness check in selection sort (`doc_module.rs:665`) — same class of bug as the v0.19.5 `get_selections` fix.
+* Log backup file write failures in project replace instead of silently ignoring.
+
 ## [0.19.6] - 2026-03-25 — Undo grouping and input latency improvements.
 * Consecutive single-character inserts (typing/key repeat) merge into a single undo entry. A new undo group starts on: pause >1s, newline, delete, cursor movement, or batch edit. Holding a key then pressing Ctrl+Z undoes the entire run at once.
 * Reduced per-frame overhead: cached `core.try`'s error handler and `xpcall` (previously recreated every event), cached `poll_event`/`renderer` via named registry slots, replaced Lua `math.min/max/ceil` with native Rust in the run loop, cached `fps`/`blink_period`/`wait_event`/`has_focus` outside the loop.

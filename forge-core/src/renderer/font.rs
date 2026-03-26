@@ -215,10 +215,10 @@ impl FontInner {
                 self.glyphs.clear();
                 self.glyphs.shrink_to_fit();
             }
-            let info = self.load_glyph(codepoint);
-            self.glyphs.insert(codepoint, info);
+            self.glyphs.insert(codepoint, self.load_glyph(codepoint));
         }
-        self.glyphs.get(&codepoint).unwrap()
+        // SAFETY: insert above guarantees the key exists.
+        &self.glyphs[&codepoint]
     }
 
     fn load_glyph(&self, codepoint: u32) -> GlyphInfo {

@@ -662,7 +662,7 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                         let line2: LuaValue = sels.raw_get(idx * 4 - 1)?;
                         let col2: LuaValue = sels.raw_get(idx * 4)?;
                         if !matches!(line1, LuaValue::Nil)
-                            && matches!(sort, LuaValue::Boolean(true))
+                            && !matches!(sort, LuaValue::Nil | LuaValue::Boolean(false))
                         {
                             let (sl1, sc1, sl2, sc2, swap) = sort_positions(
                                 lua_to_i64(&line1),

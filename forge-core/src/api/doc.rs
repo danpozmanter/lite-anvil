@@ -814,10 +814,8 @@ fn apply_insert_to_buffer(state: &mut BufferState, line: usize, col: usize, text
         })
         && !state.undo.is_empty();
 
-    let selection_restore = if can_merge {
-        // Merge: pop the last undo entry, extract its original selection restore,
-        // and extend its removal range to cover the new character too.
-        let prev = state.undo.pop().unwrap();
+    let selection_restore = if can_merge && !state.undo.is_empty() {
+        let prev = state.undo.pop().unwrap_or_default();
         let (prev_sel, prev_edits) = unpack_record(&prev).unwrap_or_default();
         apply_insert_internal(&mut state.lines, &mut state.selections, line, col, text);
         sanitize_selections(&state.lines, &mut state.selections);
@@ -1008,15 +1006,21 @@ fn load_file_into_state(state: &mut BufferState, filename: &str) -> LuaResult<()
 }
 
 fn save_state_to_file(state: &BufferState, filename: &str, crlf: bool) -> LuaResult<()> {
-    let mut text = String::new();
+    use std::io::Write;
+    let path = std::path::Path::new(filename);
+    let tmp = path.with_extension("tmp");
+    let mut f = fs::File::create(&tmp)
+        .map_err(|e| LuaError::RuntimeError(e.to_string()))?;
     for line in &state.lines {
         if crlf {
-            text.push_str(&line.replace('\n', "\r\n"));
+            f.write_all(line.replace('\n', "\r\n").as_bytes())
         } else {
-            text.push_str(line);
+            f.write_all(line.as_bytes())
         }
+        .map_err(|e| LuaError::RuntimeError(e.to_string()))?;
     }
-    fs::write(filename, text).map_err(|e| LuaError::RuntimeError(e.to_string()))
+    f.sync_all().map_err(|e| LuaError::RuntimeError(e.to_string()))?;
+    fs::rename(&tmp, path).map_err(|e| LuaError::RuntimeError(e.to_string()))
 }
 
 pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {

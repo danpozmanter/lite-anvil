@@ -272,7 +272,7 @@ fn scroll_to_bottom(view: &LuaTable, force: bool) -> LuaResult<()> {
         scrollable.call(view.clone())?
     };
     let size: LuaTable = view.get("size")?;
-    let target = (scrollable_size - size.get::<f64>("y")?).max(0.0);
+    let target = (scrollable_size - size.get::<f64>("y").unwrap_or(0.0)).max(0.0);
     let scroll: LuaTable = view.get("scroll")?;
     let to: LuaTable = scroll.get("to")?;
     to.set("y", target)?;
@@ -290,9 +290,9 @@ fn get_dimensions(lua: &Lua, view: &LuaTable) -> LuaResult<(i64, i64)> {
     let size: LuaTable = view.get("size")?;
     let char_w: f64 = get_char_width.call(view.clone())?;
     let line_h: f64 = get_line_height.call(view.clone())?;
-    let cols = (((size.get::<f64>("x")? - padding.get::<f64>("x")? * 2.0) / char_w).floor() as i64)
+    let cols = (((size.get::<f64>("x").unwrap_or(0.0) - padding.get::<f64>("x").unwrap_or(0.0) * 2.0) / char_w).floor() as i64)
         .max(1);
-    let rows = (((size.get::<f64>("y")? - padding.get::<f64>("y")? * 2.0) / line_h).floor() as i64)
+    let rows = (((size.get::<f64>("y").unwrap_or(0.0) - padding.get::<f64>("y").unwrap_or(0.0) * 2.0) / line_h).floor() as i64)
         .max(1);
     Ok((cols, rows))
 }
@@ -588,8 +588,8 @@ fn update(lua: &Lua, view: LuaTable) -> LuaResult<()> {
     let size: LuaTable = view.get("size")?;
     if view.get::<Option<LuaAnyUserData>>("handle")?.is_none()
         && view.get::<Option<LuaTable>>("pending_command")?.is_some()
-        && size.get::<f64>("x")? > 0.0
-        && size.get::<f64>("y")? > 0.0
+        && size.get::<f64>("x").unwrap_or(0.0) > 0.0
+        && size.get::<f64>("y").unwrap_or(0.0) > 0.0
     {
         view.set("last_dimensions", dim_key.clone())?;
         resize_screen(&view, cols, rows)?;
@@ -611,8 +611,8 @@ fn update(lua: &Lua, view: LuaTable) -> LuaResult<()> {
     let line_height: f64 = get_line_height.call(view.clone())?;
     let scroll: LuaTable = view.get("scroll")?;
     let to: LuaTable = scroll.get("to")?;
-    let at_bottom = to.get::<f64>("y")?
-        >= (scrollable_size - size.get::<f64>("y")? - line_height).max(0.0);
+    let at_bottom = to.get::<f64>("y").unwrap_or(0.0)
+        >= (scrollable_size - size.get::<f64>("y").unwrap_or(0.0) - line_height).max(0.0);
 
     if let Some(handle) = view.get::<Option<LuaAnyUserData>>("handle")? {
         for _ in 0..256 {
@@ -721,15 +721,15 @@ fn draw_cursor(lua: &Lua, view: LuaTable) -> LuaResult<()> {
     let size: LuaTable = view.get("size")?;
     let scroll: LuaTable = view.get("scroll")?;
     let row_index = cursor.get::<i64>("history")? + cursor.get::<i64>("row")?;
-    let y = position.get::<f64>("y")?
-        + padding.get::<f64>("y")?
+    let y = position.get::<f64>("y").unwrap_or(0.0)
+        + padding.get::<f64>("y").unwrap_or(0.0)
         + (row_index as f64 - 1.0) * line_height
-        - scroll.get::<f64>("y")?;
-    if y + line_height < position.get::<f64>("y")? || y > position.get::<f64>("y")? + size.get::<f64>("y")? {
+        - scroll.get::<f64>("y").unwrap_or(0.0);
+    if y + line_height < position.get::<f64>("y").unwrap_or(0.0) || y > position.get::<f64>("y").unwrap_or(0.0) + size.get::<f64>("y").unwrap_or(0.0) {
         return Ok(());
     }
-    let x = position.get::<f64>("x")?
-        + padding.get::<f64>("x")?
+    let x = position.get::<f64>("x").unwrap_or(0.0)
+        + padding.get::<f64>("x").unwrap_or(0.0)
         + (cursor.get::<i64>("col")? as f64 - 1.0) * char_width;
     let renderer = require_table(lua, "renderer")?;
     let draw_rect: LuaFunction = renderer.get("draw_rect")?;
@@ -1288,7 +1288,7 @@ mod tests {
             "color",
             lua.create_function(|_, hex: String| {
                 let hex = hex.trim_start_matches('#');
-                let bytes = |s: &str| i64::from_str_radix(s, 16).unwrap();
+                let bytes = |s: &str| i64::from_str_radix(s, 16).unwrap_or(0);
                 let (r, g, b, a) = match hex.len() {
                     6 => (bytes(&hex[0..2]), bytes(&hex[2..4]), bytes(&hex[4..6]), 255),
                     8 => (bytes(&hex[0..2]), bytes(&hex[2..4]), bytes(&hex[4..6]), bytes(&hex[6..8])),
