@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.0.4] - 2026-03-27 — Fix command view typeahead completing on multiple suggestions.
+
+* Fix typeahead completing full word on single character when multiple suggestions exist. Typeahead now only fires when exactly one suggestion matches.
+
 ## [1.0.3] - 2026-03-27 — Fix persistent undo for saved files, fix active tab persistence.
 
 * Fix persistent undo not working for saved (clean) files. Undo history was only persisted for unsaved documents, clean files lost their undo stacks on restart.

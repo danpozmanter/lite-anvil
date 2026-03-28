@@ -629,6 +629,7 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                         let typeahead: bool = state.get::<LuaValue>("typeahead")?.as_boolean().unwrap_or(true);
                         if typeahead {
                             let suggestions: LuaTable = this.get("suggestions")?;
+                            let count = suggestions.raw_len() as i64;
                             let idx: i64 = this.get("suggestion_idx")?;
                             let item: LuaValue = suggestions.raw_get(idx)?;
                             if let LuaValue::Table(ref item_tbl) = item {
@@ -636,7 +637,7 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                                 let suggested: String = item_tbl.get::<LuaValue>("text")?.as_string().and_then(|s| s.to_str().ok()).map(|s| s.to_string()).unwrap_or_default();
                                 let last_text: String = this.get("last_text")?;
                                 let ends_with_sep = current_text.ends_with('/') || current_text.ends_with('\\');
-                                if last_text.len() < current_text.len() && current_text.starts_with(&last_text) && suggested.starts_with(&current_text) && !ends_with_sep {
+                                if count == 1 && last_text.len() < current_text.len() && current_text.starts_with(&last_text) && suggested.starts_with(&current_text) && !ends_with_sep {
                                     this.call_method::<()>("set_text", suggested)?;
                                     let ct_len = current_text.len() as i64;
                                     doc.call_method::<()>("set_selection", (1, ct_len + 1, 1, f64::INFINITY))?;
