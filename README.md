@@ -16,8 +16,8 @@ I do not intend to maintain or support this in any way, but wanted to share the 
 
 ## Features
 
-- **99.9% native Rust** — all core modules, views, commands, and bundled plugins are pure Rust via mlua. Only 72 lines of Lua bootstrap remain (the VM entry point). User plugins and config are Lua.
-- **Built-in LSP** with diagnostics, inline diagnostics, semantic highlighting, completion, hover, go-to-definition, references, rename, symbols, code actions, formatting, and signature help
+- **Mostly native Rust** — all core modules, views, commands, and bundled plugins are pure Rust via mlua. User plugins and config are Lua
+- **Built-in LSP** with diagnostics, inline diagnostics, semantic highlighting, completion, hover, go-to-definition, references, rename, symbols, code actions, formatting, snippets, and signature help
 - **Embedded PTY terminal** with ANSI colors, scrollback, color schemes, and configurable placement
 - **Project-wide search, replace, and swap** plus native single-file find and replace
 - **Git integration** — branch/status in UI, tree highlighting, status view, diff views
