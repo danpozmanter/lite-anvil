@@ -1,6 +1,8 @@
 use mlua::prelude::*;
 use serde_json::Value as JsonValue;
 
+use super::terminal_view::walk_nodes;
+
 fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     let require: LuaFunction = lua.globals().get("require")?;
     require.call(name)
@@ -224,6 +226,69 @@ fn open_terminal(
     Ok(())
 }
 
+/// Returns `true` if the given view is a TerminalView.
+fn is_terminal_view(view: &LuaTable) -> LuaResult<bool> {
+    match view.get::<Option<LuaFunction>>("__tostring")? {
+        Some(f) => Ok(f.call::<String>(view.clone())? == "TerminalView"),
+        None => Ok(false),
+    }
+}
+
+/// Switches to the terminal tab at the given offset (+1 or -1) from the active terminal
+/// within the same node.
+fn switch_terminal_tab(lua: &Lua, offset: i64) -> LuaResult<()> {
+    let core = require_table(lua, "core")?;
+    let view: LuaTable = match core.get::<Option<LuaTable>>("active_view")? {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+    if !is_terminal_view(&view)? {
+        return Ok(());
+    }
+    let root_view: LuaTable = core.get("root_view")?;
+    let root_node: LuaTable = root_view.get("root_node")?;
+    let node: LuaTable = match root_node.call_method("get_node_for_view", view.clone())? {
+        Some(n) => n,
+        None => return Ok(()),
+    };
+    let views: LuaTable = node.get("views")?;
+    let len = views.raw_len() as i64;
+    let cur_idx: i64 = match node.call_method::<LuaValue>("get_view_idx", view)? {
+        LuaValue::Integer(i) => i,
+        _ => return Ok(()),
+    };
+    let next = ((cur_idx - 1 + offset).rem_euclid(len)) + 1;
+    let next_view: LuaValue = views.raw_get(next)?;
+    node.call_method::<()>("set_active_view", next_view)?;
+    Ok(())
+}
+
+/// Switches to the Nth view (1-based) in the same node as the active terminal.
+fn switch_terminal_tab_n(lua: &Lua, n: i64) -> LuaResult<()> {
+    let core = require_table(lua, "core")?;
+    let view: LuaTable = match core.get::<Option<LuaTable>>("active_view")? {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+    if !is_terminal_view(&view)? {
+        return Ok(());
+    }
+    let root_view: LuaTable = core.get("root_view")?;
+    let root_node: LuaTable = root_view.get("root_node")?;
+    let node: LuaTable = match root_node.call_method("get_node_for_view", view)? {
+        Some(nd) => nd,
+        None => return Ok(()),
+    };
+    let views: LuaTable = node.get("views")?;
+    let len = views.raw_len() as i64;
+    if n < 1 || n > len {
+        return Ok(());
+    }
+    let target: LuaValue = views.raw_get(n)?;
+    node.call_method::<()>("set_active_view", target)?;
+    Ok(())
+}
+
 fn register_commands(lua: &Lua, terminal_view_key: &LuaRegistryKey) -> LuaResult<()> {
     let command = require_table(lua, "core.command")?;
     let cmds = lua.create_table()?;
@@ -322,11 +387,77 @@ fn register_commands(lua: &Lua, terminal_view_key: &LuaRegistryKey) -> LuaResult
         )?;
     }
 
+    cmds.set(
+        "terminal:next-tab",
+        lua.create_function(|lua, ()| switch_terminal_tab(lua, 1))?,
+    )?;
+    cmds.set(
+        "terminal:previous-tab",
+        lua.create_function(|lua, ()| switch_terminal_tab(lua, -1))?,
+    )?;
+    for n in 1..=9i64 {
+        cmds.set(
+            format!("terminal:tab-{n}"),
+            lua.create_function(move |lua, ()| switch_terminal_tab_n(lua, n))?,
+        )?;
+    }
+    cmds.set(
+        "terminal:list",
+        lua.create_function(|lua, ()| {
+            let core = require_table(lua, "core")?;
+            let root_view: LuaTable = core.get("root_view")?;
+            let root_node: LuaTable = root_view.get("root_node")?;
+            let items = lua.create_table()?;
+            walk_nodes(&root_node, &mut |node| {
+                let ntype: String = node.get("type")?;
+                if ntype != "leaf" {
+                    return Ok(false);
+                }
+                let views: LuaTable = node.get("views")?;
+                for i in 1..=views.raw_len() as i64 {
+                    let v: LuaTable = views.raw_get(i)?;
+                    if is_terminal_view(&v)? {
+                        let name: String = v.call_method("get_name", ())?;
+                        let cwd: String =
+                            v.get::<Option<String>>("cwd")?.unwrap_or_default();
+                        let item = lua.create_table()?;
+                        item.set("text", name)?;
+                        item.set("info", cwd)?;
+                        item.set("view", v)?;
+                        items.raw_set(items.raw_len() + 1, item)?;
+                    }
+                }
+                Ok(false)
+            })?;
+            if items.raw_len() == 0 {
+                return Ok(());
+            }
+            let command_view: LuaTable = core.get("command_view")?;
+            let opts = lua.create_table()?;
+            opts.set(
+                "submit",
+                lua.create_function(|lua, item: LuaTable| {
+                    let view: LuaTable = item.get("view")?;
+                    let core = require_table(lua, "core")?;
+                    let set_active: LuaFunction = core.get("set_active_view")?;
+                    set_active.call::<()>(view)
+                })?,
+            )?;
+            command_view.call_method::<()>("enter", ("Terminal List", opts, items))
+        })?,
+    )?;
+
     command.call_function::<()>("add", (LuaValue::Nil, cmds))?;
 
     let keymap = require_table(lua, "core.keymap")?;
     let bindings = lua.create_table()?;
     bindings.set("ctrl+shift+t", "terminal:new")?;
+    bindings.set("ctrl+alt+right", "terminal:next-tab")?;
+    bindings.set("ctrl+alt+left", "terminal:previous-tab")?;
+    bindings.set("ctrl+alt+t", "terminal:list")?;
+    for n in 1..=9i64 {
+        bindings.set(format!("ctrl+alt+{n}"), format!("terminal:tab-{n}"))?;
+    }
     keymap.call_function::<()>("add", bindings)?;
 
     Ok(())

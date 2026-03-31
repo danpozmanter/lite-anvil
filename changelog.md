@@ -1,5 +1,17 @@
 # Change Log
 
+## [1.3.0] - 2026-03-31 — Multi-tab terminal, breadcrumbs, LSP hierarchy, test runner, and file watching.
+
+* Multi-tab terminal: navigate between terminal tabs with Ctrl+Alt+Left/Right, jump by number with Ctrl+Alt+1-9, and list all terminals with Ctrl+Alt+T.
+* Breadcrumbs/scope bar: displays file path segments and current code scope (from LSP document symbols) between the tab bar and editor content.
+* LSP call hierarchy
+* LSP type hierarchy
+* Some LSP navigation items added to the right-click context menu.
+* Native file watcher auto-refresh for immediate external-change detection.
+* Integrated test runner: auto-detects cargo, pytest/unittest, go, gradle/mvn, dotnet, npm/vitest/jest, and make.
+* Dividers for the context menu.
+* Fix cursor navigation bug.
+
 ## [1.2.1] - 2026-03-30 — Diagnostics improvements.
 
 * Diagnostic tooltip width increased for readability.

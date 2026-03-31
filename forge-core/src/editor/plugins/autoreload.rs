@@ -22,6 +22,7 @@ fn create_state_table(lua: &Lua) -> LuaResult<LuaTable> {
     state.set("times", make_weak(lua)?)?;
     state.set("visible", make_weak(lua)?)?;
     state.set("timers", make_weak(lua)?)?;
+    state.set("watched_dirs", lua.create_table()?)?;
 
     let dirwatch = require_table(lua, "core.dirwatch")?;
     let watch: LuaTable = dirwatch.call_function("new", ())?;
@@ -230,6 +231,42 @@ fn lua_values_equal(a: &LuaValue, b: &LuaValue) -> bool {
     }
 }
 
+fn watch_directory(lua: &Lua, state: &LuaTable, path: &str) -> LuaResult<()> {
+    let common = require_table(lua, "core.common")?;
+    let dirname: LuaFunction = common.get("dirname")?;
+    let dir: String = dirname.call(path.to_owned())?;
+    if dir.is_empty() {
+        return Ok(());
+    }
+    let watched_dirs: LuaTable = state.get("watched_dirs")?;
+    let count: i64 = watched_dirs.get::<Option<i64>>(dir.as_str())?.unwrap_or(0);
+    if count == 0 {
+        let watch: LuaTable = state.get("watch")?;
+        watch.call_method::<()>("watch", dir.clone())?;
+    }
+    watched_dirs.set(dir, count + 1)?;
+    Ok(())
+}
+
+fn unwatch_directory(lua: &Lua, state: &LuaTable, path: &str) -> LuaResult<()> {
+    let common = require_table(lua, "core.common")?;
+    let dirname: LuaFunction = common.get("dirname")?;
+    let dir: String = dirname.call(path.to_owned())?;
+    if dir.is_empty() {
+        return Ok(());
+    }
+    let watched_dirs: LuaTable = state.get("watched_dirs")?;
+    let count: i64 = watched_dirs.get::<Option<i64>>(dir.as_str())?.unwrap_or(0);
+    if count <= 1 {
+        let watch: LuaTable = state.get("watch")?;
+        watch.call_method::<()>("unwatch", dir.clone())?;
+        watched_dirs.set(dir, LuaValue::Nil)?;
+    } else {
+        watched_dirs.set(dir, count - 1)?;
+    }
+    Ok(())
+}
+
 fn doc_changes_visibility(
     lua: &Lua,
     doc: Option<LuaTable>,
@@ -259,8 +296,18 @@ fn doc_changes_visibility(
     if visibility {
         check_prompt_reload(lua, &doc, state_key)?;
     }
+    // Always keep the native watch active for open files; only toggle visibility
+    // tracking so prompts are deferred until the user switches back.
     let watch: LuaTable = state.get("watch")?;
-    watch.call_method::<()>("watch", (path, visibility))?;
+    let already_watched: bool = {
+        let native_watches: LuaTable = watch.get("native_watches")?;
+        let existing: LuaValue = native_watches.get(path.as_str())?;
+        !matches!(existing, LuaValue::Nil)
+    };
+    if !already_watched {
+        watch.call_method::<()>("watch", path.clone())?;
+        watch_directory(lua, state, &path)?;
+    }
     Ok(())
 }
 
@@ -284,14 +331,20 @@ fn start_background_thread(lua: &Lua, state_key: Arc<LuaRegistryKey>) -> LuaResu
             let core = require_table(lua, "core")?;
             let docs: LuaTable = core.get("docs")?;
 
+            // Check if the changed path matches any open document directly,
+            // or if it is a directory containing open documents.
             for pair in docs.sequence_values::<LuaTable>() {
                 let doc = pair?;
                 let abs_filename: Option<String> = doc.get("abs_filename")?;
-                if abs_filename.as_deref() != Some(&file) {
+                let Some(ref doc_path) = abs_filename else {
+                    continue;
+                };
+                let matches = *doc_path == file || doc_path.starts_with(&format!("{}/", file));
+                if !matches {
                     continue;
                 }
                 let info: Option<LuaTable> =
-                    system.call_function("get_file_info", abs_filename.unwrap_or_default())?;
+                    system.call_function("get_file_info", doc_path.clone())?;
                 if let Some(info) = info {
                     let mtime: LuaValue = info.get("modified")?;
                     let cached: LuaValue = times.raw_get(doc.clone())?;
@@ -364,30 +417,28 @@ fn patch_node_set_active_view(lua: &Lua, state_key: Arc<LuaRegistryKey>) -> LuaR
             old.call::<()>((this, view.clone()))?;
             let doc: Option<LuaTable> = view.get("doc")?;
             doc_changes_visibility(lua, doc.clone(), true, &state, sk.clone())?;
-            // Persist active file (skip during exit teardown).
+            // Persist active file (skip during exit teardown and non-doc views).
             let core_t = require_table(lua, "core")?;
             let quitting = matches!(core_t.get::<LuaValue>("_exiting")?, LuaValue::Boolean(true));
             if !quitting {
-                let userdir: String = lua.globals().get("USERDIR")?;
-                let dir = std::path::PathBuf::from(&userdir)
-                    .join("storage")
-                    .join("session");
-                if let Err(e) = std::fs::create_dir_all(&dir) {
-                    log::warn!("failed to create session dir: {e}");
-                }
-                let content = if let Some(ref d) = doc {
-                    if let LuaValue::String(s) = d.get::<LuaValue>("abs_filename")? {
+                if let Some(ref d) = doc {
+                    let userdir: String = lua.globals().get("USERDIR")?;
+                    let dir = std::path::PathBuf::from(&userdir)
+                        .join("storage")
+                        .join("session");
+                    if let Err(e) = std::fs::create_dir_all(&dir) {
+                        log::warn!("failed to create session dir: {e}");
+                    }
+                    let content = if let LuaValue::String(s) =
+                        d.get::<LuaValue>("abs_filename")?
+                    {
                         format!("\"{}\"", s.to_str()?)
                     } else {
-                        // Unsaved file — clear so restore knows no saved
-                        // file was active.
                         String::new()
+                    };
+                    if let Err(e) = std::fs::write(dir.join("active_file"), &content) {
+                        log::warn!("failed to write active_file: {e}");
                     }
-                } else {
-                    String::new()
-                };
-                if let Err(e) = std::fs::write(dir.join("active_file"), &content) {
-                    log::warn!("failed to write active_file: {e}");
                 }
             }
             Ok(())
@@ -486,6 +537,33 @@ fn patch_doc_load_save(lua: &Lua, state_key: Arc<LuaRegistryKey>) -> LuaResult<(
     Ok(())
 }
 
+fn patch_doc_on_close(lua: &Lua, state_key: Arc<LuaRegistryKey>) -> LuaResult<()> {
+    let doc = require_table(lua, "core.doc")?;
+    let old_on_close: LuaFunction = doc.get("on_close")?;
+    let old_key = lua.create_registry_value(old_on_close)?;
+    let sk = state_key;
+
+    doc.set(
+        "on_close",
+        lua.create_function(move |lua, (this, args): (LuaTable, LuaMultiValue)| {
+            let state: LuaTable = lua.registry_value(&sk)?;
+            let abs_filename: Option<String> = this.get("abs_filename")?;
+            if let Some(ref path) = abs_filename {
+                let watch: LuaTable = state.get("watch")?;
+                watch.call_method::<()>("unwatch", path.clone())?;
+                unwatch_directory(lua, &state, path)?;
+            }
+            let old: LuaFunction = lua.registry_value(&old_key)?;
+            let mut call_args = LuaMultiValue::new();
+            call_args.push_back(LuaValue::Table(this));
+            call_args.extend(args);
+            old.call::<LuaMultiValue>(call_args)?;
+            Ok(())
+        })?,
+    )?;
+    Ok(())
+}
+
 /// Registers `plugins.autoreload`: file-watching via dirwatch with deferred reload prompts,
 /// visibility tracking, and focus-gain checks.
 pub fn register_preload(lua: &Lua) -> LuaResult<()> {
@@ -526,7 +604,8 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
             patch_core_set_active_view(lua, state_key.clone())?;
             patch_node_set_active_view(lua, state_key.clone())?;
             patch_rootview_on_focus_gained(lua, state_key.clone())?;
-            patch_doc_load_save(lua, state_key)?;
+            patch_doc_load_save(lua, state_key.clone())?;
+            patch_doc_on_close(lua, state_key)?;
 
             Ok(LuaValue::Boolean(true))
         })?,

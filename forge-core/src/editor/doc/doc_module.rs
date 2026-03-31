@@ -1278,16 +1278,18 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
             )?;
 
             // Doc:get_char(line, col)
+            // Returns the raw byte at the given position without snapping to a
+            // character boundary, so callers like next_char can detect UTF-8
+            // continuation bytes.
             doc.set(
                 "get_char",
                 lua.create_function(|lua, (this, line, col): (LuaTable, LuaValue, LuaValue)| {
                     this.call_method::<()>("ensure_loaded", ())?;
-                    let san: LuaMultiValue = this.call_method("sanitize_position", (line, col))?;
-                    let sv: Vec<LuaValue> = san.into_vec();
-                    let line_i = lua_to_i64(sv.first().unwrap_or(&LuaValue::Integer(1)));
-                    let col_i = lua_to_i64(sv.get(1).unwrap_or(&LuaValue::Integer(1)));
                     let lines: LuaTable = this.get("lines")?;
+                    let num_lines = lines.raw_len() as i64;
+                    let line_i = lua_to_i64(&line).max(1).min(num_lines.max(1));
                     let line_str: String = lines.raw_get(line_i)?;
+                    let col_i = lua_to_i64(&col).max(1).min((line_str.len() as i64).max(1));
                     let string_sub: LuaFunction =
                         lua.globals().get::<LuaTable>("string")?.get("sub")?;
                     string_sub.call::<LuaValue>((line_str, col_i, col_i))

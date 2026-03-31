@@ -206,7 +206,10 @@ fn position_offset(
     if lines.is_empty() {
         return (1, 1);
     }
-    (line, col) = sanitize_position(lines, line, col);
+    // Clamp to valid range without snapping to a UTF-8 character boundary.
+    // The translate layer (next_char/prev_char) handles character grouping.
+    line = line.clamp(1, lines.len());
+    col = col.clamp(1, lines[line - 1].len().max(1));
     while remaining != 0 {
         if remaining > 0 {
             if col < lines[line - 1].len() {
@@ -805,7 +808,9 @@ fn serialize_history(undo: &[Vec<u8>], redo: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
-fn deserialize_history(data: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+type HistoryPair = (Vec<Vec<u8>>, Vec<Vec<u8>>);
+
+fn deserialize_history(data: &[u8]) -> Option<HistoryPair> {
     if data.len() < 8 {
         return None;
     }

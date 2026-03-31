@@ -257,6 +257,7 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
             "autoreload",
             "autorestart",
             "bracketmatch",
+            "breadcrumbs",
             "detectindent",
             "drawwhitespace",
             "findfile",
@@ -275,6 +276,7 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
             "scale",
             "tabularize",
             "terminal",
+            "test_runner",
             "theme_toggle",
             "toolbarview",
             "trimwhitespace",
@@ -289,6 +291,8 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
     commands::commands_git::register_preload(lua)?;
     plugins::terminal_plugin::register_preload(lua)?;
     plugins::markdown_preview::register_preload(lua)?;
+    plugins::breadcrumbs::register_preload(lua)?;
+    plugins::test_runner::register_preload(lua)?;
     ui::node::register_preload(lua)?;
     ui::rootview::register_preload(lua)?;
     doc::doc_module::register_preload(lua)?;

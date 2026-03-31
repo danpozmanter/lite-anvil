@@ -2,10 +2,6 @@ use mlua::prelude::*;
 
 use std::sync::Arc;
 
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 fn require_table(lua: &Lua, name: &str) -> LuaResult<LuaTable> {
     let require: LuaFunction = lua.globals().get("require")?;
     require.call(name)
@@ -265,18 +261,6 @@ fn spawn(lua: &Lua, (view, command_argv): (LuaTable, LuaTable)) -> LuaResult<()>
     opts.set("rows", view.get::<LuaValue>("rows")?)?;
     match spawn_fn.call::<LuaAnyUserData>((command_argv, opts)) {
         Ok(handle) => {
-            if let Ok(LuaValue::String(cwd)) = view.get::<LuaValue>("cwd") {
-                if let Ok(cwd_str) = cwd.to_str() {
-                    if !cwd_str.is_empty() {
-                        let cwd_owned = cwd_str.to_owned();
-                        let cd_cmd = format!("cd {} && clear\n", shell_escape(&cwd_owned));
-                        let _ = handle.call_method::<LuaValue>(
-                            "write",
-                            lua.create_string(cd_cmd.as_bytes())?,
-                        );
-                    }
-                }
-            }
             view.set("handle", handle)?;
         }
         Err(err) => {
@@ -380,7 +364,7 @@ fn terminal_matches(
     Ok(true)
 }
 
-fn walk_nodes<F>(node: &LuaTable, f: &mut F) -> LuaResult<()>
+pub(crate) fn walk_nodes<F>(node: &LuaTable, f: &mut F) -> LuaResult<()>
 where
     F: FnMut(&LuaTable) -> LuaResult<bool>,
 {
@@ -724,7 +708,8 @@ fn update(lua: &Lua, view: LuaTable) -> LuaResult<()> {
             let close_on_exit = terminal_cfg
                 .get::<Option<bool>>("close_on_exit")?
                 .unwrap_or(true);
-            if close_on_exit && view.get::<bool>("allow_close_on_exit")? {
+            let keep_open = view.get::<bool>("keep_open").unwrap_or(false);
+            if close_on_exit && view.get::<bool>("allow_close_on_exit")? && !keep_open {
                 let core = require_table(lua, "core")?;
                 let root_view: LuaTable = core.get("root_view")?;
                 let root_node: LuaTable = root_view.get("root_node")?;

@@ -472,11 +472,13 @@ fn patch_docview_context_menu(lua: &Lua) -> LuaResult<()> {
             let mut args_vec: Vec<LuaValue> = args.into_vec();
             if let Some(LuaValue::Table(cmds)) = args_vec.first() {
                 let items: LuaTable = cmds.get("items")?;
-                // Shift items 4..6 to 7..9
+                let len = items.raw_len();
+                // Shift items 4..end to 8..end+4 (make room for 4 new entries)
                 let table_move: LuaFunction =
                     lua.globals().get::<LuaTable>("table")?.get("move")?;
-                table_move.call::<()>((items.clone(), 4, 6, 7))?;
-                // Insert scale commands at positions 4, 5, 6
+                table_move
+                    .call::<()>((items.clone(), 4, len as i64, 8))?;
+                // Insert scale commands at positions 4, 5, 6, then divider at 7
                 let item4 = lua.create_table()?;
                 item4.set("text", "Font +")?;
                 item4.set("command", "scale:increase")?;
@@ -489,6 +491,11 @@ fn patch_docview_context_menu(lua: &Lua) -> LuaResult<()> {
                 item6.set("text", "Font Reset")?;
                 item6.set("command", "scale:reset")?;
                 items.set(6, item6)?;
+                let docview_class: LuaTable = require_table(lua, "core.docview")?;
+                let divider: LuaValue = docview_class
+                    .get("_context_menu_divider")
+                    .unwrap_or(LuaNil);
+                items.set(7, divider)?;
             }
             let table_unpack: LuaFunction =
                 lua.globals().get::<LuaTable>("table")?.get("unpack")?;

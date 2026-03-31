@@ -1848,7 +1848,7 @@ fn docview_on_context_menu(lua: &Lua, this: LuaTable) -> LuaResult<LuaMultiValue
         6,
         mk(lua, "Add All Occurrences", "find-replace:select-add-all")?,
     )?;
-    items.set(7, divider)?;
+    items.set(7, divider.clone())?;
     items.set(8, mk(lua, "Find", "find-replace:find")?)?;
     items.set(9, mk(lua, "Replace", "find-replace:replace")?)?;
     let details = lua.create_table()?;

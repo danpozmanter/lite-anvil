@@ -1894,7 +1894,7 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                 })?;
                 // Build range covering the whole document.
                 let lines: LuaTable = doc.get("lines")?;
-                let line_count = lines.len()? as i64;
+                let line_count = lines.len()?;
                 let start = lua.create_table()?;
                 start.set("line", 0)?;
                 start.set("character", 0)?;
@@ -2836,6 +2836,484 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                 client.get::<LuaFunction>("request")?.call::<()>((
                     client,
                     "textDocument/references",
+                    params,
+                    cb,
+                ))
+            })?,
+        )?;
+    }
+
+    // ── call_hierarchy (incoming / outgoing) ─────────────────────────────────
+    {
+        let mk = Arc::clone(&mgr_key);
+        mgr.set(
+            "show_incoming_calls",
+            lua.create_function(move |lua, ()| {
+                let m: LuaTable = lua.registry_value(&mk)?;
+                let view = match mgr_current_docview(lua)? {
+                    Some(v) => v,
+                    None => return Ok(()),
+                };
+                let doc: LuaTable = view.get("doc")?;
+                if matches!(doc.get::<LuaValue>("abs_filename")?, LuaValue::Nil) {
+                    return Ok(());
+                }
+                let client = match mgr_navigation_client(
+                    lua,
+                    &m,
+                    &doc,
+                    Some("callHierarchyProvider"),
+                    "incoming calls",
+                )? {
+                    Some(c) => c,
+                    None => return Ok(()),
+                };
+                let origin = mgr_capture_view_location(lua, &view)?;
+                let params: LuaTable = m.get::<LuaFunction>("document_params")?.call(doc)?;
+                let mk2 = Arc::clone(&mk);
+                let client2 = client.clone();
+                let cb = lua.create_function(move |lua, (result, err): (LuaValue, LuaValue)| {
+                    if !matches!(err, LuaValue::Nil) {
+                        return Ok(());
+                    }
+                    let items_arr = match result {
+                        LuaValue::Table(t) => t,
+                        _ => {
+                            req(lua, "core")?
+                                .get::<LuaFunction>("warn")?
+                                .call::<()>("No call hierarchy item at cursor")?;
+                            return Ok(());
+                        }
+                    };
+                    if items_arr.raw_len() == 0 {
+                        req(lua, "core")?
+                            .get::<LuaFunction>("warn")?
+                            .call::<()>("No call hierarchy item at cursor")?;
+                        return Ok(());
+                    }
+                    let item: LuaTable = items_arr.get(1)?;
+                    let incoming_params = lua.create_table()?;
+                    incoming_params.set("item", item)?;
+                    let mk3 = Arc::clone(&mk2);
+                    let o2 = origin.clone();
+                    let cb2 = lua.create_function(
+                        move |lua, (result, err): (LuaValue, LuaValue)| {
+                            if !matches!(err, LuaValue::Nil) {
+                                return Ok(());
+                            }
+                            let calls = match result {
+                                LuaValue::Table(t) => t,
+                                _ => lua.create_table()?,
+                            };
+                            let items = lua.create_table()?;
+                            let common: LuaTable = req(lua, "core.common")?;
+                            let home_encode: LuaFunction = common.get("home_encode")?;
+                            for i in 1..=calls.raw_len() {
+                                let call: LuaTable = calls.get(i)?;
+                                let from: LuaTable = call.get("from")?;
+                                let name: String =
+                                    from.get("name").unwrap_or_else(|_| "?".to_owned());
+                                let uri: String = from.get("uri")?;
+                                let range: LuaTable = from.get("selectionRange")?;
+                                let path = mgr_uri_to_path(&uri)
+                                    .unwrap_or_else(|| uri.clone());
+                                let start: LuaTable = range.get("start")?;
+                                let line_no = start.get::<i64>("line").unwrap_or(0) + 1;
+                                let info: String = home_encode.call(path)?;
+                                let payload = lua.create_table()?;
+                                payload.set("uri", uri)?;
+                                payload.set("range", range)?;
+                                let item = lua.create_table()?;
+                                item.set(
+                                    "text",
+                                    format!("{:03} {}  L{}", i, name, line_no),
+                                )?;
+                                item.set("info", info)?;
+                                item.set("payload", payload)?;
+                                items.raw_set(i as i64, item)?;
+                            }
+                            let o3 = o2.clone();
+                            let mk4 = Arc::clone(&mk3);
+                            mgr_pick_from_list(
+                                lua,
+                                "Incoming Calls",
+                                items,
+                                lua.create_function(move |lua, item: LuaTable| {
+                                    let m: LuaTable = lua.registry_value(&mk4)?;
+                                    let uri: String = item.get("uri")?;
+                                    let range: LuaTable = item.get("range")?;
+                                    mgr_open_location(lua, &m, &uri, &range, o3.clone())
+                                })?,
+                            )
+                        },
+                    )?;
+                    client2.get::<LuaFunction>("request")?.call::<()>((
+                        client2.clone(),
+                        "callHierarchy/incomingCalls",
+                        incoming_params,
+                        cb2,
+                    ))
+                })?;
+                client.get::<LuaFunction>("request")?.call::<()>((
+                    client,
+                    "textDocument/prepareCallHierarchy",
+                    params,
+                    cb,
+                ))
+            })?,
+        )?;
+    }
+    {
+        let mk = Arc::clone(&mgr_key);
+        mgr.set(
+            "show_outgoing_calls",
+            lua.create_function(move |lua, ()| {
+                let m: LuaTable = lua.registry_value(&mk)?;
+                let view = match mgr_current_docview(lua)? {
+                    Some(v) => v,
+                    None => return Ok(()),
+                };
+                let doc: LuaTable = view.get("doc")?;
+                if matches!(doc.get::<LuaValue>("abs_filename")?, LuaValue::Nil) {
+                    return Ok(());
+                }
+                let client = match mgr_navigation_client(
+                    lua,
+                    &m,
+                    &doc,
+                    Some("callHierarchyProvider"),
+                    "outgoing calls",
+                )? {
+                    Some(c) => c,
+                    None => return Ok(()),
+                };
+                let origin = mgr_capture_view_location(lua, &view)?;
+                let params: LuaTable = m.get::<LuaFunction>("document_params")?.call(doc)?;
+                let mk2 = Arc::clone(&mk);
+                let client2 = client.clone();
+                let cb = lua.create_function(move |lua, (result, err): (LuaValue, LuaValue)| {
+                    if !matches!(err, LuaValue::Nil) {
+                        return Ok(());
+                    }
+                    let items_arr = match result {
+                        LuaValue::Table(t) => t,
+                        _ => {
+                            req(lua, "core")?
+                                .get::<LuaFunction>("warn")?
+                                .call::<()>("No call hierarchy item at cursor")?;
+                            return Ok(());
+                        }
+                    };
+                    if items_arr.raw_len() == 0 {
+                        req(lua, "core")?
+                            .get::<LuaFunction>("warn")?
+                            .call::<()>("No call hierarchy item at cursor")?;
+                        return Ok(());
+                    }
+                    let item: LuaTable = items_arr.get(1)?;
+                    let outgoing_params = lua.create_table()?;
+                    outgoing_params.set("item", item)?;
+                    let mk3 = Arc::clone(&mk2);
+                    let o2 = origin.clone();
+                    let cb2 = lua.create_function(
+                        move |lua, (result, err): (LuaValue, LuaValue)| {
+                            if !matches!(err, LuaValue::Nil) {
+                                return Ok(());
+                            }
+                            let calls = match result {
+                                LuaValue::Table(t) => t,
+                                _ => lua.create_table()?,
+                            };
+                            let items = lua.create_table()?;
+                            let common: LuaTable = req(lua, "core.common")?;
+                            let home_encode: LuaFunction = common.get("home_encode")?;
+                            for i in 1..=calls.raw_len() {
+                                let call: LuaTable = calls.get(i)?;
+                                let to: LuaTable = call.get("to")?;
+                                let name: String =
+                                    to.get("name").unwrap_or_else(|_| "?".to_owned());
+                                let uri: String = to.get("uri")?;
+                                let range: LuaTable = to.get("selectionRange")?;
+                                let path = mgr_uri_to_path(&uri)
+                                    .unwrap_or_else(|| uri.clone());
+                                let start: LuaTable = range.get("start")?;
+                                let line_no = start.get::<i64>("line").unwrap_or(0) + 1;
+                                let info: String = home_encode.call(path)?;
+                                let payload = lua.create_table()?;
+                                payload.set("uri", uri)?;
+                                payload.set("range", range)?;
+                                let item = lua.create_table()?;
+                                item.set(
+                                    "text",
+                                    format!("{:03} {}  L{}", i, name, line_no),
+                                )?;
+                                item.set("info", info)?;
+                                item.set("payload", payload)?;
+                                items.raw_set(i as i64, item)?;
+                            }
+                            let o3 = o2.clone();
+                            let mk4 = Arc::clone(&mk3);
+                            mgr_pick_from_list(
+                                lua,
+                                "Outgoing Calls",
+                                items,
+                                lua.create_function(move |lua, item: LuaTable| {
+                                    let m: LuaTable = lua.registry_value(&mk4)?;
+                                    let uri: String = item.get("uri")?;
+                                    let range: LuaTable = item.get("range")?;
+                                    mgr_open_location(lua, &m, &uri, &range, o3.clone())
+                                })?,
+                            )
+                        },
+                    )?;
+                    client2.get::<LuaFunction>("request")?.call::<()>((
+                        client2.clone(),
+                        "callHierarchy/outgoingCalls",
+                        outgoing_params,
+                        cb2,
+                    ))
+                })?;
+                client.get::<LuaFunction>("request")?.call::<()>((
+                    client,
+                    "textDocument/prepareCallHierarchy",
+                    params,
+                    cb,
+                ))
+            })?,
+        )?;
+    }
+
+    // ── type_hierarchy (supertypes / subtypes) ────────────────────────────────
+    {
+        let mk = Arc::clone(&mgr_key);
+        mgr.set(
+            "show_supertypes",
+            lua.create_function(move |lua, ()| {
+                let m: LuaTable = lua.registry_value(&mk)?;
+                let view = match mgr_current_docview(lua)? {
+                    Some(v) => v,
+                    None => return Ok(()),
+                };
+                let doc: LuaTable = view.get("doc")?;
+                if matches!(doc.get::<LuaValue>("abs_filename")?, LuaValue::Nil) {
+                    return Ok(());
+                }
+                let client = match mgr_navigation_client(
+                    lua,
+                    &m,
+                    &doc,
+                    Some("typeHierarchyProvider"),
+                    "supertypes",
+                )? {
+                    Some(c) => c,
+                    None => return Ok(()),
+                };
+                let origin = mgr_capture_view_location(lua, &view)?;
+                let params: LuaTable = m.get::<LuaFunction>("document_params")?.call(doc)?;
+                let mk2 = Arc::clone(&mk);
+                let client2 = client.clone();
+                let cb = lua.create_function(move |lua, (result, err): (LuaValue, LuaValue)| {
+                    if !matches!(err, LuaValue::Nil) {
+                        return Ok(());
+                    }
+                    let items_arr = match result {
+                        LuaValue::Table(t) => t,
+                        _ => {
+                            req(lua, "core")?
+                                .get::<LuaFunction>("warn")?
+                                .call::<()>("No type hierarchy item at cursor")?;
+                            return Ok(());
+                        }
+                    };
+                    if items_arr.raw_len() == 0 {
+                        req(lua, "core")?
+                            .get::<LuaFunction>("warn")?
+                            .call::<()>("No type hierarchy item at cursor")?;
+                        return Ok(());
+                    }
+                    let item: LuaTable = items_arr.get(1)?;
+                    let type_params = lua.create_table()?;
+                    type_params.set("item", item)?;
+                    let mk3 = Arc::clone(&mk2);
+                    let o2 = origin.clone();
+                    let cb2 = lua.create_function(
+                        move |lua, (result, err): (LuaValue, LuaValue)| {
+                            if !matches!(err, LuaValue::Nil) {
+                                return Ok(());
+                            }
+                            let types = match result {
+                                LuaValue::Table(t) => t,
+                                _ => lua.create_table()?,
+                            };
+                            let items = lua.create_table()?;
+                            let common: LuaTable = req(lua, "core.common")?;
+                            let home_encode: LuaFunction = common.get("home_encode")?;
+                            for i in 1..=types.raw_len() {
+                                let ty: LuaTable = types.get(i)?;
+                                let name: String =
+                                    ty.get("name").unwrap_or_else(|_| "?".to_owned());
+                                let uri: String = ty.get("uri")?;
+                                let range: LuaTable = ty.get("selectionRange")?;
+                                let path = mgr_uri_to_path(&uri)
+                                    .unwrap_or_else(|| uri.clone());
+                                let start: LuaTable = range.get("start")?;
+                                let line_no = start.get::<i64>("line").unwrap_or(0) + 1;
+                                let info: String = home_encode.call(path)?;
+                                let payload = lua.create_table()?;
+                                payload.set("uri", uri)?;
+                                payload.set("range", range)?;
+                                let item = lua.create_table()?;
+                                item.set(
+                                    "text",
+                                    format!("{:03} {}  L{}", i, name, line_no),
+                                )?;
+                                item.set("info", info)?;
+                                item.set("payload", payload)?;
+                                items.raw_set(i as i64, item)?;
+                            }
+                            let o3 = o2.clone();
+                            let mk4 = Arc::clone(&mk3);
+                            mgr_pick_from_list(
+                                lua,
+                                "Supertypes",
+                                items,
+                                lua.create_function(move |lua, item: LuaTable| {
+                                    let m: LuaTable = lua.registry_value(&mk4)?;
+                                    let uri: String = item.get("uri")?;
+                                    let range: LuaTable = item.get("range")?;
+                                    mgr_open_location(lua, &m, &uri, &range, o3.clone())
+                                })?,
+                            )
+                        },
+                    )?;
+                    client2.get::<LuaFunction>("request")?.call::<()>((
+                        client2.clone(),
+                        "typeHierarchy/supertypes",
+                        type_params,
+                        cb2,
+                    ))
+                })?;
+                client.get::<LuaFunction>("request")?.call::<()>((
+                    client,
+                    "textDocument/prepareTypeHierarchy",
+                    params,
+                    cb,
+                ))
+            })?,
+        )?;
+    }
+    {
+        let mk = Arc::clone(&mgr_key);
+        mgr.set(
+            "show_subtypes",
+            lua.create_function(move |lua, ()| {
+                let m: LuaTable = lua.registry_value(&mk)?;
+                let view = match mgr_current_docview(lua)? {
+                    Some(v) => v,
+                    None => return Ok(()),
+                };
+                let doc: LuaTable = view.get("doc")?;
+                if matches!(doc.get::<LuaValue>("abs_filename")?, LuaValue::Nil) {
+                    return Ok(());
+                }
+                let client = match mgr_navigation_client(
+                    lua,
+                    &m,
+                    &doc,
+                    Some("typeHierarchyProvider"),
+                    "subtypes",
+                )? {
+                    Some(c) => c,
+                    None => return Ok(()),
+                };
+                let origin = mgr_capture_view_location(lua, &view)?;
+                let params: LuaTable = m.get::<LuaFunction>("document_params")?.call(doc)?;
+                let mk2 = Arc::clone(&mk);
+                let client2 = client.clone();
+                let cb = lua.create_function(move |lua, (result, err): (LuaValue, LuaValue)| {
+                    if !matches!(err, LuaValue::Nil) {
+                        return Ok(());
+                    }
+                    let items_arr = match result {
+                        LuaValue::Table(t) => t,
+                        _ => {
+                            req(lua, "core")?
+                                .get::<LuaFunction>("warn")?
+                                .call::<()>("No type hierarchy item at cursor")?;
+                            return Ok(());
+                        }
+                    };
+                    if items_arr.raw_len() == 0 {
+                        req(lua, "core")?
+                            .get::<LuaFunction>("warn")?
+                            .call::<()>("No type hierarchy item at cursor")?;
+                        return Ok(());
+                    }
+                    let item: LuaTable = items_arr.get(1)?;
+                    let type_params = lua.create_table()?;
+                    type_params.set("item", item)?;
+                    let mk3 = Arc::clone(&mk2);
+                    let o2 = origin.clone();
+                    let cb2 = lua.create_function(
+                        move |lua, (result, err): (LuaValue, LuaValue)| {
+                            if !matches!(err, LuaValue::Nil) {
+                                return Ok(());
+                            }
+                            let types = match result {
+                                LuaValue::Table(t) => t,
+                                _ => lua.create_table()?,
+                            };
+                            let items = lua.create_table()?;
+                            let common: LuaTable = req(lua, "core.common")?;
+                            let home_encode: LuaFunction = common.get("home_encode")?;
+                            for i in 1..=types.raw_len() {
+                                let ty: LuaTable = types.get(i)?;
+                                let name: String =
+                                    ty.get("name").unwrap_or_else(|_| "?".to_owned());
+                                let uri: String = ty.get("uri")?;
+                                let range: LuaTable = ty.get("selectionRange")?;
+                                let path = mgr_uri_to_path(&uri)
+                                    .unwrap_or_else(|| uri.clone());
+                                let start: LuaTable = range.get("start")?;
+                                let line_no = start.get::<i64>("line").unwrap_or(0) + 1;
+                                let info: String = home_encode.call(path)?;
+                                let payload = lua.create_table()?;
+                                payload.set("uri", uri)?;
+                                payload.set("range", range)?;
+                                let item = lua.create_table()?;
+                                item.set(
+                                    "text",
+                                    format!("{:03} {}  L{}", i, name, line_no),
+                                )?;
+                                item.set("info", info)?;
+                                item.set("payload", payload)?;
+                                items.raw_set(i as i64, item)?;
+                            }
+                            let o3 = o2.clone();
+                            let mk4 = Arc::clone(&mk3);
+                            mgr_pick_from_list(
+                                lua,
+                                "Subtypes",
+                                items,
+                                lua.create_function(move |lua, item: LuaTable| {
+                                    let m: LuaTable = lua.registry_value(&mk4)?;
+                                    let uri: String = item.get("uri")?;
+                                    let range: LuaTable = item.get("range")?;
+                                    mgr_open_location(lua, &m, &uri, &range, o3.clone())
+                                })?,
+                            )
+                        },
+                    )?;
+                    client2.get::<LuaFunction>("request")?.call::<()>((
+                        client2.clone(),
+                        "typeHierarchy/subtypes",
+                        type_params,
+                        cb2,
+                    ))
+                })?;
+                client.get::<LuaFunction>("request")?.call::<()>((
+                    client,
+                    "textDocument/prepareTypeHierarchy",
                     params,
                     cb,
                 ))
@@ -4608,6 +5086,26 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                 "show_document_symbols",
                 "documentSymbolProvider",
             ),
+            (
+                "lsp:incoming-calls",
+                "show_incoming_calls",
+                "callHierarchyProvider",
+            ),
+            (
+                "lsp:outgoing-calls",
+                "show_outgoing_calls",
+                "callHierarchyProvider",
+            ),
+            (
+                "lsp:supertypes",
+                "show_supertypes",
+                "typeHierarchyProvider",
+            ),
+            (
+                "lsp:subtypes",
+                "show_subtypes",
+                "typeHierarchyProvider",
+            ),
         ];
         for (cmd_name, method_name, capability) in nav_cmds_def {
             let cap_owned = capability.to_string();
@@ -6317,6 +6815,91 @@ fn init_lsp_plugin(lua: &Lua) -> LuaResult<LuaValue> {
         add_item.call::<()>((sv, item))?;
     }
 
+    // Patch DocView context menu with LSP navigation items
+    {
+        let docview: LuaTable = req(lua, "core.docview")?;
+        let old_ctx: LuaFunction = docview.get("on_context_menu")?;
+        let old_key = lua.create_registry_value(old_ctx)?;
+        let mk = Arc::clone(&mgr_key);
+        docview.set(
+            "on_context_menu",
+            lua.create_function(move |lua, (self_, args): (LuaTable, LuaMultiValue)| {
+                let old: LuaFunction = lua.registry_value(&old_key)?;
+                let mut call_args = LuaMultiValue::new();
+                call_args.push_back(LuaValue::Table(self_.clone()));
+                call_args.extend(args);
+                let result: LuaMultiValue = old.call(call_args)?;
+                let result_vec: Vec<LuaValue> = result.into_iter().collect();
+                let details = match result_vec.first() {
+                    Some(LuaValue::Table(t)) => t.clone(),
+                    _ => lua.create_table()?,
+                };
+                let items: LuaTable = details
+                    .get::<Option<LuaTable>>("items")?
+                    .unwrap_or(lua.create_table()?);
+
+                let doc: Option<LuaTable> = self_.get("doc")?;
+                let has_lsp = if let Some(ref doc) = doc {
+                    let m: LuaTable = lua.registry_value(&mk)?;
+                    let spec_val: LuaValue =
+                        m.get::<LuaFunction>("find_spec_for_doc")?.call(doc.clone())?;
+                    !matches!(spec_val, LuaValue::Nil)
+                } else {
+                    false
+                };
+
+                let docview_class: LuaTable = req(lua, "core.docview")?;
+                let divider: LuaValue = docview_class
+                    .get("_context_menu_divider")
+                    .unwrap_or(LuaValue::Nil);
+                let mk_item = |lua: &Lua, text: &str, cmd: &str| -> LuaResult<LuaTable> {
+                    let t = lua.create_table()?;
+                    t.set("text", text)?;
+                    t.set("command", cmd)?;
+                    Ok(t)
+                };
+
+                if has_lsp {
+                    let mut n = (items.raw_len() + 1) as i64;
+                    items.raw_set(n, divider.clone())?;
+                    n += 1;
+                    for (text, cmd) in [
+                        ("Go to Definition", "lsp:goto-definition"),
+                        ("Find References", "lsp:find-references"),
+                        ("Go to Type Definition", "lsp:goto-type-definition"),
+                        ("Go to Implementation", "lsp:goto-implementation"),
+                        ("Incoming Calls", "lsp:incoming-calls"),
+                        ("Outgoing Calls", "lsp:outgoing-calls"),
+                        ("Supertypes", "lsp:supertypes"),
+                        ("Subtypes", "lsp:subtypes"),
+                    ] {
+                        items.raw_set(n, mk_item(lua, text, cmd)?)?;
+                        n += 1;
+                    }
+                }
+
+                // Test runner items
+                {
+                    let mut n = (items.raw_len() + 1) as i64;
+                    items.raw_set(n, divider)?;
+                    n += 1;
+                    items.raw_set(n, mk_item(lua, "Test: Run File", "test:run-file")?)?;
+                    n += 1;
+                    items.raw_set(n, mk_item(lua, "Test: Run All", "test:run-all")?)?;
+                }
+
+                details.set("items", items)?;
+
+                let mut out = LuaMultiValue::new();
+                out.push_back(LuaValue::Table(details));
+                for v in result_vec.into_iter().skip(1) {
+                    out.push_back(v);
+                }
+                Ok(out)
+            })?,
+        )?;
+    }
+
     // Keymap bindings
     {
         let keymap: LuaTable = req(lua, "core.keymap")?;
@@ -6335,6 +6918,10 @@ fn init_lsp_plugin(lua: &Lua) -> LuaResult<LuaValue> {
         bindings.set("ctrl+shift+space", "lsp:signature-help")?;
         bindings.set("alt+shift+f", "lsp:format-document")?;
         bindings.set("f2", "lsp:rename-symbol")?;
+        bindings.set("alt+f12", "lsp:incoming-calls")?;
+        bindings.set("ctrl+shift+f12", "lsp:outgoing-calls")?;
+        bindings.set("alt+f11", "lsp:supertypes")?;
+        bindings.set("ctrl+shift+f11", "lsp:subtypes")?;
         bindings.set("ctrl+k", "lsp:hover")?;
         keymap.get::<LuaFunction>("add")?.call::<()>(bindings)?;
     }

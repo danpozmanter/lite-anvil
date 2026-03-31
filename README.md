@@ -17,8 +17,10 @@ I do not intend to maintain or support this in any way, but wanted to share the 
 ## Features
 
 - **Mostly native Rust** — all core modules, views, commands, and bundled plugins are pure Rust via mlua. User plugins and config are Lua
-- **Built-in LSP** with diagnostics, inline diagnostics, semantic highlighting, completion, hover, go-to-definition, references, rename, symbols, code actions, formatting, snippets, and signature help
+- **Built-in LSP** with diagnostics, inline diagnostics, semantic highlighting, completion, hover, go-to-definition, references, rename, symbols, code actions, formatting, snippets, signature help, call hierarchy, and type hierarchy
 - **Embedded PTY terminal** with ANSI colors, scrollback, color schemes, and configurable placement
+- **Integrated test runner** with auto-detection for Cargo, npm/vitest/jest, pytest, Go, and Make projects
+- **Native file watching** via inotify/FSEvents/ReadDirectoryChanges for instant external-change detection
 - **Project-wide search, replace, and swap** plus native single-file find and replace
 - **Git integration** — branch/status in UI, tree highlighting, status view, diff views
 - **Multi-cursor editing**, command palette, project file picker, split panes
@@ -74,6 +76,28 @@ Requires `sshfs` installed and working SSH authentication.
 | `Ctrl+F` | Find in file |
 | `Alt+S` | Toggle find-in-selection (while Find is open) |
 | `Ctrl+H` | Replace in file |
+| `Alt+F12` | Incoming calls (LSP call hierarchy) |
+| `Ctrl+Shift+F12` | Outgoing calls (LSP call hierarchy) |
+| `Alt+F11` | Supertypes (LSP type hierarchy) |
+| `Ctrl+Shift+F11` | Subtypes (LSP type hierarchy) |
+
+### Test runner
+
+The integrated test runner auto-detects your project's test framework (Cargo, npm/vitest/jest, pytest, Go, or Make) and runs tests from the editor.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+Shift+R` | Run all tests |
+
+Also available from the command palette: `test:run-all`, `test:run-file`, or via right-click context menu. Results appear in a terminal pane. Configure a custom command via `config.plugins.test_runner.custom_command`.
+
+### Call hierarchy
+
+Place the cursor on a function and press `Alt+F12` to see **incoming calls** (who calls this function) or `Ctrl+Shift+F12` for **outgoing calls** (what this function calls). Requires an LSP server that supports `callHierarchyProvider`. Also available from the command palette as `lsp:incoming-calls` and `lsp:outgoing-calls`.
+
+### Type hierarchy
+
+Place the cursor on a type and press `Alt+F11` to see **supertypes** (parent types) or `Ctrl+Shift+F11` for **subtypes** (child types). Requires an LSP server that supports `typeHierarchyProvider`. Also available from the command palette as `lsp:supertypes` and `lsp:subtypes`.
 
 ## Building
 
