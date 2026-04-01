@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn glob_matches_supports_single_and_double_star() {
-        assert!(glob_matches("src/lib.rs", "*.rs") == false);
+        assert!(!glob_matches("src/lib.rs", "*.rs"));
         assert!(glob_matches("src/lib.rs", "src/*.rs"));
         assert!(glob_matches("src/nested/lib.rs", "src/**/*.rs"));
         assert!(glob_matches("src/lib.rs", "**/*.rs"));

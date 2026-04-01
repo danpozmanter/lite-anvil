@@ -1,5 +1,19 @@
 # Change Log
 
+## [1.3.4] - 2026-04-01 — Syntax highlighting fix for multi-byte characters, code quality, stability, and style fixes.
+
+* Fix syntax highlighting breaking after multi-byte UTF-8 characters (e.g. arrows, emoji).
+* Fix `assert!(x == false)` anti-pattern → `assert!(!x)` in project_fs tests.
+* Remove unnecessary `mut` declarations on non-reassigned variables.
+* Simplify redundant boolean comparison patterns throughout codebase.
+* Optimize string formatting in runtime Lua path setup.
+* Remove redundant clone operations in editor command handlers.
+* Fix redundant iterator `.cloned()` calls on already-owned data.
+* Remove spurious `#[allow(dead_code)]` annotations from used functions.
+* Standardize error mapping to use `.map_err()` consistently.
+* Clean up unused imports in core editor and LSP modules.
+* Consolidate redundant `PathBuf` to `String` conversions.
+
 ## [1.3.3] - 2026-04-01 — F# syntax fix, CLI file/folder open fix, active file fixes, and BOM support.
 
 * Fix wrong active file after restart: suppress active_file disk writes during session restore and exit so only user tab switches persist the value.

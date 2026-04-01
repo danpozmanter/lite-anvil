@@ -584,10 +584,22 @@ fn find_text(
             } else {
                 code.clone()
             };
-            parse_results(
+            // string.find uses byte positions; convert char→byte on input
+            // and byte→char on output so the rest of the tokenizer stays
+            // character-oriented.
+            let byte_init = ucharpos(text, next).unwrap_or(text.len() + 1);
+            let mut res = parse_results(
                 ctx.ufind
-                    .call::<LuaMultiValue>((text, pattern_code, next))?,
-            )?
+                    .call::<LuaMultiValue>((text, pattern_code, byte_init))?,
+            )?;
+            if res.len() >= 2 {
+                res[0] = prefix_ulen(text, res[0]);
+                res[1] = prefix_ulen(text, res[1]);
+                for item in res.iter_mut().skip(2) {
+                    *item = prefix_ulen(text, item.saturating_sub(1)) + 1;
+                }
+            }
+            res
         }
         MatcherKind::Regex { .. } => regex_find(matcher, text, next, anchored)?,
     };
