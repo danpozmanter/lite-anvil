@@ -481,7 +481,23 @@ fn workspace_keys(lua: &Lua, project_dir: &str) -> LuaResult<Vec<String>> {
     Ok(out)
 }
 
-fn consume_workspace(lua: &Lua, project_dir: &str) -> LuaResult<Option<LuaTable>> {
+/// Loads the stored workspace for a project without deleting it from storage.
+fn load_stored_workspace(lua: &Lua, project_dir: &str) -> LuaResult<Option<LuaTable>> {
+    let storage = require_table(lua, "core.storage")?;
+    let load: LuaFunction = storage.get("load")?;
+    for key in workspace_keys(lua, project_dir)? {
+        if let Ok(Some(workspace)) = load.call::<Option<LuaTable>>((STORAGE_MODULE, key)) {
+            let path: Option<String> = workspace.get("path")?;
+            if path.as_deref() == Some(project_dir) {
+                return Ok(Some(workspace));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Removes stored workspace data for a project from storage.
+fn clear_stored_workspace(lua: &Lua, project_dir: &str) -> LuaResult<()> {
     let storage = require_table(lua, "core.storage")?;
     let load: LuaFunction = storage.get("load")?;
     let clear: LuaFunction = storage.get("clear")?;
@@ -490,11 +506,11 @@ fn consume_workspace(lua: &Lua, project_dir: &str) -> LuaResult<Option<LuaTable>
             let path: Option<String> = workspace.get("path")?;
             if path.as_deref() == Some(project_dir) {
                 clear.call::<()>((STORAGE_MODULE, key))?;
-                return Ok(Some(workspace));
+                return Ok(());
             }
         }
     }
-    Ok(None)
+    Ok(())
 }
 
 fn save_workspace(lua: &Lua) -> LuaResult<()> {
@@ -549,7 +565,7 @@ fn load_workspace(lua: &Lua) -> LuaResult<bool> {
     let Some(project_path) = project_path else {
         return Ok(false);
     };
-    let Some(workspace) = consume_workspace(lua, &project_path)? else {
+    let Some(workspace) = load_stored_workspace(lua, &project_path)? else {
         return Ok(false);
     };
     let documents: Option<LuaTable> = workspace.get("documents")?;
@@ -575,6 +591,8 @@ fn load_workspace(lua: &Lua) -> LuaResult<bool> {
             add_project.call::<()>(abs)?;
         }
     }
+    // Only delete from storage after restore succeeded.
+    clear_stored_workspace(lua, &project_path)?;
     Ok(true)
 }
 

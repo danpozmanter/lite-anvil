@@ -149,14 +149,14 @@ fn cargo_module_filter(file_path: &str, project_path: &str) -> Option<String> {
 }
 
 /// Extracts the file stem after stripping known test-file extensions.
-fn test_class_name(file_path: &str, extensions: &[&str]) -> Option<String> {
+fn test_class_name(file_path: &str, extensions: &[&str]) -> String {
     let name = file_path.rsplit('/').next().unwrap_or(file_path);
     for ext in extensions {
         if let Some(stem) = name.strip_suffix(ext) {
-            return Some(stem.to_owned());
+            return stem.to_owned();
         }
     }
-    Some(name.to_owned())
+    name.to_owned()
 }
 
 /// Builds the file-scoped test command for a given runner type.
@@ -194,19 +194,19 @@ fn file_test_command(
             }
         }
         "dotnet" => {
-            let class = test_class_name(file_path, &[".cs", ".fs"])?;
+            let class = test_class_name(file_path, &[".cs", ".fs"]);
             Some(format!("dotnet test --filter FullyQualifiedName~{}", class))
         }
         "sbt" => {
-            let class = test_class_name(file_path, &[".scala"])?;
+            let class = test_class_name(file_path, &[".scala"]);
             Some(format!("sbt \"testOnly *{}*\"", class))
         }
         "gradle" => {
-            let class = test_class_name(file_path, &[".java", ".kt", ".scala"])?;
+            let class = test_class_name(file_path, &[".java", ".kt", ".scala"]);
             Some(format!("./gradlew test --tests \"*{}*\"", class))
         }
         "maven" => {
-            let class = test_class_name(file_path, &[".java", ".kt", ".scala"])?;
+            let class = test_class_name(file_path, &[".java", ".kt", ".scala"]);
             Some(format!("mvn test -Dtest=\"{}\"", class))
         }
         "phpunit" => Some(format!("{} {}", run_all, file_path)),

@@ -3147,7 +3147,6 @@ fn register_plugin_loader(
                         let syntax: LuaTable = require.call("core.syntax")?;
                         let register_lazy: LuaFunction = syntax.get("register_lazy_plugin")?;
                         register_lazy.call::<()>(plugin.clone())?;
-                        let _dir: String = dirname.call(file.clone())?;
                         continue;
                     }
 
@@ -3258,7 +3257,6 @@ fn register_plugin_loader(
                         }
 
                         add_cmd.call::<()>((predicate, map))?;
-                        let _dir: String = dirname.call(file)?;
                         continue;
                     }
 
@@ -3761,8 +3759,6 @@ fn register_doc_fns(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                         show_msg.call::<()>((status_view, "i", warn_color, msg))?;
                     }
                 }
-
-                let _log_quiet: LuaFunction = core.get("log_quiet")?;
 
                 Ok(doc)
             },

@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.4.1] - 2026-04-02 — Stability fixes and dead code cleanup.
+
+* Fix F# (fsautocomplete) root patterns to include `.fsproj` for standalone F# projects without solution files.
+* Fix workspace data loss: storage is now deleted only after restore succeeds, not before.
+* Fix `test_class_name` returning `Option<String>` when it can never be `None`.
+* Remove unused `clear_failed` LSP API function and dead variables from log removal.
+
 ## [1.4.0] - 2026-04-01 — Per-project workspace memory, builtin LSP for 10 languages, log cleanup.
 
 * Enable workspace plugin: per-project open file/tab memory now activates (was registered but never loaded).

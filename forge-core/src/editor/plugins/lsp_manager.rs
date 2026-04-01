@@ -696,14 +696,6 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
     )?;
 
     module.set(
-        "clear_failed",
-        lua.create_function(|_, ()| {
-            STATE.lock().failed.clear();
-            Ok(())
-        })?,
-    )?;
-
-    module.set(
         "get_diagnostics",
         lua.create_function(|lua, uri: String| {
             let state = STATE.lock();
