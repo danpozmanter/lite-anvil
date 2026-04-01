@@ -113,7 +113,7 @@
 },
   "4": {
   "kind": "array",
-  "values": ["%.xml$"]
+  "values": ["%.xml$", "%.csproj$", "%.fsproj$", "%.vbproj$", "%.vcxproj$", "%.sln$", "%.props$", "%.targets$", "%.nuspec$", "%.pom$", "%.svg$", "%.plist$", "%.xaml$"]
 },
   "5": {
   "kind": "array",

@@ -1,5 +1,18 @@
 # Change Log
 
+## [1.3.6] - 2026-04-01 — Test runner fixes, language support, and new syntax highlighting.
+
+* Fix F#/C# projects with a `tests/` directory being misdetected as Python unittest.
+* Fix `has_extension` crashing at runtime (`list_dir` returns a flat string table, not a table of tables).
+* Fix node file-scoped test always using vitest regardless of detected runner (jest, npm test).
+* Add Scala (sbt) test runner support.
+* Add PHP (phpunit) test runner support.
+* Add `.scala` extension handling in Gradle and Maven file-scoped test commands.
+* Remove unused test framework detection code (dotnet, Gradle, Maven framework sniffing).
+* Add XML syntax highlighting for .NET project files (`.csproj`, `.fsproj`, `.vbproj`, `.vcxproj`, `.sln`, `.props`, `.targets`, `.nuspec`), `.pom`, `.svg`, `.plist`, and `.xaml`.
+* Add Groovy syntax highlighting (`.groovy`, `.gradle`).
+* Add Dockerfile syntax highlighting.
+
 ## [1.3.5] - 2026-04-01 — Removing legacy files.
 
 * Removed `scripts/fontello-config.json` - no longer needed (project uses PNG icons instead of font icons).

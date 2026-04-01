@@ -46,7 +46,6 @@ fn detect_runner(lua: &Lua) -> LuaResult<Option<LuaTable>> {
         runner.set("type", "pytest")?;
         runner.set("run_all", "python -m pytest -v")?;
     } else if exists("pyproject.toml")? || exists("setup.py")? || exists("setup.cfg")? {
-        // Check if pytest is configured in pyproject.toml, otherwise fall back to unittest
         let has_pytest = if exists("pyproject.toml")? {
             let toml_path = format!("{}/pyproject.toml", project_path_ref);
             let content = std::fs::read_to_string(&toml_path).unwrap_or_default();
@@ -55,15 +54,6 @@ fn detect_runner(lua: &Lua) -> LuaResult<Option<LuaTable>> {
             false
         };
         if has_pytest {
-            runner.set("type", "pytest")?;
-            runner.set("run_all", "python -m pytest -v")?;
-        } else {
-            runner.set("type", "unittest")?;
-            runner.set("run_all", "python -m unittest discover -v")?;
-        }
-    } else if exists("tests")? || exists("test")? {
-        // Bare Python project with a tests/ directory
-        if exists("tests/conftest.py")? || exists("test/conftest.py")? {
             runner.set("type", "pytest")?;
             runner.set("run_all", "python -m pytest -v")?;
         } else {
@@ -79,6 +69,9 @@ fn detect_runner(lua: &Lua) -> LuaResult<Option<LuaTable>> {
     {
         runner.set("type", "dotnet")?;
         runner.set("run_all", "dotnet test")?;
+    } else if exists("build.sbt")? {
+        runner.set("type", "sbt")?;
+        runner.set("run_all", "sbt test")?;
     } else if exists("build.gradle")? || exists("build.gradle.kts")? {
         runner.set("type", "gradle")?;
         if exists("gradlew")? {
@@ -93,6 +86,17 @@ fn detect_runner(lua: &Lua) -> LuaResult<Option<LuaTable>> {
         } else {
             runner.set("run_all", "mvn test")?;
         }
+    } else if exists("phpunit.xml")? || exists("phpunit.xml.dist")? {
+        runner.set("type", "phpunit")?;
+        if exists("vendor/bin/phpunit")? {
+            runner.set("run_all", "./vendor/bin/phpunit")?;
+        } else {
+            runner.set("run_all", "phpunit")?;
+        }
+    } else if exists("tests/conftest.py")? || exists("test/conftest.py")? {
+        // Bare Python project with conftest.py in tests directory
+        runner.set("type", "pytest")?;
+        runner.set("run_all", "python -m pytest -v")?;
     } else if exists("Makefile")? || exists("makefile")? {
         runner.set("type", "make")?;
         runner.set("run_all", "make test")?;
@@ -106,13 +110,12 @@ fn detect_runner(lua: &Lua) -> LuaResult<Option<LuaTable>> {
 fn has_extension(lua: &Lua, project_path: &str, ext: &str) -> LuaResult<bool> {
     let system: LuaTable = lua.globals().get("system")?;
     let list_dir: LuaFunction = system.get("list_dir")?;
+    // list_dir returns (names_table, types_table); we only need names.
     let entries: LuaValue = list_dir.call(project_path.to_owned())?;
     if let LuaValue::Table(entries) = entries {
         let suffix = format!(".{}", ext);
-        for entry in entries.sequence_values::<LuaTable>() {
-            let entry = entry?;
-            let name: String = entry.get("filename").unwrap_or_default();
-            if name.ends_with(&suffix) {
+        for name in entries.sequence_values::<String>() {
+            if name?.ends_with(&suffix) {
                 return Ok(true);
             }
         }
@@ -145,8 +148,24 @@ fn cargo_module_filter(file_path: &str, project_path: &str) -> Option<String> {
     Some(stem.replace('/', "::"))
 }
 
+/// Extracts the file stem after stripping known test-file extensions.
+fn test_class_name(file_path: &str, extensions: &[&str]) -> Option<String> {
+    let name = file_path.rsplit('/').next().unwrap_or(file_path);
+    for ext in extensions {
+        if let Some(stem) = name.strip_suffix(ext) {
+            return Some(stem.to_owned());
+        }
+    }
+    Some(name.to_owned())
+}
+
 /// Builds the file-scoped test command for a given runner type.
-fn file_test_command(runner_type: &str, file_path: &str, project_path: &str) -> Option<String> {
+fn file_test_command(
+    runner_type: &str,
+    file_path: &str,
+    project_path: &str,
+    run_all: &str,
+) -> Option<String> {
     match runner_type {
         "cargo" => {
             let filter = cargo_module_filter(file_path, project_path)?;
@@ -154,7 +173,6 @@ fn file_test_command(runner_type: &str, file_path: &str, project_path: &str) -> 
         }
         "pytest" => Some(format!("python -m pytest -v {}", file_path)),
         "unittest" => {
-            // Convert file path to dotted module: tests/test_foo.py -> tests.test_foo
             let rel = file_path.strip_prefix(project_path)?.trim_start_matches('/');
             let module = rel.strip_suffix(".py")?.replace('/', ".");
             Some(format!("python -m unittest -v {}", module))
@@ -168,25 +186,30 @@ fn file_test_command(runner_type: &str, file_path: &str, project_path: &str) -> 
                 Some(format!("go test -v ./{}", rel))
             }
         }
-        "node" => Some(format!("npx vitest run {}", file_path)),
-        "dotnet" => Some(format!("dotnet test --filter FullyQualifiedName~{}", {
-            let name = file_path.rsplit('/').next().unwrap_or(file_path);
-            name.strip_suffix(".cs")
-                .or_else(|| name.strip_suffix(".fs"))
-                .unwrap_or(name)
-        })),
-        "gradle" => Some(format!("./gradlew test --tests \"*{}*\"", {
-            let name = file_path.rsplit('/').next().unwrap_or(file_path);
-            name.strip_suffix(".java")
-                .or_else(|| name.strip_suffix(".kt"))
-                .unwrap_or(name)
-        })),
-        "maven" => Some(format!("mvn test -Dtest=\"{}\"", {
-            let name = file_path.rsplit('/').next().unwrap_or(file_path);
-            name.strip_suffix(".java")
-                .or_else(|| name.strip_suffix(".kt"))
-                .unwrap_or(name)
-        })),
+        "node" => {
+            if run_all.contains("vitest") || run_all.contains("jest") {
+                Some(format!("{} {}", run_all, file_path))
+            } else {
+                None
+            }
+        }
+        "dotnet" => {
+            let class = test_class_name(file_path, &[".cs", ".fs"])?;
+            Some(format!("dotnet test --filter FullyQualifiedName~{}", class))
+        }
+        "sbt" => {
+            let class = test_class_name(file_path, &[".scala"])?;
+            Some(format!("sbt \"testOnly *{}*\"", class))
+        }
+        "gradle" => {
+            let class = test_class_name(file_path, &[".java", ".kt", ".scala"])?;
+            Some(format!("./gradlew test --tests \"*{}*\"", class))
+        }
+        "maven" => {
+            let class = test_class_name(file_path, &[".java", ".kt", ".scala"])?;
+            Some(format!("mvn test -Dtest=\"{}\"", class))
+        }
+        "phpunit" => Some(format!("{} {}", run_all, file_path)),
         _ => None,
     }
 }
@@ -202,7 +225,6 @@ fn active_file_path(lua: &Lua) -> LuaResult<Option<String>> {
 
 /// Opens a terminal pane running the given test command.
 /// The process runs to completion; the pane stays open so the user can read output.
-/// Closing the pane does not trigger a "terminate?" warning since the process is dead.
 fn run_in_terminal(lua: &Lua, command: &str, cwd: &str, title: &str) -> LuaResult<()> {
     let terminal_view = require_table(lua, "plugins.terminal.view")?;
     let wrapped = format!(
@@ -316,13 +338,14 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                     };
                     let rtype: String = runner.get("type")?;
                     let cwd: String = runner.get("project_path")?;
+                    let run_all: String = runner.get("run_all")?;
                     let file_path = active_file_path(lua)?;
                     let cmd = match file_path {
-                        Some(ref fp) => file_test_command(&rtype, fp, &cwd)
-                            .unwrap_or_else(|| {
-                                runner.get::<String>("run_all").unwrap_or_default()
-                            }),
-                        None => runner.get("run_all")?,
+                        Some(ref fp) => {
+                            file_test_command(&rtype, fp, &cwd, &run_all)
+                                .unwrap_or_else(|| run_all.clone())
+                        }
+                        None => run_all.clone(),
                     };
                     let title = match file_path {
                         Some(ref fp) => {

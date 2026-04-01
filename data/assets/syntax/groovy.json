@@ -1,0 +1,264 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Groovy",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\\"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "13"
+},
+  "type": "string"
+}
+},
+  "13": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "15"
+},
+  "type": "string"
+}
+},
+  "15": {
+  "kind": "array",
+  "values": ["'''", "'''"]
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "17"
+},
+  "type": "string"
+}
+},
+  "17": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "@[%a_][%w_%.]*",
+  "type": "keyword"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+[lLgG]?",
+  "type": "number"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "BigDecimal": "keyword2",
+  "BigInteger": "keyword2",
+  "Boolean": "keyword2",
+  "Byte": "keyword2",
+  "Closure": "keyword2",
+  "Double": "keyword2",
+  "Float": "keyword2",
+  "Integer": "keyword2",
+  "List": "keyword2",
+  "Long": "keyword2",
+  "Map": "keyword2",
+  "Object": "keyword2",
+  "Set": "keyword2",
+  "Short": "keyword2",
+  "String": "keyword2",
+  "abstract": "keyword",
+  "as": "keyword",
+  "assert": "keyword",
+  "boolean": "keyword",
+  "break": "keyword",
+  "byte": "keyword",
+  "case": "keyword",
+  "catch": "keyword",
+  "char": "keyword",
+  "class": "keyword",
+  "continue": "keyword",
+  "def": "keyword",
+  "default": "keyword",
+  "do": "keyword",
+  "double": "keyword",
+  "else": "keyword",
+  "enum": "keyword",
+  "extends": "keyword",
+  "false": "literal",
+  "final": "keyword",
+  "finally": "keyword",
+  "float": "keyword",
+  "for": "keyword",
+  "if": "keyword",
+  "implements": "keyword",
+  "import": "keyword",
+  "in": "keyword",
+  "instanceof": "keyword",
+  "int": "keyword",
+  "interface": "keyword",
+  "long": "keyword",
+  "native": "keyword",
+  "new": "keyword",
+  "null": "literal",
+  "package": "keyword",
+  "private": "keyword",
+  "protected": "keyword",
+  "public": "keyword",
+  "return": "keyword",
+  "short": "keyword",
+  "static": "keyword",
+  "super": "keyword",
+  "switch": "keyword",
+  "synchronized": "keyword",
+  "this": "keyword",
+  "throw": "keyword",
+  "throws": "keyword",
+  "trait": "keyword",
+  "transient": "keyword",
+  "true": "literal",
+  "try": "keyword",
+  "var": "keyword",
+  "void": "keyword",
+  "volatile": "keyword",
+  "while": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "0b[01_]+[lLgG]?",
+  "type": "number"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[eE]?[%+%-]?[%d_]*[fFdDgGlL]?",
+  "type": "number"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:]+",
+  "type": "operator"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "24": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.groovy$", "%.gradle$", "%.gvy$", "%.gy$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "24"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "comment"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

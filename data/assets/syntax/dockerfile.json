@@ -1,0 +1,166 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "comment": "#",
+  "files": {
+  "$ref": "3"
+},
+  "headers": "^FROM%s",
+  "name": "Dockerfile",
+  "patterns": {
+  "$ref": "4"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["'", "'"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "%${[^}]+}",
+  "type": "keyword2"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$[%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "%-%-[%a_][%w_%-]*",
+  "type": "keyword"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-]?%d+%.?%d*",
+  "type": "number"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "^%s*()[%a_]+",
+  "type": {
+  "$ref": "17"
+}
+}
+},
+  "17": {
+  "kind": "array",
+  "values": ["normal", "keyword"]
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_%-%.]*()%s*()=",
+  "type": {
+  "$ref": "19"
+}
+}
+},
+  "19": {
+  "kind": "array",
+  "values": ["function", "normal", "operator"]
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "ADD": "keyword",
+  "ARG": "keyword",
+  "CMD": "keyword",
+  "COPY": "keyword",
+  "ENTRYPOINT": "keyword",
+  "ENV": "keyword",
+  "EXPOSE": "keyword",
+  "FROM": "keyword",
+  "HEALTHCHECK": "keyword",
+  "LABEL": "keyword",
+  "MAINTAINER": "keyword",
+  "ONBUILD": "keyword",
+  "RUN": "keyword",
+  "SHELL": "keyword",
+  "STOPSIGNAL": "keyword",
+  "USER": "keyword",
+  "VOLUME": "keyword",
+  "WORKDIR": "keyword",
+  "AS": "keyword",
+  "as": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["Dockerfile$", "Dockerfile%.[%w_.-]+$", "%.dockerfile$"]
+},
+  "4": {
+  "kind": "array",
+  "values": [{
+  "$ref": "5"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "18"
+}]
+},
+  "5": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["\"", "\"", "\\"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}
