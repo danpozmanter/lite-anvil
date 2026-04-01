@@ -25,21 +25,8 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                         let gen_pred: LuaFunction = cmd.get("generate_predicate")?;
                         let predicate_fn: LuaFunction = gen_pred.call::<LuaFunction>(predicate)?;
                         let cmd_map: LuaTable = cmd.get("map")?;
-                        let core: LuaTable = lua
-                            .globals()
-                            .get::<LuaTable>("package")?
-                            .get::<LuaTable>("loaded")?
-                            .get("core")?;
-
                         for pair in fn_map.pairs::<String, LuaFunction>() {
                             let (name, func) = pair?;
-                            if cmd_map.contains_key(&*name)? {
-                                let log_quiet: LuaFunction = core.get("log_quiet")?;
-                                log_quiet.call::<()>((
-                                    "Replacing existing command \"%s\"",
-                                    name.clone(),
-                                ))?;
-                            }
                             let entry = lua.create_table()?;
                             entry.set("predicate", predicate_fn.clone())?;
                             entry.set("perform", func)?;

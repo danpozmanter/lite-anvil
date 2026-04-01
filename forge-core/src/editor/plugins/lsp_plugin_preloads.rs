@@ -1461,6 +1461,10 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                 if let Ok(LuaValue::Table(existing)) = clients.get::<LuaValue>(key.clone()) {
                     return Ok(LuaValue::Table(existing));
                 }
+                let native: LuaTable = req(lua, "lsp_manager")?;
+                if native.get::<LuaFunction>("is_failed")?.call::<bool>(key.clone())? {
+                    return Ok(LuaValue::Nil);
+                }
                 // Build on_notification and on_exit callbacks
                 let mk2 = Arc::clone(&mk);
                 let on_notification =
@@ -1472,6 +1476,29 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                                 .get::<LuaTable>("params")
                                 .or_else(|_| lua.create_table())?;
                             mgr_publish_diagnostics(lua, &m, &client, &params)?;
+                        } else if method.contains("progress")
+                            || method.contains("notifyWorkspace")
+                            || method.contains("projectLoading")
+                        {
+                            // Surface server progress to the log so users
+                            // know the server is alive and loading.
+                            let name: String = client.get("name").unwrap_or_default();
+                            let detail = if let Ok(params) = message.get::<LuaTable>("params") {
+                                params
+                                    .get::<String>("content")
+                                    .or_else(|_| params.get::<String>("message"))
+                                    .unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+                            let core: LuaTable = req(lua, "core")?;
+                            if detail.is_empty() {
+                                core.get::<LuaFunction>("log")?
+                                    .call::<()>(format!("LSP {name}: {method}"))?;
+                            } else {
+                                core.get::<LuaFunction>("log")?
+                                    .call::<()>(format!("LSP {name}: {detail}"))?;
+                            }
                         }
                         Ok(())
                     })?;
@@ -1481,6 +1508,30 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                     let m: LuaTable = lua.registry_value(&mk3)?;
                     let clients: LuaTable = m.get("clients")?;
                     clients.set(key2.clone(), LuaValue::Nil)?;
+                    let was_initialized: bool =
+                        exited_client.get("is_initialized").unwrap_or(false);
+                    let shutting_down: bool =
+                        exited_client.get("is_shutting_down").unwrap_or(false);
+                    let name: String = exited_client.get("name").unwrap_or_default();
+                    if !was_initialized {
+                        // Never finished initializing -- mark failed to prevent
+                        // retries and warn the user.
+                        let native: LuaTable = req(lua, "lsp_manager")?;
+                        native
+                            .get::<LuaFunction>("mark_failed")?
+                            .call::<()>(key2.clone())?;
+                        let core: LuaTable = req(lua, "core")?;
+                        core.get::<LuaFunction>("warn")?
+                            .call::<()>(format!(
+                                "LSP server {} exited before initialization completed",
+                                name,
+                            ))?;
+                    } else if !shutting_down {
+                        // Was running but exited unexpectedly.
+                        let core: LuaTable = req(lua, "core")?;
+                        core.get::<LuaFunction>("warn")?
+                            .call::<()>(format!("LSP server {} exited unexpectedly", name))?;
+                    }
                     let doc_state: LuaTable = m.get("doc_state")?;
                     let mut to_remove: Vec<LuaValue> = Vec::new();
                     for pair in doc_state.clone().pairs::<LuaValue, LuaTable>() {
@@ -1514,6 +1565,8 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                             Some(LuaValue::String(s)) => s.to_str()?.to_owned(),
                             _ => "unknown".to_owned(),
                         };
+                        let native: LuaTable = req(lua, "lsp_manager")?;
+                        native.get::<LuaFunction>("mark_failed")?.call::<()>(key)?;
                         let core: LuaTable = req(lua, "core")?;
                         core.get::<LuaFunction>("warn")?.call::<()>(format!(
                             "Failed to start LSP {}: {}",
@@ -1548,6 +1601,30 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                     let def = lua.create_table()?;
                     def.set("dynamicRegistration", false)?;
                     td.set("definition", def)?;
+                    let type_def = lua.create_table()?;
+                    type_def.set("dynamicRegistration", false)?;
+                    td.set("typeDefinition", type_def)?;
+                    let impl_cap = lua.create_table()?;
+                    impl_cap.set("dynamicRegistration", false)?;
+                    td.set("implementation", impl_cap)?;
+                    let refs = lua.create_table()?;
+                    refs.set("dynamicRegistration", false)?;
+                    td.set("references", refs)?;
+                    let doc_sym = lua.create_table()?;
+                    doc_sym.set("dynamicRegistration", false)?;
+                    td.set("documentSymbol", doc_sym)?;
+                    let code_action = lua.create_table()?;
+                    code_action.set("dynamicRegistration", false)?;
+                    td.set("codeAction", code_action)?;
+                    let call_hierarchy = lua.create_table()?;
+                    call_hierarchy.set("dynamicRegistration", false)?;
+                    td.set("callHierarchy", call_hierarchy)?;
+                    let type_hierarchy = lua.create_table()?;
+                    type_hierarchy.set("dynamicRegistration", false)?;
+                    td.set("typeHierarchy", type_hierarchy)?;
+                    let sig_help = lua.create_table()?;
+                    sig_help.set("dynamicRegistration", false)?;
+                    td.set("signatureHelp", sig_help)?;
                     let rename = lua.create_table()?;
                     rename.set("dynamicRegistration", false)?;
                     rename.set("prepareSupport", false)?;
@@ -1655,6 +1732,9 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                     }
                     Ok(())
                 })?;
+                req(lua, "core")?.get::<LuaFunction>("log")?.call::<()>(
+                    format!("LSP starting {}", spec_name),
+                )?;
                 client2.get::<LuaFunction>("initialize")?.call::<()>((
                     client2.clone(),
                     init_params,
@@ -1723,15 +1803,9 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                         st.set("semantic_request_in_flight", false)?;
                     }
                     if !matches!(err, LuaValue::Nil) {
-                        let msg = if let LuaValue::Table(e) = &err {
-                            e.get::<String>("message")
-                                .unwrap_or_else(|_| format!("{:?}", err))
-                        } else {
-                            format!("{:?}", err)
-                        };
-                        let core: LuaTable = req(lua, "core")?;
-                        core.get::<LuaFunction>("warn")?
-                            .call::<()>(format!("LSP semantic tokens failed: {}", msg))?;
+                        // Semantic token errors are transient (e.g. server
+                        // still loading projects) and will be retried on the
+                        // next timer tick. Silently drop them.
                         return Ok(());
                     }
                     if let LuaValue::Table(result_t) = result {
@@ -2564,14 +2638,11 @@ fn init_manager_module(lua: &Lua) -> LuaResult<LuaValue> {
                 let cb = lua.create_function(move |lua, (result, err): (LuaValue, LuaValue)| {
                     let m: LuaTable = lua.registry_value(&mk2)?;
                     if !matches!(err, LuaValue::Nil) {
-                        let msg = if let LuaValue::Table(e) = &err {
-                            e.get::<String>("message").unwrap_or_default()
-                        } else {
-                            format!("{:?}", err)
-                        };
                         req(lua, "core")?
                             .get::<LuaFunction>("warn")?
-                            .call::<()>(format!("LSP definition failed: {}", msg))?;
+                            .call::<()>(
+                                "LSP server returned an error (project may still be loading)",
+                            )?;
                         return Ok(());
                     }
                     let locs = match result {
@@ -5412,6 +5483,10 @@ fn init_client_module(lua: &Lua) -> LuaResult<LuaValue> {
                     };
                     client.set("capabilities", caps)?;
                     client.set("is_initialized", true)?;
+                    let client_name: String = client.get("name").unwrap_or_default();
+                    req(lua, "core")?.get::<LuaFunction>("log")?.call::<()>(
+                        format!("LSP {} initialized", client_name),
+                    )?;
                     let notify: LuaFunction = client.get("notify")?;
                     notify.call::<bool>((
                         client.clone(),
@@ -5533,7 +5608,7 @@ fn init_client_module(lua: &Lua) -> LuaResult<LuaValue> {
                             for i in 1..=len {
                                 let line: String = stderr.get::<String>(i).unwrap_or_default();
                                 let trimmed = line.trim_end();
-                                if trimmed.contains("WARN notify error: No path was found") {
+                                if trimmed.contains("WARN notify error:") {
                                     continue;
                                 }
                                 let _ = lq.call::<LuaValue>(format!("LSP {client_name} stderr: {trimmed}"));

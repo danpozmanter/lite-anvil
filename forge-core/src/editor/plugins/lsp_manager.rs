@@ -2,7 +2,7 @@ use mlua::prelude::*;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::{Map, Number, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -39,24 +39,152 @@ struct State {
     diagnostic_meta: HashMap<String, DiagnosticMeta>,
     docs: HashMap<String, DocState>,
     inlay_hints: HashMap<String, Value>,
+    /// Keys that failed to start; prevents repeated spawn attempts until config reload.
+    failed: HashSet<String>,
 }
 
 static STATE: Lazy<Mutex<State>> = Lazy::new(|| Mutex::new(State::default()));
 
 fn builtin_specs() -> Vec<Spec> {
-    vec![Spec {
-        name: "rust_analyzer".to_string(),
-        command: Value::Array(vec![Value::String("rust-analyzer".to_string())]),
-        filetypes: vec!["rust".to_string()],
-        root_patterns: vec![
-            "Cargo.toml".to_string(),
-            "rust-project.json".to_string(),
-            ".git".to_string(),
-        ],
-        initialization_options: None,
-        settings: None,
-        env: None,
-    }]
+    vec![
+        Spec {
+            name: "rust_analyzer".to_string(),
+            command: Value::Array(vec![Value::String("rust-analyzer".to_string())]),
+            filetypes: vec!["rust".to_string()],
+            root_patterns: vec![
+                "Cargo.toml".to_string(),
+                "rust-project.json".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "omnisharp".to_string(),
+            command: Value::Array(vec![
+                "OmniSharp".to_string(),
+                "-lsp".to_string(),
+            ].into_iter().map(Value::String).collect()),
+            filetypes: vec!["c#".to_string()],
+            root_patterns: vec![".sln".to_string(), ".csproj".to_string(), ".git".to_string()],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "fsautocomplete".to_string(),
+            command: Value::Array(vec![
+                "fsautocomplete".to_string(),
+                "--adaptive-lsp-server-enabled".to_string(),
+            ].into_iter().map(Value::String).collect()),
+            filetypes: vec!["f#".to_string()],
+            root_patterns: vec![
+                ".fsproj".to_string(),
+                ".sln".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: Some(serde_json::json!({
+                "AutomaticWorkspaceInit": true
+            })),
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "jdtls".to_string(),
+            command: Value::Array(vec![Value::String("jdtls".to_string())]),
+            filetypes: vec!["java".to_string()],
+            root_patterns: vec![
+                "pom.xml".to_string(),
+                "build.gradle".to_string(),
+                "build.gradle.kts".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "kotlin_language_server".to_string(),
+            command: Value::Array(vec![Value::String("kotlin-language-server".to_string())]),
+            filetypes: vec!["kotlin".to_string()],
+            root_patterns: vec![
+                "build.gradle".to_string(),
+                "build.gradle.kts".to_string(),
+                "pom.xml".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "pyright".to_string(),
+            command: Value::Array(vec![
+                "pyright-langserver".to_string(),
+                "--stdio".to_string(),
+            ].into_iter().map(Value::String).collect()),
+            filetypes: vec!["python".to_string()],
+            root_patterns: vec![
+                "pyproject.toml".to_string(),
+                "setup.py".to_string(),
+                "pyrightconfig.json".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "gopls".to_string(),
+            command: Value::Array(vec![Value::String("gopls".to_string())]),
+            filetypes: vec!["go".to_string()],
+            root_patterns: vec![
+                "go.mod".to_string(),
+                "go.work".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "typescript_language_server".to_string(),
+            command: Value::Array(vec![
+                "typescript-language-server".to_string(),
+                "--stdio".to_string(),
+            ].into_iter().map(Value::String).collect()),
+            filetypes: vec![
+                "javascript".to_string(),
+                "typescript".to_string(),
+                "tsx".to_string(),
+            ],
+            root_patterns: vec![
+                "tsconfig.json".to_string(),
+                "jsconfig.json".to_string(),
+                "package.json".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+        Spec {
+            name: "intelephense".to_string(),
+            command: Value::Array(vec![
+                "intelephense".to_string(),
+                "--stdio".to_string(),
+            ].into_iter().map(Value::String).collect()),
+            filetypes: vec!["php".to_string()],
+            root_patterns: vec![
+                "composer.json".to_string(),
+                ".git".to_string(),
+            ],
+            initialization_options: None,
+            settings: None,
+            env: None,
+        },
+    ]
 }
 
 fn lua_to_json(value: LuaValue) -> LuaResult<Value> {
@@ -446,6 +574,7 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
             state.diagnostics.clear();
             state.diagnostic_meta.clear();
             state.docs.clear();
+            state.failed.clear();
             state.diagnostics.shrink_to_fit();
             state.diagnostic_meta.shrink_to_fit();
             state.docs.shrink_to_fit();
@@ -545,10 +674,32 @@ pub fn make_module(lua: &Lua) -> LuaResult<LuaTable> {
             state.diagnostics.clear();
             state.diagnostic_meta.clear();
             state.docs.clear();
+            state.failed.clear();
             state.diagnostics.shrink_to_fit();
             state.diagnostic_meta.shrink_to_fit();
             state.docs.shrink_to_fit();
             Ok(true)
+        })?,
+    )?;
+
+    module.set(
+        "mark_failed",
+        lua.create_function(|_, key: String| {
+            STATE.lock().failed.insert(key);
+            Ok(())
+        })?,
+    )?;
+
+    module.set(
+        "is_failed",
+        lua.create_function(|_, key: String| Ok(STATE.lock().failed.contains(&key)))?,
+    )?;
+
+    module.set(
+        "clear_failed",
+        lua.create_function(|_, ()| {
+            STATE.lock().failed.clear();
+            Ok(())
         })?,
     )?;
 

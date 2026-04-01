@@ -73,13 +73,15 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                         LuaValue::String(s) => s.to_str()?.to_string(),
                         _ => String::new(),
                     };
+                    let at: String = item.get::<String>("at").unwrap_or_default();
                     let text_lines: i64 = lines_fn.call(text)?;
                     let info_lines: i64 = if info_str.is_empty() {
                         0
                     } else {
                         lines_fn.call(info_str)?
                     };
-                    let l = 1 + text_lines + info_lines;
+                    let at_lines: i64 = if at.is_empty() { 0 } else { 1 };
+                    let l = at_lines + text_lines + info_lines;
 
                     let font_h: f64 = match &font {
                         LuaValue::Table(t) => t.call_method("get_height", ())?,
@@ -639,12 +641,14 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                             }
 
                             let at: String = item.get("at")?;
-                            let at_str = format!("at {}", common.call_function::<String>("home_encode", at)?);
-                            common.call_function::<LuaValue>(
-                                "draw_text",
-                                (font.clone(), style_dim.clone(), at_str, "left", x, draw_y, remaining_w, lh),
-                            )?;
-                            draw_y += lh;
+                            if !at.is_empty() {
+                                let at_str = format!("at {}", common.call_function::<String>("home_encode", at)?);
+                                common.call_function::<LuaValue>(
+                                    "draw_text",
+                                    (font.clone(), style_dim.clone(), at_str, "left", x, draw_y, remaining_w, lh),
+                                )?;
+                                draw_y += lh;
+                            }
 
                             let info: LuaValue = item.get("info")?;
                             if let LuaValue::String(info_str) = info {

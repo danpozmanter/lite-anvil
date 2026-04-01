@@ -247,12 +247,18 @@ fn set_scroll(view: &LuaTable, scroll_src: Option<LuaTable>) -> LuaResult<()> {
     Ok(())
 }
 
-fn load_view(lua: &Lua, core: &LuaTable, spec: &LuaTable) -> LuaResult<Option<LuaTable>> {
+fn load_view(
+    lua: &Lua,
+    core: &LuaTable,
+    spec: &LuaTable,
+    project_path: &str,
+) -> LuaResult<Option<LuaTable>> {
     let spec_type: String = spec.get("type")?;
     if spec_type == "doc" {
         let doc_view = require_table(lua, "core.docview")?;
         let open_doc: LuaFunction = core.get("open_doc")?;
         let filename: LuaValue = spec.get("filename")?;
+        let was_new_file = spec.get::<Option<LuaString>>("text")?.is_some();
         let doc: LuaValue = match filename {
             LuaValue::Nil => open_doc.call(())?,
             value => {
@@ -260,16 +266,22 @@ fn load_view(lua: &Lua, core: &LuaTable, spec: &LuaTable) -> LuaResult<Option<Lu
                     LuaValue::String(s) => s.to_str()?.to_string(),
                     _ => return Ok(None),
                 };
+                // Resolve relative paths against the project root.
+                let resolved = if std::path::Path::new(&filename).is_absolute() {
+                    filename
+                } else {
+                    format!("{}/{}", project_path, filename)
+                };
                 let active = bool_field(spec, "active")?;
                 if active {
-                    match open_doc.call::<LuaValue>(filename) {
+                    match open_doc.call::<LuaValue>(resolved) {
                         Ok(doc) => doc,
                         Err(_) => return Ok(None),
                     }
                 } else {
                     let opts = lua.create_table()?;
                     opts.set("lazy_restore", true)?;
-                    match open_doc.call::<LuaValue>((filename, opts)) {
+                    match open_doc.call::<LuaValue>((resolved, opts)) {
                         Ok(doc) => doc,
                         Err(_) => return Ok(None),
                     }
@@ -285,6 +297,12 @@ fn load_view(lua: &Lua, core: &LuaTable, spec: &LuaTable) -> LuaResult<Option<Lu
             _ => return Ok(None),
         };
         let doc: LuaTable = view.get("doc")?;
+        // If the file no longer exists on disk but was a real file (not
+        // an unsaved scratch buffer), skip it instead of showing a
+        // phantom blank doc.
+        if bool_field(&doc, "new_file")? && !was_new_file {
+            return Ok(None);
+        }
         if bool_field(&doc, "new_file")? {
             if let Some(text) = spec.get::<Option<LuaString>>("text")? {
                 doc.call_method::<()>("insert", (1, 1, text.to_str()?.to_string()))?;
@@ -344,7 +362,12 @@ fn load_view(lua: &Lua, core: &LuaTable, spec: &LuaTable) -> LuaResult<Option<Lu
     Ok(Some(view))
 }
 
-fn load_node(lua: &Lua, node: &LuaTable, spec: &LuaTable) -> LuaResult<Option<LuaTable>> {
+fn load_node(
+    lua: &Lua,
+    node: &LuaTable,
+    spec: &LuaTable,
+    project_path: &str,
+) -> LuaResult<Option<LuaTable>> {
     let doc_view = require_table(lua, "core.docview")?;
     let spec_type: String = spec.get("type")?;
     if spec_type == "leaf" {
@@ -355,7 +378,9 @@ fn load_node(lua: &Lua, node: &LuaTable, spec: &LuaTable) -> LuaResult<Option<Lu
         for (idx, value) in views.sequence_values::<LuaTable>().enumerate() {
             let value = value?;
             let idx = idx as i64 + 1;
-            if let Some(view) = load_view(lua, &require_table(lua, "core")?, &value)? {
+            if let Some(view) =
+                load_view(lua, &require_table(lua, "core")?, &value, project_path)?
+            {
                 if bool_field(&value, "active")? {
                     result = Some(view.clone());
                 }
@@ -390,8 +415,8 @@ fn load_node(lua: &Lua, node: &LuaTable, spec: &LuaTable) -> LuaResult<Option<Lu
     let b: LuaTable = node.get("b")?;
     let spec_a: LuaTable = spec.get("a")?;
     let spec_b: LuaTable = spec.get("b")?;
-    let res1 = load_node(lua, &a, &spec_a)?;
-    let res2 = load_node(lua, &b, &spec_b)?;
+    let res1 = load_node(lua, &a, &spec_a, project_path)?;
+    let res2 = load_node(lua, &b, &spec_b, project_path)?;
     let a_empty = a.call_method::<bool>("is_empty", ())?;
     let b_empty = b.call_method::<bool>("is_empty", ())?;
     let a_primary = bool_field(&a, "is_primary_node")?;
@@ -537,7 +562,7 @@ fn load_workspace(lua: &Lua) -> LuaResult<bool> {
     let Some(root) = get_unlocked_root(lua, &root_node)? else {
         return Ok(false);
     };
-    let active_view = load_node(lua, &root, &documents)?;
+    let active_view = load_node(lua, &root, &documents, &project_path)?;
     if let Some(active_view) = active_view {
         let set_active_view: LuaFunction = core.get("set_active_view")?;
         set_active_view.call::<()>(active_view)?;
@@ -563,6 +588,38 @@ fn install(lua: &Lua) -> LuaResult<LuaTable> {
     }
     core.set("__workspace_native_installed", true)?;
 
+    // Register palette commands.
+    let command = require_table(lua, "core.command")?;
+    let cmds = lua.create_table()?;
+
+    cmds.set(
+        "workspace:clear-project-memory",
+        lua.create_function(|lua, ()| {
+            let storage = require_table(lua, "core.storage")?;
+            storage.get::<LuaFunction>("clear")?.call::<()>(STORAGE_MODULE)?;
+            let core = require_table(lua, "core")?;
+            core.get::<LuaFunction>("log")?.call::<()>(
+                "Cleared all saved workspace/project memory.",
+            )?;
+            Ok(())
+        })?,
+    )?;
+
+    cmds.set(
+        "workspace:clear-recents",
+        lua.create_function(|lua, ()| {
+            let core = require_table(lua, "core")?;
+            core.set("recent_projects", lua.create_table()?)?;
+            core.set("recent_files", lua.create_table()?)?;
+            core.get::<LuaFunction>("log")?.call::<()>(
+                "Cleared recent projects and files.",
+            )?;
+            Ok(())
+        })?,
+    )?;
+
+    command.call_function::<()>("add", (LuaValue::Nil, cmds))?;
+
     let register_session_load_hook: LuaFunction = core.get("register_session_load_hook")?;
     let load_hook = lua.create_function(|lua, _: LuaMultiValue| {
         if let Err(e) = load_workspace(lua) {
@@ -577,7 +634,11 @@ fn install(lua: &Lua) -> LuaResult<LuaTable> {
         if let Err(e) = save_workspace(lua) {
             log::warn!("failed to save workspace on set_project: {e}");
         }
-        old_set_project.call::<LuaValue>(project)
+        let result = old_set_project.call::<LuaValue>(project)?;
+        if let Err(e) = load_workspace(lua) {
+            log::warn!("failed to load workspace on set_project: {e}");
+        }
+        Ok(result)
     })?;
     core.set("set_project", set_project_wrapper)?;
 

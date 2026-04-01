@@ -1,5 +1,26 @@
 # Change Log
 
+## [1.4.0] - 2026-04-01 — Per-project workspace memory, builtin LSP for 10 languages, log cleanup.
+
+* Enable workspace plugin: per-project open file/tab memory now activates (was registered but never loaded).
+* Fix workspace not restoring on project switch: `load_workspace` was only called at startup, not after `set_project`.
+* Fix workspace restore opening phantom blank docs for files that no longer exist or have relative paths: resolve filenames against the saved project root, and skip files that are missing from disk.
+* Add `workspace:clear-project-memory` palette command to clear all saved workspace state.
+* Add `workspace:clear-recents` palette command to clear recent projects and recent files lists.
+* Add builtin LSP specs for C# (OmniSharp), F# (fsautocomplete), Java (jdtls), Kotlin (kotlin-language-server), Python (pyright), Go (gopls), JavaScript/TypeScript/TSX (typescript-language-server), and PHP (intelephense).
+* Fix LSP client not declaring support for references, type definition, implementation, document symbols, code actions, call/type hierarchy, and signature help.
+* Fix fsautocomplete not loading F# projects: add `AutomaticWorkspaceInit: true` to initialization options.
+* Add LSP_SUPPORT.md documenting all builtin language servers and custom configuration.
+* Fix LSP server spawn spamming: failed servers are remembered and not retried until config reload.
+* Suppress LSP semantic token errors during server startup (retried automatically on next tick).
+* Suppress raw server error dump on go-to-definition failure; show user-friendly message instead.
+* Warn the user when an LSP server exits before initialization completes or crashes unexpectedly.
+* Log LSP server lifecycle: "LSP starting X" and "LSP X initialized" entries in the log.
+* Log LSP server progress/workspace notifications (e.g. fsautocomplete project loading status).
+* Remove noisy per-plugin "Loaded plugin", "Registered lazy", "Replacing existing command", and "Opened doc" log messages; keep only the summary line.
+* Remove `at [C]:0` from log entries originating in Rust; Lua-sourced entries still show source location.
+* Filter LSP stderr `WARN notify error:` messages (file watcher noise like "Too many open files" from Rust Analyzer).
+
 ## [1.3.6] - 2026-04-01 — Test runner fixes, language support, and new syntax highlighting.
 
 * Fix F#/C# projects with a `tests/` directory being misdetected as Python unittest.
@@ -12,6 +33,7 @@
 * Add XML syntax highlighting for .NET project files (`.csproj`, `.fsproj`, `.vbproj`, `.vcxproj`, `.sln`, `.props`, `.targets`, `.nuspec`), `.pom`, `.svg`, `.plist`, and `.xaml`.
 * Add Groovy syntax highlighting (`.groovy`, `.gradle`).
 * Add Dockerfile syntax highlighting.
+* Add builtin LSP specs for C# (OmniSharp), F# (fsautocomplete), Java (jdtls), and Kotlin (kotlin-language-server).
 
 ## [1.3.5] - 2026-04-01 — Removing legacy files.
 

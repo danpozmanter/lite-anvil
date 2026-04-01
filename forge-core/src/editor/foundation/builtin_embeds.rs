@@ -2911,8 +2911,6 @@ fn register_plugin_loader(
                 let pathsep: String = lua.globals().get("PATHSEP")?;
                 let userdir: String = lua.globals().get("USERDIR")?;
                 let datadir: String = lua.globals().get("DATADIR")?;
-                let mod_version_string: String = lua.globals().get("MOD_VERSION_STRING")?;
-
                 let mut no_errors = true;
                 let refused_list = lua.create_table()?;
                 let ud_entry = lua.create_table()?;
@@ -3149,12 +3147,7 @@ fn register_plugin_loader(
                         let syntax: LuaTable = require.call("core.syntax")?;
                         let register_lazy: LuaFunction = syntax.get("register_lazy_plugin")?;
                         register_lazy.call::<()>(plugin.clone())?;
-                        let dir: String = dirname.call(file.clone())?;
-                        log_quiet.call::<()>((
-                            "Registered lazy language plugin %q from %s",
-                            name.clone(),
-                            dir,
-                        ))?;
+                        let _dir: String = dirname.call(file.clone())?;
                         continue;
                     }
 
@@ -3265,20 +3258,11 @@ fn register_plugin_loader(
                         }
 
                         add_cmd.call::<()>((predicate, map))?;
-                        let dir: String = dirname.call(file)?;
-                        log_quiet.call::<()>((
-                            "Registered lazy command plugin %q from %s",
-                            name,
-                            dir,
-                        ))?;
+                        let _dir: String = dirname.call(file)?;
                         continue;
                     }
 
                     // Normal plugin loading.
-                    let start_time: f64 = {
-                        let get_time: LuaFunction = system_t.get("get_time")?;
-                        get_time.call(())?
-                    };
                     let load_fn: LuaFunction = plugin.get("load")?;
                     let result: LuaMultiValue = try_fn.call((load_fn, plugin.clone()))?;
                     let vals: Vec<LuaValue> = result.into_vec();
@@ -3294,26 +3278,6 @@ fn register_plugin_loader(
                         .unwrap_or(false);
 
                     if ok {
-                        let vs: String = plugin
-                            .get::<Option<String>>("version_string")?
-                            .unwrap_or_default();
-                        let plugin_version = if vs != mod_version_string {
-                            format!("[{}]", vs)
-                        } else {
-                            String::new()
-                        };
-                        let end_time: f64 = {
-                            let get_time: LuaFunction = system_t.get("get_time")?;
-                            get_time.call(())?
-                        };
-                        let dir: LuaValue = dirname.call(file)?;
-                        log_quiet.call::<()>((
-                            "Loaded plugin %q%s from %s in %.1fms",
-                            name.clone(),
-                            plugin_version,
-                            dir,
-                            (end_time - start_time) * 1000.0,
-                        ))?;
                         let pc: LuaValue = plugins_conf.get(name.as_str())?;
                         if let LuaValue::Table(ref pct) = pc {
                             let onload: LuaValue = pct.get("onload")?;
@@ -3423,7 +3387,11 @@ fn register_logging(lua: &Lua, core: &LuaTable, state_key: &LuaRegistryKey) -> L
             let info: LuaTable = getinfo.call((2, "Sl"))?;
             let short_src: String = info.get("short_src")?;
             let currentline: i64 = info.get("currentline")?;
-            let at = format!("{}:{}", short_src, currentline);
+            let at = if short_src == "[C]" && currentline == 0 {
+                String::new()
+            } else {
+                format!("{}:{}", short_src, currentline)
+            };
 
             let traceback_info: LuaValue = if backtrace {
                 let traceback: LuaFunction = debug_mod.get("traceback")?;
@@ -3794,12 +3762,7 @@ fn register_doc_fns(lua: &Lua, core: &LuaTable) -> LuaResult<()> {
                     }
                 }
 
-                let log_quiet: LuaFunction = core.get("log_quiet")?;
-                if let Some(ref fname) = filename {
-                    log_quiet.call::<()>(("Opened doc \"%s\"", fname.clone()))?;
-                } else {
-                    log_quiet.call::<()>("Opened new doc")?;
-                }
+                let _log_quiet: LuaFunction = core.get("log_quiet")?;
 
                 Ok(doc)
             },

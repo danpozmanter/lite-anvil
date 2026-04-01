@@ -280,6 +280,7 @@ pub fn register_stubs(lua: &Lua) -> LuaResult<()> {
             "theme_toggle",
             "toolbarview",
             "trimwhitespace",
+            "workspace",
         ] {
             native_plugins.push(name)?;
         }
