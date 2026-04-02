@@ -1,0 +1,107 @@
+/* Lite-Anvil: clean dark/light with orange accent.
+   All text same intensity. No opacity tricks. */
+
+:root {
+  --md-primary-fg-color: #2a2a2a;
+  --md-primary-fg-color--light: #404040;
+  --md-primary-fg-color--dark: #222;
+  --md-accent-fg-color: #e8912d;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #1e1e1e;
+  --md-default-fg-color: #dcdcdc;
+  --md-primary-fg-color: #262626;
+  --md-primary-bg-color: #dcdcdc;
+  --md-accent-fg-color: #e8912d;
+  --md-code-bg-color: #2a2a2a;
+  --md-typeset-a-color: #e8912d;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #2a2a2a;
+  --md-primary-bg-color: #fff;
+  --md-accent-fg-color: #d47a1a;
+  --md-default-bg-color: #fafafa;
+}
+
+/* Hero section */
+.hero {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.hero h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.hero .tagline {
+  font-size: 1.2rem;
+  margin-bottom: 1.5rem;
+}
+
+.hero img.screenshot {
+  max-width: 100%;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  margin: 1.5rem 0;
+}
+
+/* Feature grid */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.feature-card {
+  padding: 1.25rem;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.feature-card h3 {
+  margin: 0 0 0.25rem 0;
+  color: var(--md-accent-fg-color);
+  font-size: 1rem;
+}
+
+.feature-card p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* Buttons */
+.button-row {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 1.5rem 0;
+}
+
+.button-row a {
+  display: inline-block;
+  padding: 0.6rem 1.5rem;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button-row .primary {
+  background: var(--md-accent-fg-color);
+  color: #fff;
+}
+
+.button-row .primary:hover {
+  background: #d07a1a;
+  color: #fff;
+}
+
+.button-row .secondary {
+  border: 1px solid var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+}
