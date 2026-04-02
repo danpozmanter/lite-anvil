@@ -1256,8 +1256,11 @@ fn register_init_fn(
             let active_proj: LuaValue = session.get("active_project")?;
             let recent_projects: LuaTable = core.get("recent_projects")?;
             let first_recent: LuaValue = recent_projects.get(1)?;
+            // If active_project is explicitly false, the user closed the
+            // project before quitting -- don't reopen a recent project.
             let mut project_dir: String = match active_proj {
                 LuaValue::String(s) => s.to_str()?.to_string(),
+                LuaValue::Boolean(false) => ".".to_string(),
                 _ => match first_recent {
                     LuaValue::String(s) => s.to_str()?.to_string(),
                     _ => ".".to_string(),

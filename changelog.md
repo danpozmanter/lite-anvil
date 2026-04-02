@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.5.1] - 2026-04-02 — Session fix.
+
+* Fix closed project reopening on restart: session restore now respects an explicitly closed project instead of falling back to the most recent one.
+
 ## [1.5.0] - 2026-04-02 — Bookmarks, indent guides, line sorting, sidebar improvements, and 15 new language servers.
 
 * Add bookmarks plugin: toggle (Ctrl+F2), next (F2), previous (Shift+F2), clear. Accent marker in gutter.
