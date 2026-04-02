@@ -105,3 +105,13 @@
   border: 1px solid var(--md-accent-fg-color);
   color: var(--md-accent-fg-color);
 }
+
+/* Hide sidebars */
+.md-sidebar {
+  display: none;
+}
+
+.md-content {
+  max-width: 52rem;
+  margin: 0 auto;
+}
