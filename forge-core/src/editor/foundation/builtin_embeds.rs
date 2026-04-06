@@ -453,7 +453,26 @@ fn register_local_helpers(
             let active_project: LuaValue = if let LuaValue::Table(ref rp_t) = rp {
                 rp_t.get("path")?
             } else {
-                LuaValue::Boolean(false)
+                let explicitly_closed: bool = core
+                    .get::<Option<bool>>("_project_explicitly_closed")?
+                    .unwrap_or(false);
+                if explicitly_closed {
+                    LuaValue::Boolean(false)
+                } else {
+                    // Preserve the last known project from recents so the
+                    // folder is not forgotten on restart.
+                    let recents: LuaValue = core.get("recent_projects")?;
+                    if let LuaValue::Table(ref rt) = recents {
+                        let first: LuaValue = rt.get(1)?;
+                        if matches!(first, LuaValue::String(_)) {
+                            first
+                        } else {
+                            LuaValue::Boolean(false)
+                        }
+                    } else {
+                        LuaValue::Boolean(false)
+                    }
+                }
             };
 
             let system: LuaTable = lua.globals().get("system")?;
@@ -1123,6 +1142,7 @@ fn register_project_fns(lua: &Lua, core: &LuaTable, _state_key: &LuaRegistryKey)
                 return Ok(LuaValue::Nil);
             }
 
+            core.set("_project_explicitly_closed", false)?;
             let add_project: LuaFunction = core.get("add_project")?;
             let result: LuaValue = add_project.call(project)?;
             Ok(result)
@@ -1154,6 +1174,7 @@ fn register_project_fns(lua: &Lua, core: &LuaTable, _state_key: &LuaRegistryKey)
 
             let clear_caches: LuaFunction = core.get("_clear_native_runtime_caches")?;
             clear_caches.call::<()>(())?;
+            core.set("_project_explicitly_closed", true)?;
             core.set("redraw", true)?;
             Ok(())
         })?,

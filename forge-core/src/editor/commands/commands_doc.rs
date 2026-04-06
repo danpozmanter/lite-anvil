@@ -1261,27 +1261,29 @@ fn register_commands(lua: &Lua) -> LuaResult<()> {
                                 core.call_function::<Option<LuaTable>>("root_project", ())?;
                             let home_expand: String =
                                 common.call_function("home_expand", input.clone())?;
-                            let abs = if let Some(project) = project {
-                                project.call_method::<String>(
+                            let abs: Option<String> = if let Some(project) = project {
+                                Some(project.call_method::<String>(
                                     "absolute_path",
                                     project.call_method::<String>(
                                         "normalize_path",
                                         home_expand.clone(),
                                     )?,
-                                )?
+                                )?)
                             } else {
                                 lua.globals()
                                     .get::<LuaTable>("system")?
-                                    .call_function::<String>("absolute_path", home_expand.clone())?
+                                    .call_function::<Option<String>>("absolute_path", home_expand.clone())?
                             };
-                            status_view.call_method::<()>(
-                                "show_tooltip",
-                                format!(
-                                    "{} -> {}",
-                                    doc_for_suggest.call_method::<String>("get_name", ())?,
-                                    common.call_function::<String>("home_encode", abs)?
-                                ),
-                            )?;
+                            if let Some(abs) = abs {
+                                status_view.call_method::<()>(
+                                    "show_tooltip",
+                                    format!(
+                                        "{} -> {}",
+                                        doc_for_suggest.call_method::<String>("get_name", ())?,
+                                        common.call_function::<String>("home_encode", abs)?
+                                    ),
+                                )?;
+                            }
                             let suggestions: LuaValue =
                                 common.call_function("path_suggest", home_expand)?;
                             common.call_function("home_encode_list", suggestions)
@@ -1363,25 +1365,27 @@ fn register_commands(lua: &Lua) -> LuaResult<()> {
                                 common.call_function("home_expand", input.clone())?;
                             let project =
                                 core.call_function::<Option<LuaTable>>("root_project", ())?;
-                            let abs = if let Some(project) = project {
-                                project.call_method::<String>(
+                            let abs: Option<String> = if let Some(project) = project {
+                                Some(project.call_method::<String>(
                                     "absolute_path",
                                     project
                                         .call_method::<String>("normalize_path", target.clone())?,
-                                )?
+                                )?)
                             } else {
                                 lua.globals()
                                     .get::<LuaTable>("system")?
-                                    .call_function::<String>("absolute_path", target.clone())?
+                                    .call_function::<Option<String>>("absolute_path", target.clone())?
                             };
-                            status_view.call_method::<()>(
-                                "show_tooltip",
-                                format!(
-                                    "{} -> {}",
-                                    old_filename_suggest,
-                                    common.call_function::<String>("home_encode", abs)?
-                                ),
-                            )?;
+                            if let Some(abs) = abs {
+                                status_view.call_method::<()>(
+                                    "show_tooltip",
+                                    format!(
+                                        "{} -> {}",
+                                        old_filename_suggest,
+                                        common.call_function::<String>("home_encode", abs)?
+                                    ),
+                                )?;
+                            }
                             common.call_function(
                                 "home_encode_list",
                                 common.call_function::<LuaValue>("path_suggest", target)?,

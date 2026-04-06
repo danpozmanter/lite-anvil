@@ -504,6 +504,11 @@ pub fn register_preload(lua: &Lua) -> LuaResult<()> {
                         let self_fname: LuaValue = this.get("filename")?;
                         let self_abs: LuaValue = this.get("abs_filename")?;
                         let filename_changed = fname != self_fname || abs_fname != self_abs;
+                        if matches!(abs_fname, LuaValue::Nil) {
+                            return Err(LuaError::runtime(
+                                "no absolute path for save; use save-as",
+                            ));
+                        }
                         let doc_native: LuaTable = require_table(lua, "doc_native")?;
                         let buf_id: LuaValue = this.get("buffer_id")?;
                         let crlf: LuaValue = this.get("crlf")?;

@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.5.5] - 2026-04-06 — Save crash and project folder memory fixes.
+
+* Fix crash when saving a file with no folder open.
+* Fix project folder being forgotten on restart.
+
 ## [1.5.4] - 2026-04-03 — Folder open post startup fix.
 
 * Fix crash on folder open after restart: `_goto_positions` table was nil when the arg-parsing block didn't run (e.g. on `core:restart`).
