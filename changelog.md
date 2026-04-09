@@ -1,5 +1,11 @@
 # Change Log
 
+## [2.1.1] - 2026-04-09 — Release pipeline + test workflow fixes.
+
+* Fixed release workflow regression: pinned `softprops/action-gh-release` to `@v2` (`@v3` does not exist).
+* Fixed Windows test job: vcpkg DLLs now on PATH so the test binary loads at runtime.
+* Fixed macOS keymap alias: `cmd` added to modifier ordering so Cmd+ aliases normalize correctly.
+
 ## [2.1.0] - 2026-04-09 — Windows terminal, Open Recent, macOS keys, many fixes.
 
 * Windows terminal support via piped stdin/stdout with reader thread (cmd.exe /Q).

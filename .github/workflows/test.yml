@@ -87,7 +87,12 @@ jobs:
             ${{ runner.os }}-${{ github.job }}-
 
       - name: Run tests
-        run: cargo test --all-features
+        shell: pwsh
+        run: |
+          # Put vcpkg's x64-windows bin dir on PATH so the test binary can
+          # load SDL3.dll / freetype.dll / pcre2*.dll at runtime.
+          $env:PATH = "C:\vcpkg\installed\x64-windows\bin;$env:PATH"
+          cargo test --all-features
 
   test-macos:
     name: macOS Tests

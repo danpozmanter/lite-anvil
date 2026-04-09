@@ -1,6 +1,6 @@
 [package]
 name = "lite-anvil"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "A lightweight code editor built in Rust with SDL3"

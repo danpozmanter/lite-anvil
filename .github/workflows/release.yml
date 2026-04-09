@@ -553,7 +553,7 @@ jobs:
         run: |
           find artifacts -mindepth 2 -maxdepth 2 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec mv {} artifacts/ \;
 
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |

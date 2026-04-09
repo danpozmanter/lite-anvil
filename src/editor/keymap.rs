@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use crate::editor::event::Modifiers;
 
-/// Modifier key ordering for normalization.
-const MOD_ORDER: &[&str] = &["ctrl", "alt", "shift"];
+/// Modifier key ordering for normalization. `cmd` is included so that the
+/// macOS alias loop in `with_defaults()` stores cmd+ entries under their
+/// expected normalized keys (e.g. `cmd+shift+r`, not `shift+cmd+r`).
+const MOD_ORDER: &[&str] = &["ctrl", "cmd", "alt", "shift"];
 
 /// Native keymap: maps normalized keystrokes to lists of command names.
 pub struct NativeKeymap {
