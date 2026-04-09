@@ -1,5 +1,17 @@
 # Change Log
 
+## [2.0.0] - 2026-04-08 — Entirely Rust - Lua Removed + UI/Ux refinemnent.
+
+* 100% Rust.
+* mlua (and Lua support, plugins) removed in favor of a fully native editor.
+* LSP startup consistency.
+* Minor memory optimizations.
+* Optional file dialog.
+* Code reorganization.
+* Smoother more correct syntax highlighting.
+* UI/Ux improvements including consistency.
+* Command palette command-naming simplification.
+
 ## [1.5.5] - 2026-04-06 — Save crash and project folder memory fixes.
 
 * Fix crash when saving a file with no folder open.

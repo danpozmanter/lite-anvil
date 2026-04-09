@@ -18,8 +18,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 | FreeType2 | `libfreetype6-dev` | `freetype-devel` | `freetype2` | `freetype` |
 | PCRE2 | `libpcre2-dev` | `pcre2-devel` | `pcre2` | `pcre2` |
 
-Lua 5.4 is **not** required — it is vendored by the `mlua` crate.
-
 On **Windows**, dependencies are resolved via vcpkg (see the CI workflow).
 
 ## Build

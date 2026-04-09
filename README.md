@@ -4,7 +4,7 @@
 
 **[Documentation](https://danpozmanter.github.io/lite-anvil/)** | **[Releases](https://github.com/danpozmanter/lite-anvil/releases)**
 
-A lightweight code editor built in Rust, with Lua for user plugins.
+A fast and lightweight code editor built in Rust with SDL3.
 
 Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
 
@@ -18,98 +18,43 @@ I do not intend to maintain or support this in any way, but wanted to share the 
 
 ## Features
 
-- **Mostly native Rust** — all core modules, views, commands, and bundled plugins are pure Rust via mlua. User plugins and config are Lua
-- **Built-in LSP** for 25+ languages with diagnostics, semantic highlighting, completion, hover, go-to-definition, references, rename, symbols, code actions, formatting, snippets, signature help, inlay hints, call/type hierarchy. See [LSP_SUPPORT.md](LSP_SUPPORT.md)
-- **Embedded PTY terminal** with ANSI colors, scrollback, color schemes, and configurable placement
-- **Integrated test runner** with auto-detection for Cargo, npm/vitest/jest, pytest, Go, dotnet, Gradle, Maven, sbt, PHPUnit, and Make
-- **Bookmarks** — toggle line bookmarks (Ctrl+F2), navigate with F2/Shift+F2, gutter markers
-- **Indent guides** — vertical lines at each indentation level (`indent-guide:toggle`)
-- **Line sorting** — sort, reverse, unique, case-insensitive sort on selected lines
-- **Per-project workspace memory** — open files/tabs/splits restore when switching projects
-- **Native file watching** via inotify/FSEvents/ReadDirectoryChanges for instant external-change detection
-- **Project-wide search, replace, and swap** plus native single-file find and replace
-- **Git integration** — branch/status in UI, tree highlighting, status view, diff views
-- **Multi-cursor editing**, command palette, project file picker, split panes
-- **Sidebar context menu** — Open, Copy Path, Copy Relative Path, Refresh, Rename, Delete, New File, New Folder
-- **Goto-line in file picker** — type `file.rs:42` to open at a specific line
-- **Find in selection** — limit search to the selected region (`Alt+S` to toggle)
-- **Minimap** — optional code overview sidebar with syntax-colored blocks, click/drag to scroll (`minimap:toggle`)
-- **Tab reordering** — drag tabs within a pane to reorder
-- **Smart undo** — consecutive typing merges into a single undo entry; Ctrl+Z undoes the entire run
-- **Session restore** — open files, active tab, line wrapping preference, font scale, and terminal state persist across restarts
-- **50 built-in syntax grammars** including Rust, Go, Python, TypeScript, TSX, F#, C#, Kotlin, Scala, Groovy, Dockerfile, Vue, Svelte, Zig, Haskell, Julia, Lisp, OCaml, Erlang, Elixir, Gleam, and more
-- **JSON-backed color themes** (`data/assets/themes/*.json`) — editable without recompiling
-- **"Open With" file associations** on Linux, macOS, and Windows for all supported file types
-- **Remote SSH editing** via `sshfs`
-- **Config-driven** UI theming, fonts, syntax colors, and behavior tuning through [`config.lua`](PLUGINS_GUIDE.md)
+- **Built-in LSP** with diagnostics, completion, hover, go-to-definition, references, inlay hints
+- **Embedded PTY terminal** with ANSI colors, scrollback, and multi-terminal support
+- **Indent guides** at each indentation level
+- **Line sorting** on selected lines
+- **Project-wide search** (Ctrl+Shift+F) with grep-based results
+- **Git gutter markers** showing added, modified, and deleted lines
+- **Code folding** with indent-based fold detection
+- **Native file watching** via inotify for external-change detection
+- **Single-file find and replace**
+- **Minimap** with syntax-colored blocks, click to scroll
+- **Session restore** -- open files, active tab, font scale persist across restarts
+- **50 built-in syntax grammars** including Rust, Go, Python, TypeScript, C, C++, Java, and more
+- **JSON-backed color themes** (`data/assets/themes/*.json`) with runtime cycling (Ctrl+Shift+P)
+- **Keyboard-navigated file/folder open** with filesystem autocomplete
 
-## Editing Workflows
+## Shortcuts
 
-### Autocomplete modes
-
-`config.plugins.autocomplete.mode`:
-
-- `lsp` (default): LSP completion items, triggered by `.`, `::`, etc.
-- `in_document`: symbols from the current document only
-- `totally_on`: symbols from all open documents plus syntax keywords
-- `off`: disables suggestions
-
-### Multi-cursor editing
-
-- `Ctrl+D` / `Cmd+D`: add next occurrence of selection
-- `Ctrl+Shift+L` / `Cmd+Shift+L`: select all occurrences
-- `Ctrl+Alt+L` / `Cmd+Option+L`: after Find, turn matches into multi-cursors
-
-### Remote SSH editing
-
-Mount a remote path with `sshfs`, then open it as a project.
-
-1. Command palette → `Remote Ssh Open Project` or `Remote Ssh Add Project`
-2. Enter `user@host:/absolute/path`
-3. Edit normally. Mount is cleaned up when the project is removed.
-
-Requires `sshfs` installed and working SSH authentication.
-
-### Useful shortcuts
-
-| Key | Action |
-|-----|--------|
 | Key | Action |
 |-----|--------|
 | `Ctrl+P` | Command palette |
-| `Ctrl+Shift+O` | Open file from project |
-| `Ctrl+Alt+O` | Open project folder |
-| `Ctrl+T` | Document symbols (LSP) |
-| `Ctrl+Alt+T` | Workspace symbols (LSP) |
+| `Ctrl+O` | Open file (autocomplete navigator) |
+| `Ctrl+Shift+O` | Open project folder |
+| `Ctrl+Shift+F` | Project-wide search |
+| `Ctrl+Shift+P` | Cycle color theme |
 | `Ctrl+=` / `Ctrl+-` | Font zoom in / out |
-| `F10` | Toggle line wrapping |
 | `Ctrl+F` | Find in file |
-| `Alt+S` | Toggle find-in-selection (while Find is open) |
 | `Ctrl+H` | Replace in file |
-| `Ctrl+F2` | Toggle bookmark |
-| `F2` / `Shift+F2` | Next / previous bookmark |
-| `Alt+F12` | Incoming calls (LSP call hierarchy) |
-| `Ctrl+Shift+F12` | Outgoing calls (LSP call hierarchy) |
-| `Alt+F11` | Supertypes (LSP type hierarchy) |
-| `Ctrl+Shift+F11` | Subtypes (LSP type hierarchy) |
-
-### Test runner
-
-The integrated test runner auto-detects your project's test framework and runs tests from the editor. Supported: Cargo, npm/vitest/jest, pytest, Go, dotnet, Gradle, Maven, sbt, PHPUnit, Make.
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+Shift+R` | Run all tests |
-
-Also available from the command palette: `test:run-all`, `test:run-file`, or via right-click context menu. Results appear in a terminal pane. Configure a custom command via `config.plugins.test_runner.custom_command`.
-
-### Call hierarchy
-
-Place the cursor on a function and press `Alt+F12` to see **incoming calls** (who calls this function) or `Ctrl+Shift+F12` for **outgoing calls** (what this function calls). Requires an LSP server that supports `callHierarchyProvider`. Also available from the command palette as `lsp:incoming-calls` and `lsp:outgoing-calls`.
-
-### Type hierarchy
-
-Place the cursor on a type and press `Alt+F11` to see **supertypes** (parent types) or `Ctrl+Shift+F11` for **subtypes** (child types). Requires an LSP server that supports `typeHierarchyProvider`. Also available from the command palette as `lsp:supertypes` and `lsp:subtypes`.
+| `Ctrl+M` | Toggle minimap |
+| `Alt+Z` | Toggle line wrapping |
+| `Ctrl+B` | Toggle sidebar |
+| `F5` | Toggle terminal |
+| `F12` | Go to definition (LSP) |
+| `Ctrl+K` | Hover info (LSP) |
+| `Ctrl+Shift+[` | Fold code block |
+| `Ctrl+Shift+]` | Unfold code block |
+| `Ctrl+W` | Close tab |
+| `Ctrl+Tab` | Next tab |
 
 ## Building
 
@@ -127,16 +72,10 @@ cargo build --release
 ```
 
 Rust 1.85+ required. See [BUILDING.md](BUILDING.md) for full instructions
-including macOS, Windows, packaging, and file association setup.
-
-## Plugins & Configuration
-
-Lite-Anvil is extensible via Lua plugins in `~/.config/lite-anvil/plugins/`.
-See [PLUGINS_GUIDE.md](PLUGINS_GUIDE.md) for the full API reference, config
-options, and copy-paste recipes.
+including macOS, Windows, and packaging.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT -- see [LICENSE](LICENSE).
 
 Font: [Lilex](https://github.com/mishamyrt/Lilex)

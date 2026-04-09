@@ -1,13 +1,13 @@
 ---
 title: Lite-Anvil - Lightweight Code Editor Built in Rust
-description: Fast, lightweight code editor built in Rust. Built-in LSP for 25+ languages, embedded terminal, Git integration, test runner, and 50+ syntax grammars. Supports Rust, Python, Go, TypeScript, C/C++, Java, Kotlin, Haskell, Zig, and more.
+description: Fast, lightweight code editor built in Rust with SDL3. Built-in LSP, embedded terminal, Git integration, and 50+ syntax grammars.
 ---
 
 <div class="hero" markdown>
 
 # Lite-Anvil
 
-<p class="tagline">A lightweight, lightning fast, and powerful code editor built in Rust, with Lua for user plugins.</p>
+<p class="tagline">A fast and lightweight code editor built in Rust with SDL3.</p>
 
 <div class="button-row">
   <a href="installation/" class="primary">Get Started</a>
@@ -26,7 +26,7 @@ description: Fast, lightweight code editor built in Rust. Built-in LSP for 25+ l
 
 ### Built-in LSP
 
-25+ languages with diagnostics, completion, hover, go-to-definition, references, rename, code actions, formatting, inlay hints, semantic highlighting, and call/type hierarchy.
+Diagnostics, completion, hover, go-to-definition, references, inlay hints, and more for Rust, Python, TypeScript, Go, C/C++, and other languages.
 
 </div>
 
@@ -34,15 +34,7 @@ description: Fast, lightweight code editor built in Rust. Built-in LSP for 25+ l
 
 ### Embedded Terminal
 
-Full PTY terminal with ANSI colors, scrollback, color schemes. Open bottom, left, right, or as a tab.
-
-</div>
-
-<div class="feature-card" markdown>
-
-### Integrated Test Runner
-
-Auto-detects Cargo, npm/vitest/jest, pytest, Go, dotnet, Gradle, Maven, sbt, PHPUnit, Make. Run all tests or the current file.
+Full PTY terminal with ANSI/VT100 colors, scrollback, and multi-terminal support.
 
 </div>
 
@@ -50,7 +42,7 @@ Auto-detects Cargo, npm/vitest/jest, pytest, Go, dotnet, Gradle, Maven, sbt, PHP
 
 ### Git Integration
 
-Branch/status in status bar, tree highlighting, diff views, stage/unstage, commit, push, pull, stash.
+Git status view, gutter markers for changed lines, push, pull, commit, stash from the command palette.
 
 </div>
 
@@ -58,7 +50,7 @@ Branch/status in status bar, tree highlighting, diff views, stage/unstage, commi
 
 ### 50+ Syntax Grammars
 
-Rust, Go, Python, TypeScript, C/C++, Java, Kotlin, Scala, F#, C#, Haskell, Zig, Elixir, Erlang, OCaml, Gleam, Dart, Swift, Ruby, and many more.
+Rust, Go, Python, TypeScript, C/C++, Java, Kotlin, Scala, F#, C#, Haskell, Zig, Elixir, Erlang, OCaml, Gleam, and many more.
 
 </div>
 
@@ -66,7 +58,7 @@ Rust, Go, Python, TypeScript, C/C++, Java, Kotlin, Scala, F#, C#, Haskell, Zig, 
 
 ### Fast & Lightweight
 
-Native Rust core. Sub-second startup. Low memory footprint. All core modules, views, commands, and bundled plugins are pure Rust via mlua.
+Pure Rust. Sub-second startup. Low memory footprint. Ring-buffer terminal scrollback, glyph cache with ASCII pre-warming, merged undo entries.
 
 </div>
 
@@ -74,23 +66,31 @@ Native Rust core. Sub-second startup. Low memory footprint. All core modules, vi
 
 ### Multi-Cursor Editing
 
-Ctrl+D to add next occurrence, Ctrl+Shift+L for all occurrences, Ctrl+Alt+L to turn find matches into cursors.
+Ctrl+Shift+Up/Down to add cursors. Typing, deletion, and movement apply to all cursors simultaneously.
 
 </div>
 
 <div class="feature-card" markdown>
 
-### Project Workspace Memory
+### Code Folding & Minimap
 
-Open files, tabs, splits, and scroll positions restore when switching between projects.
+Fold code blocks with Ctrl+Shift+[. Syntax-colored minimap with click-to-scroll.
 
 </div>
 
 <div class="feature-card" markdown>
 
-### Bookmarks & Indent Guides
+### Session Restore
 
-Toggle line bookmarks (Ctrl+F2), navigate with F2. Vertical indent guides at each level. Line sorting, unique, reverse.
+Open files, active tab, font scale, and project root persist across restarts. Recent projects list for quick switching.
+
+</div>
+
+<div class="feature-card" markdown>
+
+### Bracket Pair Colorization
+
+Matching brackets colored by nesting depth (gold, pink, blue) like VS Code.
 
 </div>
 
@@ -98,11 +98,11 @@ Toggle line bookmarks (Ctrl+F2), navigate with F2. Vertical indent guides at eac
 
 ## Overview
 
-Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust. The core, all views, commands, and bundled plugins are native Rust. User plugins and configuration remain Lua for easy extensibility.
+Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
 
 | | |
 |---|---|
-| **Languages** | 50+ syntax grammars, 25+ built-in LSP configurations |
+| **Languages** | 50+ syntax grammars, built-in LSP configurations |
 | **Platform** | Linux, macOS, Windows |
 | **License** | MIT |
 | **Rust version** | 1.85+ |

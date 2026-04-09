@@ -1,6 +1,6 @@
 ---
 title: User Guide - Lite-Anvil
-description: Keyboard shortcuts, LSP language server setup, test runner configuration, syntax highlighting, and Lua plugin development for Lite-Anvil.
+description: Keyboard shortcuts, LSP language server setup, configuration, and syntax highlighting for Lite-Anvil.
 ---
 
 # User Guide
@@ -188,72 +188,26 @@ The test runner auto-detects your project's framework and runs tests in a termin
 | PHP | `phpunit.xml[.dist]` | PHPUnit | `./vendor/bin/phpunit` | `phpunit <file>` |
 | Any | `Makefile` | make | `make test` | -- |
 
-Configure a custom command: set `config.plugins.test_runner.custom_command` in `config.lua`.
+## Configuration
 
-## Plugins
+Lite-Anvil is configured via a TOML file. Open it from the sidebar settings icon or via the command palette: **Open User Settings**.
 
-Lite-Anvil is extensible via Lua plugins. All core modules are Rust, but user plugins and configuration use Lua.
-
-### Plugin locations
+### Config location
 
 | Platform | Path |
 |----------|------|
-| Linux | `~/.config/lite-anvil/plugins/` |
-| macOS | `~/Library/Application Support/lite-anvil/plugins/` |
-| Windows | `%APPDATA%\lite-anvil\plugins\` |
+| Linux | `~/.config/lite-anvil/config.toml` |
+| macOS | `~/Library/Application Support/lite-anvil/config.toml` |
+| Windows | `%APPDATA%\lite-anvil\config.toml` |
 
-Each plugin is a single `.lua` file or a directory with an `init.lua`.
+### Command line options
 
-### Mod-version
-
-Every plugin must declare its compatible API version. The current mod-version is **4.0.0**.
-
-```lua
--- mod-version:4
+```
+lite-anvil [file...]          Open files
+lite-anvil -v                 Verbose mode (log LSP errors to stderr)
+lite-anvil --verbose          Same as -v
 ```
 
-### Example plugin
+### Themes
 
-```lua
--- mod-version:4
-local core = require "core"
-local command = require "core.command"
-local keymap = require "core.keymap"
-
-command.add(nil, {
-  ["hello:say-hello"] = function()
-    core.log("Hello from my plugin!")
-  end,
-})
-
-keymap.add {
-  ["ctrl+shift+h"] = "hello:say-hello",
-}
-```
-
-### Disabling plugins
-
-In `config.lua` or `init.lua`:
-
-```lua
-local config = require "core.config"
-config.plugins.minimap = false
-config.plugins.drawwhitespace = false
-```
-
-### Available APIs
-
-Plugins can use any module via `require`:
-
-- `core` -- logging, open_doc, projects, active_view
-- `core.command` -- register and perform commands
-- `core.keymap` -- bind keys to commands
-- `core.config` -- read/write editor settings
-- `core.style` -- colors and fonts
-- `core.doc` -- document model (lines, selections, edits)
-- `core.docview` -- document rendering (override draw methods)
-- `core.view` -- base view class for custom views
-- `core.common` -- path utilities, drawing helpers
-- `core.syntax` -- register custom syntax grammars
-
-See [PLUGINS_GUIDE.md](https://github.com/danpozmanter/lite-anvil/blob/main/PLUGINS_GUIDE.md) for the full API reference.
+Cycle themes with `Ctrl+Shift+P` or the command palette. JSON theme files are in `data/assets/themes/`.

@@ -36,7 +36,19 @@
       "literal": "#f1fa8c",
       "string": "#ffcd8b",
       "operator": "#51f0e7",
-      "function": "#00dc7f"
+      "function": "#00dc7f",
+      "type": "#8be9fd",
+      "field": "#e1e1e6",
+      "property": "#e1e1e6",
+      "tag": "#ff79c6",
+      "attribute": "#00dc7f",
+      "boolean": "#ff79c6",
+      "constant": "#8be9fd",
+      "preprocessor": "#ff79c6",
+      "punctuation": "#e1e1e6",
+      "markdown_bold": "#8be9fd",
+      "markdown_italic": "#8be9fd",
+      "markdown_bold_italic": "#8be9fd"
     }
   }
 }

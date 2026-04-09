@@ -1,0 +1,77 @@
+# Lite-Anvil configuration
+# All settings are optional -- unspecified values use built-in defaults.
+# This file is automatically reloaded when saved.
+
+# theme = "dark_default"    # dark_default, light_default, fall, summer, textadept
+# indent_size = 2
+# tab_type = "soft"         # "soft" (spaces) or "hard" (tabs)
+# line_endings = "lf"       # "lf" or "crlf"
+# line_limit = 80
+# line_height = 1.2
+# highlight_current_line = true
+# draw_whitespace = false
+# borderless = false
+# max_tabs = 8
+# blink_period = 0.8
+# disable_blink = false
+
+# [lsp]
+# load_on_startup = true
+# semantic_highlighting = true
+# inline_diagnostics = true
+# format_on_save = true
+
+# [terminal]
+# placement = "bottom"
+# reuse_mode = "pane"
+
+# [ui]
+# padding_x = 14
+# padding_y = 7
+# caret_width = 2
+# scrollbar_size = 4
+# tab_width = 170
+
+# [fonts.ui]
+# path = "/path/to/your/font.ttf"
+# size = 15
+
+# [fonts.code]
+# path = "/path/to/your/mono.ttf"
+# size = 15
+
+# [fonts.code.options]
+# antialiasing = "grayscale"   # none, grayscale, subpixel
+# hinting = "slight"           # none, slight, full
+# bold = false
+# italic = false
+
+# [fonts.syntax.comment]
+# path = "/path/to/italic.ttf"
+# size = 15
+# [fonts.syntax.comment.options]
+# italic = true
+
+# [colors]
+# background = "#1f2128"
+# text = "#d7dae0"
+# selection = "#364055"
+# [colors.syntax]
+# keyword = "#ff7a90"
+# string = "#ffd479"
+# comment = "#7f8c98"
+# [colors.lint]
+# error = "#ff5f56"
+
+# [keybindings]
+# "ctrl+escape" = "core:quit"
+# "ctrl+shift+p" = "core:find-command"
+
+# [plugins]
+# detectindent = false                     # disable a plugin
+# minimap = { enabled = true, width = 120 }
+# lsp = false                              # disable LSP entirely
+
+# [gitignore]
+# enabled = true
+# additional_patterns = ["%.log$", "^dist/"]

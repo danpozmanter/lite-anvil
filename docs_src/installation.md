@@ -65,8 +65,6 @@ powershell -ExecutionPolicy Bypass -File resources\windows\install-file-associat
 | FreeType2 | `libfreetype6-dev` | `freetype-devel` | `freetype2` | `freetype` |
 | PCRE2 | `libpcre2-dev` | `pcre2-devel` | `pcre2` | `pcre2` |
 
-Lua 5.4 is **not** required -- it is vendored by the `mlua` crate.
-
 ### Build & Run
 
 ```bash
@@ -105,7 +103,4 @@ User config location:
 
 Key files:
 
-- `config.lua` -- editor settings, keybindings, plugin config
-- `init.lua` -- user initialization script
-- `plugins/` -- user Lua plugins (see [Plugins](guide.md#plugins))
-- `lsp.json` -- custom LSP server configurations (see [LSP Support](guide.md#lsp-support))
+- `config.toml` -- editor settings (see [Configuration](guide.md#configuration))

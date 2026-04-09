@@ -41,12 +41,18 @@
       "field": "#9cdcfe",
       "property": "#9cdcfe",
       "tag": "#569cd6",
-      "attribute": "#9cdcfe",
+      "attribute": "#d4d4d4",
       "boolean": "#569cd6",
       "constant": "#4fc1ff",
       "preprocessor": "#c586c0",
       "punctuation": "#d4d4d4",
-      "function": "#dcdcaa"
+      "function": "#dcdcaa",
+      "bracket1": "#ffd700",
+      "bracket2": "#da70d6",
+      "bracket3": "#179fff",
+      "markdown_bold": "#c586c0",
+      "markdown_italic": "#c586c0",
+      "markdown_bold_italic": "#c586c0"
     },
     "lint": {
       "info": "#3794ff",
