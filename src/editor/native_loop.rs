@@ -55,8 +55,6 @@ struct SidebarEntry {
 /// Width of the sidebar in logical pixels.
 const DEFAULT_SIDEBAR_W: f64 = 200.0;
 const MIN_SIDEBAR_W: f64 = 100.0;
-const MAX_SIDEBAR_W: f64 = 600.0;
-
 /// Collapse redundant `.` segments in a path string. Preserves a single
 /// leading `./` for relative paths and leaves absolute paths intact.
 /// Does not touch `..` segments (we don't want to silently traverse symlinks).
@@ -1441,6 +1439,7 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                                     save_project_session(userdir_path, &project_root, &docs, active_tab);
                                     for d in &docs { autoreload.unwatch(&d.path); }
                                     docs.clear();
+                                    pending_render_cache = None;
                                     active_tab = 0;
                                     project_root = folder;
                                     sidebar_entries = scan_directory(&project_root, 0, sidebar_show_hidden);
@@ -3592,7 +3591,9 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                         continue;
                     }
                     if sidebar_dragging {
-                        sidebar_width = x.clamp(MIN_SIDEBAR_W, MAX_SIDEBAR_W);
+                        let (ww, _, _, _) = crate::window::get_window_size();
+                        let max_sidebar = (ww as f64 * 0.9).max(MIN_SIDEBAR_W);
+                        sidebar_width = x.clamp(MIN_SIDEBAR_W, max_sidebar);
                         redraw = true;
                     } else if editor_mouse_down {
                         // Drag selection: update cursor position while keeping anchor.
@@ -3656,13 +3657,15 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                 EditorEvent::MouseWheel { y, .. } => {
                     let line_h = style.code_font_height * 1.2;
                     let scroll_amt = y * line_h * 3.0;
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        let dv = &mut doc.view;
-                        dv.target_scroll_y = (dv.target_scroll_y - scroll_amt).max(0.0);
-                    }
-                    // Sidebar scrolls only when mouse is over it.
                     if sidebar_visible && mouse_x < sidebar_width {
+                        // Mouse is over the sidebar — scroll sidebar only.
                         sidebar_scroll = (sidebar_scroll - scroll_amt).max(0.0);
+                    } else {
+                        // Mouse is over the editor — scroll editor only.
+                        if let Some(doc) = docs.get_mut(active_tab) {
+                            let dv = &mut doc.view;
+                            dv.target_scroll_y = (dv.target_scroll_y - scroll_amt).max(0.0);
+                        }
                     }
                     redraw = true;
                 }
@@ -4538,13 +4541,15 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                     draw_ctx.draw_text(style.font, &dir_label, style.padding_x, toolbar_h + (dir_header_h - style.font_height) / 2.0, style.accent.to_array());
                     draw_ctx.draw_rect(0.0, toolbar_h + dir_header_h - style.divider_size, sidebar_w, style.divider_size, style.divider.to_array());
 
-                    // File tree entries.
+                    // File tree entries — clip to the area below the header so
+                    // scrolled entries don't overdraw the toolbar or folder name.
                     let entry_h = style.font_height + style.padding_y;
                     let icon_font_h = draw_ctx.font_height(style.icon_font);
                     let icon_w = draw_ctx.font_width(style.icon_font, "D") + style.padding_x * 0.5;
                     let active_path = docs.get(active_tab).map(|d| d.path.as_str()).unwrap_or("");
-                    let mut ey = toolbar_h + dir_header_h - sidebar_scroll;
                     let sidebar_content_top = toolbar_h + dir_header_h;
+                    draw_ctx.set_clip_rect(0.0, sidebar_content_top, sidebar_w, height - sidebar_content_top);
+                    let mut ey = toolbar_h + dir_header_h - sidebar_scroll;
                     for entry in &sidebar_entries {
                         if ey + entry_h > sidebar_content_top && ey < height {
                             let indent = entry.depth as f64 * style.padding_x * 1.5;
@@ -4612,6 +4617,8 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                         }
                         ey += entry_h;
                     }
+                    // Reset clip to full window for the sidebar edge divider.
+                    crate::editor::app_state::clip_init(width, height);
                     // Divider on the right edge.
                     draw_ctx.draw_rect(
                         sidebar_w - style.divider_size,

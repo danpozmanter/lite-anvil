@@ -1,5 +1,13 @@
 # Change Log
 
+## [2.4.1] - 2026-04-10 — Scroll and rendering fixes.
+
+* Mouse wheel over sidebar scrolls sidebar only; over editor scrolls editor only.
+* Sidebar width limit raised to 90% of window (was hardcoded 600px).
+* Sidebar header (folder name) stays pinned when scrolling the file tree.
+* Fixed project-switch render cache bug: switching projects no longer shows stale content from the previous project's active file.
+* Render line caching: `build_render_lines` (syntax tokenization) is skipped on cursor-only redraws when the buffer hasn't changed, reducing per-frame work.
+
 ## [2.4.0] - 2026-04-10 — File type icons, hidden file toggle, check for updates, other ergonomic improvements.
 
 * Sidebar file icons now use the Seti icon font (MIT, from VS Code's Seti theme) for recognizable per-language glyphs -- Rust gear, Python snake, Go gopher, JS/TS badges, HTML brackets, Docker whale, and 90+ more. Each icon renders in the language's signature color. The Seti font (`data/fonts/seti.ttf`) scales perfectly at any DPI. Icon mappings (extension to codepoint + color) are in `data/assets/file_icons.json`. Directories keep the existing folder icon.
@@ -12,6 +20,8 @@
 * Git Log: `Git Log` in the command palette opens a scrollable overlay showing the last 50 commits for the active file (hash, date, message). Navigate with Up/Down, dismiss with Esc.
 * Per-project session memory: switching projects saves the current open files and active tab, and restores them when you switch back. Stored per-project in the user config directory.
 * Default scrollbar width doubled from 4px to 8px.
+* Smooth scrolling: all auto-scroll (cursor off-screen, find, bookmarks) now animates via the lerp instead of snapping.
+* Clicking in the document no longer triggers auto-scroll.
 
 ## [2.3.0] - 2026-04-10 — Bookmarks, find-in-selection, graceful font fallback.
 
