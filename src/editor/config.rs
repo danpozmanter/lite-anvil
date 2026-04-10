@@ -57,8 +57,8 @@ pub struct NativeConfig {
     pub use_system_file_picker: bool,
     /// macOS only: when true, the Command key triggers the same bindings as
     /// Control (so Cmd+S acts like Ctrl+S, matching Mac conventions). Default
-    /// false — users press Ctrl+S on Mac just like on Linux/Windows. No-op on
-    /// other platforms.
+    /// true on macOS so shortcuts feel native. Set to false to use Ctrl
+    /// uniformly across platforms. No-op on non-Mac.
     pub mac_command_as_ctrl: bool,
     /// Color overrides (key -> "#rrggbb" or "#rrggbbaa").
     #[serde(default)]
@@ -288,7 +288,7 @@ impl NativeConfig {
             skip_plugins_version: false,
             stonks: true,
             use_system_file_picker: false,
-            mac_command_as_ctrl: false,
+            mac_command_as_ctrl: cfg!(target_os = "macos"),
             colors: ColorsConfig::default(),
             keybindings: HashMap::new(),
             plugins: HashMap::new(),

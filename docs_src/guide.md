@@ -14,81 +14,84 @@ description: Keyboard shortcuts, LSP language server setup, configuration, and s
 | `Ctrl+P` | Command palette |
 | `Ctrl+O` | Open file (supports `file:42` to go to line) |
 | `Ctrl+Shift+O` | Open file from project |
+| `Ctrl+Shift+R` | Open recent file / project |
 | `Ctrl+N` | New file |
 | `Ctrl+S` | Save (save-as for unnamed files) |
+| `Ctrl+Shift+S` | Save as |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Q` | Quit |
-| `Ctrl+=` / `Ctrl+-` | Font zoom in / out |
-| `F10` | Toggle line wrapping |
+| `Ctrl+=` / `Ctrl+-` | Increase / decrease font size |
+| `Ctrl+0` | Reset font size |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+M` | Toggle minimap |
+| `Alt+Z` | Toggle line wrapping |
+| `Ctrl+Shift+H` | Toggle whitespace rendering |
+| `Ctrl+Shift+P` | Cycle theme |
+| `F11` | Toggle fullscreen |
+| `Ctrl+`` ` / `F5` | Toggle terminal |
+| `Ctrl+Shift+T` | New terminal |
 
 ### Editing
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+D` | Add next occurrence to selection |
-| `Ctrl+Shift+L` | Select all occurrences |
-| `Ctrl+Alt+L` | Turn find matches into multi-cursors |
-| `Ctrl+/` | Toggle line comment |
-| `Ctrl+Shift+Up/Down` | Move line up/down |
+| `Ctrl+D` | Select word / add next occurrence |
+| `Ctrl+L` | Select line |
+| `Ctrl+A` | Select all |
+| `Ctrl+/` | Toggle line comment (language-aware) |
+| `Ctrl+Up` / `Ctrl+Down` | Move line up / down |
 | `Ctrl+Shift+D` | Duplicate line |
-| `Alt+Shift+F` | Format document (LSP) |
+| `Ctrl+Shift+K` | Delete line |
+| `Ctrl+J` | Join lines |
+| `Ctrl+Shift+Up/Down` | Add cursor above / below |
+| `Ctrl+Shift+[` | Fold code block |
+| `Ctrl+Shift+]` | Unfold code block |
+| `Ctrl+Shift+\` | Unfold all |
 
 ### Find & Replace
 
 | Key | Action |
 |-----|--------|
 | `Ctrl+F` | Find in file |
-| `Ctrl+H` | Replace in file |
-| `Alt+S` | Toggle find-in-selection |
-| `F3` / `Shift+F3` | Next / previous match |
-
-### Bookmarks
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+F2` | Toggle bookmark |
-| `F2` | Next bookmark |
-| `Shift+F2` | Previous bookmark |
+| `Ctrl+H` / `Ctrl+R` | Replace in file |
+| `F3` / `Enter` | Next match |
+| `Shift+F3` / `Shift+Enter` | Previous match |
+| `Alt+R` | Toggle regex (inside find bar) |
+| `Alt+W` | Toggle whole word (inside find bar) |
+| `Alt+I` | Toggle case-insensitive (inside find bar) |
+| `Ctrl+Enter` | Replace current match and find next |
+| `Ctrl+Shift+F` | Project-wide search |
 
 ### LSP
 
 | Key | Action |
 |-----|--------|
 | `F12` | Go to definition |
-| `Ctrl+F12` | Go to type definition |
+| `Ctrl+F12` | Go to implementation |
 | `Shift+F12` | Find references |
-| `F2` | Rename symbol |
-| `Ctrl+Space` | Trigger completion |
-| `Ctrl+Shift+Space` | Signature help |
+| `Ctrl+Shift+F12` | Go to type definition |
 | `Ctrl+K` | Hover |
-| `Ctrl+T` | Document symbols |
-| `Ctrl+Alt+T` | Workspace symbols |
-| `Ctrl+Shift+A` | Code action |
-| `Alt+Return` | Quick fix |
-| `F8` / `Shift+F8` | Next / previous diagnostic |
-| `Alt+F12` | Incoming calls |
-| `Ctrl+Shift+F12` | Outgoing calls |
-| `Alt+F11` | Supertypes |
-| `Ctrl+Shift+F11` | Subtypes |
 
-### Test Runner
+### Navigation
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Shift+R` | Run all tests |
-
-Also available: `test:run-file` from the command palette.
+| `Ctrl+G` | Go to line |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+PageUp` / `Ctrl+PageDown` | Move tab left / right |
+| `Ctrl+Shift+G` | Git status |
 
 ## Command Palette
 
-Press `Ctrl+P` to open the command palette. All commands are searchable. Key commands:
+Press `Ctrl+P` to open the command palette. All commands are searchable. The palette filters out raw key-input commands and only shows meaningful actions. Git commands are prefixed with "Git" (e.g. `Git Pull`, `Git Push`, `Git Commit`, `Git Stash`).
 
-- `lines:sort`, `lines:reverse`, `lines:unique`, `lines:sort-case-insensitive`
-- `bookmarks:toggle`, `bookmarks:next`, `bookmarks:previous`, `bookmarks:clear`
-- `indent-guide:toggle`
-- `minimap:toggle`
-- `treeview:refresh`
-- `workspace:clear-project-memory`, `workspace:clear-recents`
+Additional commands available from the palette:
+
+- `Sort Lines`, `Upper Case`, `Lower Case`
+- `Open User Settings`
+- `Toggle Minimap`, `Toggle Line Wrapping`, `Toggle Whitespace`
+- `Git Pull`, `Git Push`, `Git Commit`, `Git Stash`, `Git Status`
+- `Close All`, `Close All Others`
 
 ## Sidebar Context Menu
 
@@ -171,6 +174,8 @@ XML highlighting also covers `.csproj`, `.fsproj`, `.vbproj`, `.vcxproj`, `.sln`
 
 Groovy highlighting covers `.gradle` files. Kotlin highlighting covers `.gradle.kts` files (via `.kts` extension).
 
+Toggle line comments (`Ctrl+/`) automatically picks the correct marker for the active language -- `//` for Rust/C/JS, `#` for Python/Bash/TOML, `--` for Lua/SQL/Haskell, `;` for Assembly/Lisp/INI, `%` for Erlang, and block-comment wrapping (`<!-- -->` for HTML/Markdown/XML/Vue, `/* */` for CSS, `(* *)` for OCaml) for languages without a line-comment form.
+
 ## Test Runner
 
 The test runner auto-detects your project's framework and runs tests in a terminal pane.
@@ -199,6 +204,57 @@ Lite-Anvil is configured via a TOML file. Open it from the sidebar settings icon
 | Linux | `~/.config/lite-anvil/config.toml` |
 | macOS | `~/Library/Application Support/lite-anvil/config.toml` |
 | Windows | `%APPDATA%\lite-anvil\config.toml` |
+
+### Key options
+
+```toml
+theme = "dark_default"         # dark_default, light_default, fall, summer, textadept
+indent_size = 2
+tab_type = "soft"              # "soft" (spaces) or "hard" (tabs)
+line_endings = "lf"            # "lf" or "crlf"
+line_limit = 80
+line_height = 1.2
+highlight_current_line = true
+draw_whitespace = false
+borderless = false
+max_tabs = 8
+blink_period = 0.8
+disable_blink = false
+mac_command_as_ctrl = true     # macOS: fold Cmd into Ctrl (on by default on Mac)
+
+[lsp]
+load_on_startup = true
+semantic_highlighting = true
+inline_diagnostics = true
+format_on_save = true
+
+[terminal]
+placement = "bottom"
+reuse_mode = "pane"
+
+[ui]
+padding_x = 14
+padding_y = 7
+caret_width = 2
+scrollbar_size = 4
+tab_width = 170
+
+[fonts.ui]
+path = "/path/to/your/font.ttf"
+size = 15
+
+[fonts.code]
+path = "/path/to/your/mono.ttf"
+size = 15
+```
+
+Custom keybindings can be added under `[keybindings]`:
+
+```toml
+[keybindings]
+"ctrl+shift+l" = "doc:select-lines"
+"alt+shift+f" = "lsp:format-document"
+```
 
 ### Command line options
 

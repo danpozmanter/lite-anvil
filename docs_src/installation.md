@@ -88,7 +88,7 @@ codesign --force --deep --sign - --timestamp=none LiteAnvil.app
 
 ```bash
 cargo install cargo-deb
-cargo deb --no-build -p forge-core
+cargo deb --no-build
 ```
 
 ## Configuration

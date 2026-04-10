@@ -510,17 +510,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#bookmarks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bookmarks
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#lsp" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -532,10 +521,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#test-runner" class="md-nav__link">
+  <a href="#navigation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Test Runner
+        Navigation
       
     </span>
   </a>
@@ -620,7 +609,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#test-runner_1" class="md-nav__link">
+  <a href="#test-runner" class="md-nav__link">
     <span class="md-ellipsis">
       
         Test Runner
@@ -647,6 +636,17 @@
     <span class="md-ellipsis">
       
         Config location
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key options
       
     </span>
   </a>
@@ -756,12 +756,20 @@
 <td>Open file from project</td>
 </tr>
 <tr>
+<td><code>Ctrl+Shift+R</code></td>
+<td>Open recent file / project</td>
+</tr>
+<tr>
 <td><code>Ctrl+N</code></td>
 <td>New file</td>
 </tr>
 <tr>
 <td><code>Ctrl+S</code></td>
 <td>Save (save-as for unnamed files)</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+S</code></td>
+<td>Save as</td>
 </tr>
 <tr>
 <td><code>Ctrl+W</code></td>
@@ -773,11 +781,43 @@
 </tr>
 <tr>
 <td><code>Ctrl+=</code> / <code>Ctrl+-</code></td>
-<td>Font zoom in / out</td>
+<td>Increase / decrease font size</td>
 </tr>
 <tr>
-<td><code>F10</code></td>
+<td><code>Ctrl+0</code></td>
+<td>Reset font size</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code></td>
+<td>Toggle sidebar</td>
+</tr>
+<tr>
+<td><code>Ctrl+M</code></td>
+<td>Toggle minimap</td>
+</tr>
+<tr>
+<td><code>Alt+Z</code></td>
 <td>Toggle line wrapping</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+H</code></td>
+<td>Toggle whitespace rendering</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+P</code></td>
+<td>Cycle theme</td>
+</tr>
+<tr>
+<td><code>F11</code></td>
+<td>Toggle fullscreen</td>
+</tr>
+<tr>
+<td><code>Ctrl+``</code> / <code>F5</code></td>
+<td>Toggle terminal</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+T</code></td>
+<td>New terminal</td>
 </tr>
 </tbody>
 </table>
@@ -792,31 +832,51 @@
 <tbody>
 <tr>
 <td><code>Ctrl+D</code></td>
-<td>Add next occurrence to selection</td>
+<td>Select word / add next occurrence</td>
 </tr>
 <tr>
-<td><code>Ctrl+Shift+L</code></td>
-<td>Select all occurrences</td>
+<td><code>Ctrl+L</code></td>
+<td>Select line</td>
 </tr>
 <tr>
-<td><code>Ctrl+Alt+L</code></td>
-<td>Turn find matches into multi-cursors</td>
+<td><code>Ctrl+A</code></td>
+<td>Select all</td>
 </tr>
 <tr>
 <td><code>Ctrl+/</code></td>
-<td>Toggle line comment</td>
+<td>Toggle line comment (language-aware)</td>
 </tr>
 <tr>
-<td><code>Ctrl+Shift+Up/Down</code></td>
-<td>Move line up/down</td>
+<td><code>Ctrl+Up</code> / <code>Ctrl+Down</code></td>
+<td>Move line up / down</td>
 </tr>
 <tr>
 <td><code>Ctrl+Shift+D</code></td>
 <td>Duplicate line</td>
 </tr>
 <tr>
-<td><code>Alt+Shift+F</code></td>
-<td>Format document (LSP)</td>
+<td><code>Ctrl+Shift+K</code></td>
+<td>Delete line</td>
+</tr>
+<tr>
+<td><code>Ctrl+J</code></td>
+<td>Join lines</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+Up/Down</code></td>
+<td>Add cursor above / below</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+[</code></td>
+<td>Fold code block</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+]</code></td>
+<td>Unfold code block</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+\</code></td>
+<td>Unfold all</td>
 </tr>
 </tbody>
 </table>
@@ -834,39 +894,36 @@
 <td>Find in file</td>
 </tr>
 <tr>
-<td><code>Ctrl+H</code></td>
+<td><code>Ctrl+H</code> / <code>Ctrl+R</code></td>
 <td>Replace in file</td>
 </tr>
 <tr>
-<td><code>Alt+S</code></td>
-<td>Toggle find-in-selection</td>
+<td><code>F3</code> / <code>Enter</code></td>
+<td>Next match</td>
 </tr>
 <tr>
-<td><code>F3</code> / <code>Shift+F3</code></td>
-<td>Next / previous match</td>
-</tr>
-</tbody>
-</table>
-<h3 id="bookmarks">Bookmarks<a class="headerlink" href="#bookmarks" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Key</th>
-<th>Action</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>Ctrl+F2</code></td>
-<td>Toggle bookmark</td>
+<td><code>Shift+F3</code> / <code>Shift+Enter</code></td>
+<td>Previous match</td>
 </tr>
 <tr>
-<td><code>F2</code></td>
-<td>Next bookmark</td>
+<td><code>Alt+R</code></td>
+<td>Toggle regex (inside find bar)</td>
 </tr>
 <tr>
-<td><code>Shift+F2</code></td>
-<td>Previous bookmark</td>
+<td><code>Alt+W</code></td>
+<td>Toggle whole word (inside find bar)</td>
+</tr>
+<tr>
+<td><code>Alt+I</code></td>
+<td>Toggle case-insensitive (inside find bar)</td>
+</tr>
+<tr>
+<td><code>Ctrl+Enter</code></td>
+<td>Replace current match and find next</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+F</code></td>
+<td>Project-wide search</td>
 </tr>
 </tbody>
 </table>
@@ -885,67 +942,23 @@
 </tr>
 <tr>
 <td><code>Ctrl+F12</code></td>
-<td>Go to type definition</td>
+<td>Go to implementation</td>
 </tr>
 <tr>
 <td><code>Shift+F12</code></td>
 <td>Find references</td>
 </tr>
 <tr>
-<td><code>F2</code></td>
-<td>Rename symbol</td>
-</tr>
-<tr>
-<td><code>Ctrl+Space</code></td>
-<td>Trigger completion</td>
-</tr>
-<tr>
-<td><code>Ctrl+Shift+Space</code></td>
-<td>Signature help</td>
+<td><code>Ctrl+Shift+F12</code></td>
+<td>Go to type definition</td>
 </tr>
 <tr>
 <td><code>Ctrl+K</code></td>
 <td>Hover</td>
 </tr>
-<tr>
-<td><code>Ctrl+T</code></td>
-<td>Document symbols</td>
-</tr>
-<tr>
-<td><code>Ctrl+Alt+T</code></td>
-<td>Workspace symbols</td>
-</tr>
-<tr>
-<td><code>Ctrl+Shift+A</code></td>
-<td>Code action</td>
-</tr>
-<tr>
-<td><code>Alt+Return</code></td>
-<td>Quick fix</td>
-</tr>
-<tr>
-<td><code>F8</code> / <code>Shift+F8</code></td>
-<td>Next / previous diagnostic</td>
-</tr>
-<tr>
-<td><code>Alt+F12</code></td>
-<td>Incoming calls</td>
-</tr>
-<tr>
-<td><code>Ctrl+Shift+F12</code></td>
-<td>Outgoing calls</td>
-</tr>
-<tr>
-<td><code>Alt+F11</code></td>
-<td>Supertypes</td>
-</tr>
-<tr>
-<td><code>Ctrl+Shift+F11</code></td>
-<td>Subtypes</td>
-</tr>
 </tbody>
 </table>
-<h3 id="test-runner">Test Runner<a class="headerlink" href="#test-runner" title="Permanent link">&para;</a></h3>
+<h3 id="navigation">Navigation<a class="headerlink" href="#navigation" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -955,21 +968,32 @@
 </thead>
 <tbody>
 <tr>
-<td><code>Ctrl+Shift+R</code></td>
-<td>Run all tests</td>
+<td><code>Ctrl+G</code></td>
+<td>Go to line</td>
+</tr>
+<tr>
+<td><code>Ctrl+Tab</code> / <code>Ctrl+Shift+Tab</code></td>
+<td>Next / previous tab</td>
+</tr>
+<tr>
+<td><code>Ctrl+PageUp</code> / <code>Ctrl+PageDown</code></td>
+<td>Move tab left / right</td>
+</tr>
+<tr>
+<td><code>Ctrl+Shift+G</code></td>
+<td>Git status</td>
 </tr>
 </tbody>
 </table>
-<p>Also available: <code>test:run-file</code> from the command palette.</p>
 <h2 id="command-palette">Command Palette<a class="headerlink" href="#command-palette" title="Permanent link">&para;</a></h2>
-<p>Press <code>Ctrl+P</code> to open the command palette. All commands are searchable. Key commands:</p>
+<p>Press <code>Ctrl+P</code> to open the command palette. All commands are searchable. The palette filters out raw key-input commands and only shows meaningful actions. Git commands are prefixed with "Git" (e.g. <code>Git Pull</code>, <code>Git Push</code>, <code>Git Commit</code>, <code>Git Stash</code>).</p>
+<p>Additional commands available from the palette:</p>
 <ul>
-<li><code>lines:sort</code>, <code>lines:reverse</code>, <code>lines:unique</code>, <code>lines:sort-case-insensitive</code></li>
-<li><code>bookmarks:toggle</code>, <code>bookmarks:next</code>, <code>bookmarks:previous</code>, <code>bookmarks:clear</code></li>
-<li><code>indent-guide:toggle</code></li>
-<li><code>minimap:toggle</code></li>
-<li><code>treeview:refresh</code></li>
-<li><code>workspace:clear-project-memory</code>, <code>workspace:clear-recents</code></li>
+<li><code>Sort Lines</code>, <code>Upper Case</code>, <code>Lower Case</code></li>
+<li><code>Open User Settings</code></li>
+<li><code>Toggle Minimap</code>, <code>Toggle Line Wrapping</code>, <code>Toggle Whitespace</code></li>
+<li><code>Git Pull</code>, <code>Git Push</code>, <code>Git Commit</code>, <code>Git Stash</code>, <code>Git Status</code></li>
+<li><code>Close All</code>, <code>Close All Others</code></li>
 </ul>
 <h2 id="sidebar-context-menu">Sidebar Context Menu<a class="headerlink" href="#sidebar-context-menu" title="Permanent link">&para;</a></h2>
 <p>Right-click a file or folder in the sidebar:</p>
@@ -1181,7 +1205,8 @@
 </table>
 <p>XML highlighting also covers <code>.csproj</code>, <code>.fsproj</code>, <code>.vbproj</code>, <code>.vcxproj</code>, <code>.sln</code>, <code>.props</code>, <code>.targets</code>, <code>.nuspec</code>, <code>.pom</code>, <code>.svg</code>, <code>.plist</code>, <code>.xaml</code>.</p>
 <p>Groovy highlighting covers <code>.gradle</code> files. Kotlin highlighting covers <code>.gradle.kts</code> files (via <code>.kts</code> extension).</p>
-<h2 id="test-runner_1">Test Runner<a class="headerlink" href="#test-runner_1" title="Permanent link">&para;</a></h2>
+<p>Toggle line comments (<code>Ctrl+/</code>) automatically picks the correct marker for the active language -- <code>//</code> for Rust/C/JS, <code>#</code> for Python/Bash/TOML, <code>--</code> for Lua/SQL/Haskell, <code>;</code> for Assembly/Lisp/INI, <code>%</code> for Erlang, and block-comment wrapping (<code>&lt;!-- --&gt;</code> for HTML/Markdown/XML/Vue, <code>/* */</code> for CSS, <code>(* *)</code> for OCaml) for languages without a line-comment form.</p>
+<h2 id="test-runner">Test Runner<a class="headerlink" href="#test-runner" title="Permanent link">&para;</a></h2>
 <p>The test runner auto-detects your project's framework and runs tests in a terminal pane.</p>
 <table>
 <thead>
@@ -1291,10 +1316,55 @@
 </tr>
 </tbody>
 </table>
+<h3 id="key-options">Key options<a class="headerlink" href="#key-options" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">theme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;dark_default&quot;</span><span class="w">         </span><span class="c1"># dark_default, light_default, fall, summer, textadept</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">indent_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">tab_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;soft&quot;</span><span class="w">              </span><span class="c1"># &quot;soft&quot; (spaces) or &quot;hard&quot; (tabs)</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">line_endings</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;lf&quot;</span><span class="w">            </span><span class="c1"># &quot;lf&quot; or &quot;crlf&quot;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">line_limit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">80</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">line_height</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1.2</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">highlight_current_line</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">draw_whitespace</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">borderless</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">max_tabs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">blink_period</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.8</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">disable_blink</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">mac_command_as_ctrl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">     </span><span class="c1"># macOS: fold Cmd into Ctrl (on by default on Mac)</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="k">[lsp]</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">load_on_startup</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">semantic_highlighting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="n">inline_diagnostics</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="n">format_on_save</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="k">[terminal]</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">placement</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;bottom&quot;</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="n">reuse_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;pane&quot;</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="k">[ui]</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="n">padding_x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">14</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="n">padding_y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">7</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="n">caret_width</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="n">scrollbar_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="n">tab_width</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">170</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="k">[fonts.ui]</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/path/to/your/font.ttf&quot;</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="n">size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">15</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="k">[fonts.code]</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/path/to/your/mono.ttf&quot;</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="n">size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">15</span>
+</code></pre></div>
+<p>Custom keybindings can be added under <code>[keybindings]</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[keybindings]</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="s2">&quot;ctrl+shift+l&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;doc:select-lines&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="s2">&quot;alt+shift+f&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;lsp:format-document&quot;</span>
+</code></pre></div>
 <h3 id="command-line-options">Command line options<a class="headerlink" href="#command-line-options" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>lite-anvil [file...]          Open files
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>lite-anvil -v                 Verbose mode (log LSP errors to stderr)
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>lite-anvil --verbose          Same as -v
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>lite-anvil [file...]          Open files
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>lite-anvil -v                 Verbose mode (log LSP errors to stderr)
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>lite-anvil --verbose          Same as -v
 </code></pre></div>
 <h3 id="themes">Themes<a class="headerlink" href="#themes" title="Permanent link">&para;</a></h3>
 <p>Cycle themes with <code>Ctrl+Shift+P</code> or the command palette. JSON theme files are in <code>data/assets/themes/</code>.</p>

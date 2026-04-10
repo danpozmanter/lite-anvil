@@ -1,5 +1,15 @@
 # Change Log
 
+## [2.2.2] - 2026-04-10 — Mac font fix, Cmd-as-Ctrl on by default, docs overhaul.
+
+* Fixed `FT_New_Face failed (data/fonts/Lilex-Regular.ttf)` on macOS: `current_exe()` can return a relative path on macOS; we now canonicalize it before deriving the data directory. Also added a `Contents/Resources/data/` lookup for standard app-bundle layouts.
+* `mac_command_as_ctrl` now defaults to `true` on macOS (matching native Mac conventions: Cmd+S saves). Set to `false` in config.toml to use Ctrl-only behavior.
+* Documentation overhaul across the GitHub Pages site:
+    - **User Guide**: removed 15+ phantom shortcuts that were documented but never bound (bookmarks, most LSP actions, Alt+S find-in-selection, Ctrl+Shift+L select-all, Alt+Shift+F format, F10 line-wrap). Fixed move-line shortcut from `Ctrl+Shift+Up/Down` to `Ctrl+Up/Down`. Fixed line-wrapping shortcut from `F10` to `Alt+Z`. Fixed swapped Ctrl+F12 / Ctrl+Shift+F12 descriptions. Added find-bar toggles (Alt+R/W/I), project search, code folding, terminal, navigation, and Git status shortcuts. Documented `mac_command_as_ctrl` config option and keybindings section. Added comment-toggle language-awareness note.
+    - **Installation**: fixed Debian package command from `cargo deb -p forge-core` to `cargo deb`.
+    - **Command Palette**: updated to reflect the filtered palette (Git-prefixed commands, no raw key-input entries).
+* Rebuilt `docs/` from `docs_src/` via mkdocs.
+
 ## [2.2.1] - 2026-04-09 — Mac Ctrl/Cmd behavior reverted, opt-in via config.
 
 * Reverted the macOS Ctrl→Cmd alias that shipped in 2.2.0. On Mac, the default shortcuts are now the same as Linux/Windows — press `Ctrl+S` to save, not `Cmd+S`.

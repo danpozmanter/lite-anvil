@@ -15,7 +15,12 @@ impl RuntimeContext {
     pub fn discover() -> Result<Self> {
         apply_appimage_workdir_fix()?;
 
-        let exe_file = std::env::current_exe().context("could not resolve executable path")?;
+        let exe_file = std::env::current_exe()
+            .context("could not resolve executable path")?;
+        // Canonicalize so that relative paths from current_exe() (macOS
+        // returns whatever argv[0] was) become absolute before we derive
+        // data_dir / user_dir from them.
+        let exe_file = std::fs::canonicalize(&exe_file).unwrap_or(exe_file);
         let exe_dir = exe_file
             .parent()
             .context("executable has no parent directory")?
@@ -89,6 +94,17 @@ fn find_data_dir(exe_dir: &Path) -> PathBuf {
         && let Some(prefix) = exe_dir.parent()
     {
         let candidate = prefix.join("share").join("lite-anvil");
+        if is_data_dir(&candidate) {
+            return candidate;
+        }
+    }
+
+    // macOS app bundle: exe is at .app/Contents/MacOS/lite-anvil.
+    // Data may live in .app/Contents/Resources/data/.
+    if exe_dir.file_name() == Some(OsStr::new("MacOS"))
+        && let Some(contents) = exe_dir.parent()
+    {
+        let candidate = contents.join("Resources").join("data");
         if is_data_dir(&candidate) {
             return candidate;
         }
