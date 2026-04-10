@@ -1788,6 +1788,7 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                 }
                 _ => {
                     // Default: forward to handle_doc_command and bump LSP edit tracking.
+                    // Keyboard-initiated: auto-scroll to keep cursor visible.
                     if let Some(doc) = docs.get_mut(active_tab) {
                         let marker = comment_marker_for_path(&doc.path, &syntax_defs);
                         handle_doc_command(
@@ -1797,6 +1798,7 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                             &doc.indent_type,
                             doc.indent_size,
                             marker.as_ref(),
+                            true,
                         );
                     }
                     let is_edit_cmd = matches!(cmd.as_str(),
@@ -1953,6 +1955,7 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                                                     &doc.indent_type,
                                                     doc.indent_size,
                                                     marker.as_ref(),
+                                                    false,
                                                 );
                                             }
                                         } else {
@@ -3116,6 +3119,11 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                 }
                 EditorEvent::MousePressed { button, x, y, modifiers, .. } => {
                     cursor_blink_reset = Instant::now();
+                    // Any mouse click cancels pending scroll animation so the
+                    // view never jumps unexpectedly.
+                    if let Some(doc) = docs.get_mut(active_tab) {
+                        doc.view.target_scroll_y = doc.view.scroll_y;
+                    }
                     // Nag bar button click handling.
                     if nag_active && *button == MouseButton::Left {
                         use crate::editor::view::DrawContext as _;
@@ -3219,6 +3227,7 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                                         handle_doc_command(
                                             &mut doc.view, &cmd, &style,
                                             &doc.indent_type, doc.indent_size, marker.as_ref(),
+                                            false,
                                         );
                                     }
                                     redraw = true;
@@ -3392,6 +3401,10 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                                     autoreload.watch(&entry_path);
                                     active_tab = docs.len() - 1;
                                 }
+                                // Ensure the switched-to tab has no pending animation.
+                                if let Some(doc) = docs.get_mut(active_tab) {
+                                    doc.view.target_scroll_y = doc.view.scroll_y;
+                                }
                             }
                         }
                         redraw = true;
@@ -3434,6 +3447,10 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                                 } else {
                                     active_tab = i;
                                     tab_dragging = Some(i);
+                                    // Cancel any pending scroll on the target tab.
+                                    if let Some(doc) = docs.get_mut(i) {
+                                        doc.view.target_scroll_y = doc.view.scroll_y;
+                                    }
                                 }
                                 break;
                             }
@@ -3515,9 +3532,6 @@ pub fn run(config: NativeConfig, _args: &[String], datadir: &str, userdir: &str)
                     }
 
                     if let Some(doc) = docs.get_mut(active_tab) { let dv = &mut doc.view;
-                        // Clicking in the document cancels any pending scroll
-                        // animation so the view stays exactly where it is.
-                        dv.target_scroll_y = dv.scroll_y;
                         if let Some(buf_id) = dv.buffer_id {
                             let line_h = style.code_font_height * 1.2;
                             let gutter_w = dv.gutter_width;
@@ -6183,6 +6197,9 @@ fn char_count(s: &str) -> usize {
 }
 
 /// Handle a document command (cursor movement, editing).
+/// `auto_scroll`: when true, the view scrolls to keep the cursor visible after
+/// movement commands. Pass false for commands triggered by mouse clicks or
+/// context menus — the user didn't intend to scroll.
 #[cfg(feature = "sdl")]
 fn handle_doc_command(
     dv: &mut DocView,
@@ -6191,6 +6208,7 @@ fn handle_doc_command(
     indent_type: &str,
     indent_size: usize,
     comment_marker: Option<&CommentMarker>,
+    auto_scroll: bool,
 ) {
     let Some(buf_id) = dv.buffer_id else { return };
     let line_h = style.code_font_height * 1.2;
@@ -6833,25 +6851,24 @@ fn handle_doc_command(
         Ok(())
     });
 
-    // Auto-scroll to keep cursor visible — only when the cursor's LINE
-    // actually changed. Commands like doc:select-none, doc:save, etc. pass
-    // through the wildcard arm and run handle_doc_command without moving
-    // the cursor; running auto-scroll for those snaps the view back to the
-    // cursor and effectively cancels any scrolling the user did.
-    let _ = buffer::with_buffer(buf_id, |b| {
-        let cursor_line = *b.selections.get(2).unwrap_or(&1);
-        if cursor_line == prev_cursor_line {
-            return Ok(());
-        }
-        let cursor_y = (cursor_line as f64 - 1.0) * line_h;
-        let view_h = dv.rect().h;
-        if cursor_y < dv.target_scroll_y {
-            dv.target_scroll_y = cursor_y;
-        } else if cursor_y + line_h > dv.target_scroll_y + view_h {
-            dv.target_scroll_y = cursor_y + line_h - view_h;
-        }
-        Ok(())
-    });
+    // Auto-scroll to keep cursor visible — only for keyboard-initiated
+    // navigation where the cursor's line actually changed.
+    if auto_scroll {
+        let _ = buffer::with_buffer(buf_id, |b| {
+            let cursor_line = *b.selections.get(2).unwrap_or(&1);
+            if cursor_line == prev_cursor_line {
+                return Ok(());
+            }
+            let cursor_y = (cursor_line as f64 - 1.0) * line_h;
+            let view_h = dv.rect().h;
+            if cursor_y < dv.target_scroll_y {
+                dv.target_scroll_y = cursor_y;
+            } else if cursor_y + line_h > dv.target_scroll_y + view_h {
+                dv.target_scroll_y = cursor_y + line_h - view_h;
+            }
+            Ok(())
+        });
+    }
 
     // Horizontal auto-scroll to keep cursor visible (e.g. End on a long line).
     // Cross-line jumps only scroll LEFT (to reveal a cursor at a small column),

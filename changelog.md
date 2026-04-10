@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.4.3] - 2026-04-10 — Scroll discipline.
+
+* Scrolling now only occurs from: mouse wheel, scrollbar, keyboard navigation (arrows, Home/End, PageUp/Down, Ctrl+arrows).
+
 ## [2.4.2] - 2026-04-10 — Minor render bug fix.
 
 * Tab and sidebar gap fix.
