@@ -2,13 +2,6 @@
 # Install Lite-Anvil and Nano-Anvil to /Applications.
 #
 # Usage: ./install-mac.sh
-#
-# This script:
-#   1. Copies LiteAnvil.app and NanoAnvil.app to /Applications
-#   2. Clears quarantine attributes (xattr)
-#   3. Ad-hoc codesigns both apps
-#
-# No sudo required -- /Applications is user-writable on macOS.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +19,7 @@ install_app() {
     echo "Installing $name..."
     rm -rf "$dest"
     cp -R "$src" "$dest"
-    xattr -cr "$dest" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$dest" 2>/dev/null || true
     codesign --force --deep --sign - --timestamp=none "$dest" >/dev/null 2>&1 || true
     echo "  Installed to $dest"
 }

@@ -30,19 +30,13 @@ update-desktop-database ~/.local/share/applications/
 
 ### macOS
 
-1. Download the `.app` bundle or build one (see below).
-2. Move `LiteAnvil.app` to `/Applications`.
-3. Sign the bundle so macOS doesn't block it:
+Extract the zip and run the included install script:
 
 ```bash
-codesign --force --deep --sign - --timestamp=none /Applications/LiteAnvil.app
+./install-mac.sh
 ```
 
-If macOS still refuses to open it (Gatekeeper quarantine), remove the quarantine attribute:
-
-```bash
-sudo xattr -dr com.apple.quarantine /Applications/LiteAnvil.app
-```
+This copies LiteAnvil.app and NanoAnvil.app to `/Applications`, clears quarantine, and codesigns both.
 
 ### Windows
 

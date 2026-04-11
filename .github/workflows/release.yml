@@ -248,7 +248,7 @@ jobs:
               /System/Library/*|/usr/lib/*|@executable_path/*|@loader_path/*)
                 return 1
                 ;;
-              /*)
+              /*|@rpath/*)
                 return 0
                 ;;
               *)
@@ -486,7 +486,7 @@ jobs:
               /System/Library/*|/usr/lib/*|@executable_path/*|@loader_path/*)
                 return 1
                 ;;
-              /*)
+              /*|@rpath/*)
                 return 0
                 ;;
               *)

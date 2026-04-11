@@ -653,20 +653,14 @@
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>update-desktop-database<span class="w"> </span>~/.local/share/applications/
 </code></pre></div>
 <h3 id="macos">macOS<a class="headerlink" href="#macos" title="Permanent link">&para;</a></h3>
-<ol>
-<li>Download the <code>.app</code> bundle or build one (see below).</li>
-<li>Move <code>LiteAnvil.app</code> to <code>/Applications</code>.</li>
-<li>Sign the bundle so macOS doesn't block it:</li>
-</ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>codesign<span class="w"> </span>--force<span class="w"> </span>--deep<span class="w"> </span>--sign<span class="w"> </span>-<span class="w"> </span>--timestamp<span class="o">=</span>none<span class="w"> </span>/Applications/LiteAnvil.app
+<p>Extract the zip and run the included install script:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>./install-mac.sh
 </code></pre></div>
-<p>If macOS still refuses to open it (Gatekeeper quarantine), remove the quarantine attribute:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sudo<span class="w"> </span>xattr<span class="w"> </span>-dr<span class="w"> </span>com.apple.quarantine<span class="w"> </span>/Applications/LiteAnvil.app
-</code></pre></div>
+<p>This copies LiteAnvil.app and NanoAnvil.app to <code>/Applications</code>, clears quarantine, and codesigns both.</p>
 <h3 id="windows">Windows<a class="headerlink" href="#windows" title="Permanent link">&para;</a></h3>
 <p>Extract the archive. Copy <code>lite-anvil.exe</code> and the <code>data/</code> directory wherever you like.</p>
 <p>Optional -- register file associations:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">resources</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="nb">install-file</span><span class="n">-associations</span><span class="p">.</span><span class="n">ps1</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">resources</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="nb">install-file</span><span class="n">-associations</span><span class="p">.</span><span class="n">ps1</span>
 </code></pre></div>
 <h2 id="building-from-source">Building from Source<a class="headerlink" href="#building-from-source" title="Permanent link">&para;</a></h2>
 <h3 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h3>
@@ -709,21 +703,21 @@
 </tbody>
 </table>
 <h3 id="build-run">Build &amp; Run<a class="headerlink" href="#build-run" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/danpozmanter/lite-anvil.git
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nb">cd</span><span class="w"> </span>lite-anvil
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>cargo<span class="w"> </span>build<span class="w"> </span>--release
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>./target/release/lite-anvil<span class="w"> </span><span class="o">[</span>path<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/danpozmanter/lite-anvil.git
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">cd</span><span class="w"> </span>lite-anvil
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>cargo<span class="w"> </span>build<span class="w"> </span>--release
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>./target/release/lite-anvil<span class="w"> </span><span class="o">[</span>path<span class="o">]</span>
 </code></pre></div>
 <h3 id="macos-app-bundle-from-source">macOS App Bundle (from source)<a class="headerlink" href="#macos-app-bundle-from-source" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>LiteAnvil.app/Contents/MacOS
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>cp<span class="w"> </span>target/release/lite-anvil<span class="w"> </span>LiteAnvil.app/Contents/MacOS/
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>cp<span class="w"> </span>-r<span class="w"> </span>data<span class="w"> </span>LiteAnvil.app/Contents/MacOS/
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>cp<span class="w"> </span>resources/macos/Info.plist<span class="w"> </span>LiteAnvil.app/Contents/
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>codesign<span class="w"> </span>--force<span class="w"> </span>--deep<span class="w"> </span>--sign<span class="w"> </span>-<span class="w"> </span>--timestamp<span class="o">=</span>none<span class="w"> </span>LiteAnvil.app
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>LiteAnvil.app/Contents/MacOS
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>cp<span class="w"> </span>target/release/lite-anvil<span class="w"> </span>LiteAnvil.app/Contents/MacOS/
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>cp<span class="w"> </span>-r<span class="w"> </span>data<span class="w"> </span>LiteAnvil.app/Contents/MacOS/
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>cp<span class="w"> </span>resources/macos/Info.plist<span class="w"> </span>LiteAnvil.app/Contents/
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>codesign<span class="w"> </span>--force<span class="w"> </span>--deep<span class="w"> </span>--sign<span class="w"> </span>-<span class="w"> </span>--timestamp<span class="o">=</span>none<span class="w"> </span>LiteAnvil.app
 </code></pre></div>
 <h3 id="debian-package">Debian Package<a class="headerlink" href="#debian-package" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cargo<span class="w"> </span>install<span class="w"> </span>cargo-deb
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>cargo<span class="w"> </span>deb<span class="w"> </span>--no-build
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cargo<span class="w"> </span>install<span class="w"> </span>cargo-deb
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>cargo<span class="w"> </span>deb<span class="w"> </span>--no-build
 </code></pre></div>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>User config location:</p>

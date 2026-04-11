@@ -1,9 +1,14 @@
 # Change Log
 
+## [2.7.3] - 2026-04-11 -- macOS SDL3 bundling fix.
+
+* Fixed macOS launch failure: `@rpath/libSDL3.0.dylib` was not being copied to `Contents/Frameworks/` because `macos_should_bundle_dep` in the CI scripts did not recognize `@rpath/` prefixed library references. Both local and CI build scripts now bundle `@rpath/` dependencies correctly.
+* macOS `install-mac.sh` uses `xattr -dr com.apple.quarantine` for targeted quarantine removal.
+
 ## [2.7.2] - 2026-04-11 -- macOS install script, RPATH fix.
 
-* macOS release zips now include `install-mac.sh` which copies both LiteAnvil.app and NanoAnvil.app to /Applications, clears quarantine, and ad-hoc codesigns. No sudo required.
-* Fixed macOS "Library not loaded: @rpath/libSDL3.0.dylib" by adding `@executable_path/../Frameworks` RPATH via `install_name_tool` in the build scripts, bypassing cargo build cache issues.
+* macOS release zips now include `install-mac.sh`.
+* Added `@executable_path/../Frameworks` RPATH via `install_name_tool` in the build scripts.
 
 ## [2.7.1] - 2026-04-11 -- macOS launch fix.
 
