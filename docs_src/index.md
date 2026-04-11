@@ -110,21 +110,11 @@ A minimal single-file editor with software rendering. No GPU driver overhead -- 
 
 </div>
 
-<div class="feature-card" markdown>
-
-### Software Rendered
-
-Nano-Anvil bundles a no-GL SDL3 build, avoiding GPU driver libraries entirely. Ideal for low-resource environments, containers, or remote sessions.
-
-</div>
-
-</div>
-
 ## Overview
 
 Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
 
-Lite-Anvil also ships **Nano-Anvil**, a minimal single-file editor that uses software rendering (no GPU drivers), starts at ~28MB RAM, and omits the sidebar, terminal, LSP, git integration, and other heavy features. See the [Installation](installation/) page for details on both binaries.
+Lite-Anvil also ships Nano-Anvil, a minimal single-file editor that uses software rendering (no GPU drivers). See the [Installation](installation.md) page for details on both binaries.
 
 | | |
 |---|---|
