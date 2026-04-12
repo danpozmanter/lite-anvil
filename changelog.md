@@ -1,5 +1,11 @@
 # Change Log
 
+## [2.7.5] - 2026-04-11 -- Close Project Folder, CLI args, no-project state.
+
+* Fixed: "Close Project Folder" (Ctrl+Alt+W) now works. Saves session and expanded folders, closes all tabs, clears sidebar, resets to empty state.
+* CLI: passing a folder opens it as the project folder. Passing a file opens it without a project folder. Restores 1.5.5 behavior.
+* No-project state: when no project folder is open, the editor starts without a sidebar. Open File/Folder dialogs default to the home directory.
+
 ## [2.7.4] - 2026-04-11 -- macOS & windows rendering fix.
 
 * Fixed blank window on macOS: `SDL_RENDER` is now kept enabled on macOS and Windows (required for Metal/GDI surface presentation).

@@ -736,8 +736,19 @@ pub fn run(
 
     let line_h_for_scroll = style.code_font_height * 1.2;
     let mut has_cli_files = false;
+    let mut cli_project_root: Option<String> = None;
     for arg in _args.iter().skip(1) {
         if arg.starts_with('-') {
+            continue;
+        }
+        // If the argument is a directory, open it as the project folder.
+        let p = std::path::Path::new(arg);
+        if p.is_dir() {
+            has_cli_files = true;
+            let abs = std::path::absolute(p)
+                .map(|a| a.to_string_lossy().to_string())
+                .unwrap_or_else(|_| arg.to_string());
+            cli_project_root = Some(abs);
             continue;
         }
         // Nano-Anvil: single file only -- skip additional args.
@@ -836,7 +847,6 @@ pub fn run(
     }
 
     // Sidebar state.
-    let mut sidebar_visible = subsystems.has_sidebar();
     // Load saved sidebar width.
     let mut sidebar_width: f64 =
         crate::editor::storage::load_text(userdir_path, "session", "sidebar_width")
@@ -856,28 +866,27 @@ pub fn run(
     let mut sidebar_entries: Vec<SidebarEntry>;
     let mut sidebar_scroll: f64 = 0.0;
 
-    // Determine project root for sidebar: prefer restored project, then first open file.
-    let mut project_root: String =
-        if !restored_project.is_empty() && Path::new(&restored_project).is_dir() {
-            restored_project
-        } else {
-            let first_path = docs.first().map(|d| d.path.as_str()).unwrap_or(".");
-            let p = PathBuf::from(first_path);
-            if p.is_dir() {
-                p.to_string_lossy().to_string()
-            } else {
-                p.parent()
-                    .map(|pp| pp.to_string_lossy().to_string())
-                    .unwrap_or_else(|| ".".to_string())
-            }
-        };
+    // Determine project root for sidebar.
+    // CLI folder overrides everything. Otherwise prefer restored project.
+    // If a file was passed via CLI (no folder), don't open a project.
+    let mut project_root: String = if let Some(root) = cli_project_root {
+        root
+    } else if has_cli_files {
+        // Files passed on CLI -- no project folder.
+        String::new()
+    } else if !restored_project.is_empty() && Path::new(&restored_project).is_dir() {
+        restored_project
+    } else {
+        String::new()
+    };
     let mut sidebar_show_hidden = false;
     let file_icons = load_file_icons(datadir);
-    sidebar_entries = if subsystems.has_sidebar() {
+    sidebar_entries = if subsystems.has_sidebar() && !project_root.is_empty() {
         scan_directory(&project_root, 0, sidebar_show_hidden)
     } else {
         Vec::new()
     };
+    let mut sidebar_visible = subsystems.has_sidebar() && !project_root.is_empty();
     if subsystems.has_sidebar() {
         restore_expanded_folders(
             &mut sidebar_entries,
@@ -1352,6 +1361,17 @@ pub fn run(
         count
     }
 
+    /// Absolute project root, falling back to home directory if empty.
+    fn effective_root(project_root: &str) -> String {
+        if project_root.is_empty() {
+            std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
+        } else {
+            std::path::absolute(project_root)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| project_root.to_string())
+        }
+    }
+
     /// List filesystem entries matching a typed path prefix.
     fn path_suggest(text: &str, project_root: &str, dirs_only: bool) -> Vec<String> {
         let expanded = if let Some(rest) = text.strip_prefix('~') {
@@ -1593,6 +1613,29 @@ pub fn run(
                         }
                     }
                 }
+                "core:close-project-folder" => {
+                    if subsystems.has_sidebar() {
+                        if docs.iter().any(doc_is_modified) {
+                            nag_active = true;
+                            nag_message = "Unsaved changes. Save all before closing project?  [Y]es  [N]o  [Esc]Cancel".to_string();
+                            nag_tab_to_close = None;
+                        } else {
+                            save_project_session(userdir_path, &project_root, &docs, active_tab);
+                            save_expanded_folders(
+                                &sidebar_entries,
+                                userdir_path,
+                                &project_session_key(&project_root),
+                            );
+                            for d in &docs { autoreload.unwatch(&d.path); }
+                            docs.clear();
+                            pending_render_cache = None;
+                            active_tab = 0;
+                            project_root = String::new();
+                            sidebar_entries = Vec::new();
+                            sidebar_visible = false;
+                        }
+                    }
+                }
                 "root:close-all" => {
                     if !single_file_mode {
                         if docs.iter().any(doc_is_modified) {
@@ -1830,9 +1873,7 @@ pub fn run(
                         cmdview_mode = CmdViewMode::OpenFolder;
                         // Always start from the absolute project root so backspace
                         // navigation can walk up directories cleanly.
-                        let abs_root = std::path::absolute(&project_root)
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_else(|_| project_root.clone());
+                        let abs_root = effective_root(&project_root);
                         cmdview_text = format!("{}/", abs_root.trim_end_matches('/'));
                         cmdview_cursor = cmdview_text.len();
                         cmdview_label = "Open Folder:".to_string();
@@ -1844,9 +1885,7 @@ pub fn run(
                     if subsystems.has_picker() || single_file_mode {
                         cmdview_active = true;
                         cmdview_mode = CmdViewMode::OpenFile;
-                        let abs_root = std::path::absolute(&project_root)
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_else(|_| project_root.clone());
+                        let abs_root = effective_root(&project_root);
                         if let Some(doc) = docs.get(active_tab) {
                             if let Some(pos) = doc.path.rfind('/') {
                                 cmdview_text = format!("{}/", &doc.path[..pos]);
@@ -7541,7 +7580,7 @@ pub fn run(
             }
         }
         let project_root_meaningful =
-            project_root != "." && std::path::Path::new(&project_root).is_dir();
+            !project_root.is_empty() && project_root != "." && std::path::Path::new(&project_root).is_dir();
         if !open_files.is_empty() || project_root_meaningful {
             let session = SessionData {
                 files: open_files,
