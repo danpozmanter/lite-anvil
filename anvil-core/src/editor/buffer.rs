@@ -93,6 +93,20 @@ pub struct EditRecord {
 /// Max seconds between edits to merge them into one undo entry.
 pub const UNDO_MERGE_TIMEOUT: f64 = 1.0;
 
+/// Buffers larger than this byte threshold switch to "huge file mode": undo
+/// snapshots are disabled (`push_undo` becomes a no-op that only bumps
+/// `change_id`) and dirty-checking short-circuits to a change-id comparison
+/// instead of re-hashing the whole buffer every frame. 50 MB is large enough
+/// that small/medium source files keep full behavior, while 2 GB files stay
+/// responsive.
+pub const HUGE_FILE_THRESHOLD: u64 = 50 * 1024 * 1024;
+
+/// Total-byte budget for the combined undo+redo stacks. When pushing a new
+/// snapshot would exceed this, oldest entries are evicted from the front of
+/// `undo` until the total drops back under the cap. Acts as a safety net for
+/// files just under `HUGE_FILE_THRESHOLD` that still get edited heavily.
+pub const UNDO_MEMORY_BUDGET: usize = 64 * 1024 * 1024;
+
 /// Core document buffer state, independent of any Lua types.
 pub struct BufferState {
     pub lines: Vec<String>,
@@ -100,10 +114,24 @@ pub struct BufferState {
     pub undo: Vec<Vec<u8>>,
     pub redo: Vec<Vec<u8>>,
     pub change_id: i64,
+    /// Sum of the byte lengths of every line. Computed on load and refreshed
+    /// after undo/redo restores. Drives `is_huge()` which gates `push_undo`
+    /// into no-op mode on multi-GB files. Not maintained incrementally on
+    /// every edit — the 50 MB threshold has enough slack that a session's
+    /// worth of edits can't move a buffer across it.
+    pub total_bytes: u64,
     pub crlf: bool,
     pub bom: BomType,
     pub sig_cache: (i64, u32),
     pub last_edit: Option<(f64, usize, usize, bool, bool)>,
+}
+
+impl BufferState {
+    /// True when this buffer has crossed the huge-file threshold. Huge
+    /// buffers skip undo snapshots entirely and short-circuit dirty checks.
+    pub fn is_huge(&self) -> bool {
+        self.total_bytes > HUGE_FILE_THRESHOLD
+    }
 }
 
 pub static BUFFERS: Lazy<Mutex<HashMap<u64, BufferState>>> =
@@ -128,6 +156,7 @@ pub fn default_buffer_state() -> BufferState {
         undo: Vec::new(),
         redo: Vec::new(),
         change_id: 1,
+        total_bytes: 1,
         crlf: false,
         bom: BomType::None,
         sig_cache: (1, sig),
@@ -196,6 +225,19 @@ pub fn content_signature(lines: &[String]) -> u32 {
         hash = hash.wrapping_mul(16_777_619);
     }
     hash
+}
+
+/// Cached content signature keyed by `change_id`. Repeat calls for the same
+/// `change_id` return the memoized hash without rescanning the buffer; edits
+/// bump `change_id` which invalidates the cache. This is the only function
+/// that should touch `state.sig_cache`.
+pub fn content_signature_cached(state: &mut BufferState) -> u32 {
+    if state.sig_cache.0 == state.change_id {
+        return state.sig_cache.1;
+    }
+    let sig = content_signature(&state.lines);
+    state.sig_cache = (state.change_id, sig);
+    sig
 }
 
 /// Split text into lines, each ending with `\n`.
@@ -807,6 +849,7 @@ pub fn load_file_with_progress<F: FnMut(u64, u64)>(
     state.selections.shrink_to_fit();
     reset_history(state);
     state.change_id = 1;
+    state.total_bytes = state.lines.iter().map(|l| l.len() as u64).sum();
     state.sig_cache = (0, 0);
     progress(bytes_read, total);
     Ok(())
@@ -835,8 +878,32 @@ pub fn save_file(state: &BufferState, filename: &str, crlf: bool) -> Result<(), 
     Ok(())
 }
 
+/// Drop snapshots from the front of `undo` until the combined byte size of
+/// `undo` + `redo` fits within `UNDO_MEMORY_BUDGET`. Guarantees that at least
+/// one entry is retained even if a single snapshot exceeds the budget, so
+/// the most recent edit is always undoable.
+fn trim_history_to_budget(state: &mut BufferState) {
+    let redo_bytes: usize = state.redo.iter().map(|e| e.len()).sum();
+    let mut undo_bytes: usize = state.undo.iter().map(|e| e.len()).sum();
+    while state.undo.len() > 1 && undo_bytes + redo_bytes > UNDO_MEMORY_BUDGET {
+        let dropped = state.undo.remove(0).len();
+        undo_bytes = undo_bytes.saturating_sub(dropped);
+    }
+}
+
 /// Snapshot the current buffer state for undo.
+///
+/// On buffers over `HUGE_FILE_THRESHOLD` this becomes a no-op that only
+/// advances `change_id` and clears the redo stack — at multi-GB file sizes,
+/// JSON-serializing every line on each keystroke would lock up the editor.
+/// Callers don't need to special-case huge files; the function handles it.
 pub fn push_undo(state: &mut BufferState) {
+    if state.is_huge() {
+        state.redo.clear();
+        state.change_id += 1;
+        state.last_edit = None;
+        return;
+    }
     let snapshot = serde_json::json!({
         "lines": state.lines,
         "selections": state.selections,
@@ -849,6 +916,7 @@ pub fn push_undo(state: &mut BufferState) {
     if state.undo.len() > 2_000 {
         state.undo.remove(0);
     }
+    trim_history_to_budget(state);
 }
 
 /// Push undo for a single-char insert, merging consecutive keystrokes.
@@ -909,6 +977,7 @@ pub fn undo(state: &mut BufferState) {
             state.change_id = cid;
         }
     }
+    state.total_bytes = state.lines.iter().map(|l| l.len() as u64).sum();
     state.last_edit = None;
 }
 
@@ -940,6 +1009,7 @@ pub fn redo(state: &mut BufferState) {
             state.change_id = cid;
         }
     }
+    state.total_bytes = state.lines.iter().map(|l| l.len() as u64).sum();
     state.last_edit = None;
 }
 
@@ -1509,5 +1579,85 @@ mod tests {
         assert_eq!(state.lines, vec!["v1\n"]);
         undo(&mut state);
         assert_eq!(state.lines, vec!["v0\n"]);
+    }
+
+    #[test]
+    fn content_signature_cached_reuses_hash_when_change_id_unchanged() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["abc\n".to_string()];
+        state.change_id = 7;
+        state.sig_cache = (0, 0);
+        let first = content_signature_cached(&mut state);
+        // Cache now keyed on change_id 7. Mutate lines without bumping change_id
+        // and confirm the cached hash is returned (the cache is the source of truth
+        // until change_id advances, so callers must bump it on edits).
+        state.lines = vec!["xyz\n".to_string()];
+        let second = content_signature_cached(&mut state);
+        assert_eq!(first, second);
+        // Advancing change_id invalidates the cache.
+        state.change_id = 8;
+        let third = content_signature_cached(&mut state);
+        assert_ne!(third, first);
+    }
+
+    #[test]
+    fn push_undo_is_noop_on_huge_buffer() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["big\n".to_string()];
+        state.total_bytes = HUGE_FILE_THRESHOLD + 1;
+        let cid_before = state.change_id;
+        push_undo(&mut state);
+        assert!(state.undo.is_empty(), "huge buffers must not snapshot");
+        assert_eq!(
+            state.change_id,
+            cid_before + 1,
+            "change_id must still advance so dirty-check sees the edit"
+        );
+    }
+
+    #[test]
+    fn push_undo_small_buffer_stores_snapshot() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["small\n".to_string()];
+        state.total_bytes = 6;
+        push_undo(&mut state);
+        assert_eq!(state.undo.len(), 1);
+    }
+
+    #[test]
+    fn trim_history_to_budget_drops_oldest_first() {
+        let mut state = default_buffer_state();
+        // Stuff 80 MB of fake undo entries, exceeding the 64 MB budget.
+        let entry = vec![0u8; 16 * 1024 * 1024];
+        for _ in 0..5 {
+            state.undo.push(entry.clone());
+        }
+        assert_eq!(state.undo.len(), 5);
+        trim_history_to_budget(&mut state);
+        // 5 × 16 MB = 80 MB. Budget is 64 MB. Should drop one to reach 64 MB.
+        assert_eq!(state.undo.len(), 4);
+    }
+
+    #[test]
+    fn trim_history_always_retains_at_least_one_entry() {
+        let mut state = default_buffer_state();
+        // A single 100 MB entry is over budget, but must be retained so the
+        // most recent edit remains undoable.
+        state.undo.push(vec![0u8; 100 * 1024 * 1024]);
+        trim_history_to_budget(&mut state);
+        assert_eq!(state.undo.len(), 1);
+    }
+
+    #[test]
+    fn undo_refreshes_total_bytes_after_restore() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["hello\n".to_string()];
+        state.total_bytes = 6;
+        push_undo(&mut state);
+        state.lines = vec!["hello world\n".to_string()];
+        state.total_bytes = 12;
+        undo(&mut state);
+        assert_eq!(state.lines, vec!["hello\n".to_string()]);
+        assert_eq!(state.total_bytes, 6);
     }
 }

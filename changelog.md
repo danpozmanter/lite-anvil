@@ -1,5 +1,14 @@
 # Change Log
 
+## [2.8.0] - 2026-04-12 -- Multi-gigabyte files - performance fixes.
+
+* O(1) dirty check. Replaced per-frame full-buffer hashing with change_id check + per-frame memoization.
+* Working signature cache. Hash now keyed by change_id; at most once per edit (small files only).
+* Huge-file mode (>50MB). Disables undo snapshots (no-op undo/redo); avoids multi-GB allocations.
+* Undo memory cap. Undo+redo limited to 64MB; oldest entries evicted first.
+* Efficient size tracking. total_bytes computed once; drives huge-file detection.
+* No large-file rescans. Signature fallback only <8MB; larger files skip byte-identical undo detection.
+
 ## [2.7.7] - 2026-04-12 -- Simpler/consistent unsaved-changes prompts.
 
 * Quit confirmation is now "X has unsaved changes, quit anyway?" with Yes/No. Y or Enter confirms, N or Esc cancels. When more than one file is modified, the subject becomes "Multiple files".

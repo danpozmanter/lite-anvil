@@ -523,20 +523,54 @@ pub fn run(
         cached_scroll_y: f64,
         /// Number of inlay hints when cached_render was last built.
         cached_hint_count: usize,
+        /// Memoized dirty-check. `(change_id, is_modified)` — valid as long
+        /// as the buffer's current change_id matches. Avoids rehashing the
+        /// whole buffer 4+ times per render frame for tab labels and status.
+        dirty_cache: std::cell::Cell<Option<(i64, bool)>>,
     }
 
-    /// Check if a document has unsaved modifications by comparing content signature.
+    /// Byte threshold above which `doc_is_modified` short-circuits to a pure
+    /// change-id comparison, skipping the `content_signature` fallback that
+    /// would otherwise scan the whole buffer. Below this size, the signature
+    /// fallback still runs so "edit then undo back to saved" correctly clears
+    /// the dirty flag; above it, that niche optimization is sacrificed for
+    /// responsiveness on multi-GB files.
+    const DIRTY_STRICT_FALLBACK_BYTES: u64 = 8 * 1024 * 1024;
+
+    /// Check if a document has unsaved modifications.
+    ///
+    /// - Fast path: `change_id == saved_change_id` → clean (O(1)).
+    /// - Small-buffer path: compare cached content signature against the
+    ///   saved one; catches "undo back to saved state".
+    /// - Huge-buffer path: any change_id mismatch is treated as modified.
+    ///
+    /// The per-doc `dirty_cache` memoizes the answer for the current
+    /// change_id so tab-bar and status-bar rendering only pay the cost once.
     fn doc_is_modified(doc: &OpenDoc) -> bool {
         let Some(buf_id) = doc.view.buffer_id else {
             return false;
         };
-        buffer::with_buffer(buf_id, |b| {
+        buffer::with_buffer_mut(buf_id, |b| {
             // Fast path: change_id matches saved → definitely not modified.
             if b.change_id == doc.saved_change_id {
+                doc.dirty_cache.set(Some((b.change_id, false)));
                 return Ok(false);
             }
-            // Slow path: content may match even if change_id differs.
-            Ok(buffer::content_signature(&b.lines) != doc.saved_signature)
+            // Per-frame memo: same change_id since last check → reuse result.
+            if let Some((cid, result)) = doc.dirty_cache.get() {
+                if cid == b.change_id {
+                    return Ok(result);
+                }
+            }
+            // Huge buffers skip the signature fallback entirely.
+            if b.total_bytes > DIRTY_STRICT_FALLBACK_BYTES {
+                doc.dirty_cache.set(Some((b.change_id, true)));
+                return Ok(true);
+            }
+            // Small buffers: content-signature fallback (catches undo-to-saved).
+            let modified = buffer::content_signature_cached(b) != doc.saved_signature;
+            doc.dirty_cache.set(Some((b.change_id, modified)));
+            Ok(modified)
         })
         .unwrap_or(false)
     }
@@ -631,6 +665,7 @@ pub fn run(
             cached_change_id: -1,
             cached_scroll_y: -1.0,
             cached_hint_count: 0,
+            dirty_cache: std::cell::Cell::new(None),
         });
         true
     }
@@ -730,6 +765,7 @@ pub fn run(
                     cached_change_id: -1,
                     cached_scroll_y: -1.0,
                     cached_hint_count: 0,
+                    dirty_cache: std::cell::Cell::new(None),
                 });
             } else if open_file_into(file, docs) {
                 autoreload.watch(file);
@@ -850,6 +886,7 @@ pub fn run(
                             cached_change_id: -1,
                             cached_scroll_y: -1.0,
                             cached_hint_count: 0,
+                            dirty_cache: std::cell::Cell::new(None),
                         });
                     } else {
                         open_file_into(file, &mut docs);
@@ -883,6 +920,7 @@ pub fn run(
             cached_change_id: -1,
             cached_scroll_y: -1.0,
             cached_hint_count: 0,
+            dirty_cache: std::cell::Cell::new(None),
         });
     }
 
@@ -1668,6 +1706,7 @@ pub fn run(
                         cached_change_id: -1,
                         cached_scroll_y: -1.0,
                         cached_hint_count: 0,
+                        dirty_cache: std::cell::Cell::new(None),
                     });
                     active_tab = docs.len() - 1;
                 }
@@ -4816,6 +4855,7 @@ pub fn run(
                             cached_change_id: -1,
                             cached_scroll_y: -1.0,
                             cached_hint_count: 0,
+                            dirty_cache: std::cell::Cell::new(None),
                         });
                         active_tab = docs.len() - 1;
                         autoreload.watch(&j.path);
@@ -5578,11 +5618,11 @@ pub fn run(
                     } else {
                         format!("Spaces: {}", doc.indent_size)
                     };
-                    let crlf = doc
+                    let (crlf, huge) = doc
                         .view
                         .buffer_id
-                        .and_then(|id| buffer::with_buffer(id, |b| Ok(b.crlf)).ok())
-                        .unwrap_or(false);
+                        .and_then(|id| buffer::with_buffer(id, |b| Ok((b.crlf, b.is_huge()))).ok())
+                        .unwrap_or((false, false));
                     let le = if crlf { "CRLF" } else { "LF" };
                     let mode = if overwrite_mode { "OVR" } else { "INS" };
                     let sep = " | ";
@@ -5592,6 +5632,9 @@ pub fn run(
                         indent_label,
                         le.to_string(),
                     ];
+                    if huge {
+                        right_parts.push("No Undo".to_string());
+                    }
                     if doc_is_modified(doc) {
                         right_parts.push("modified".to_string());
                     }
