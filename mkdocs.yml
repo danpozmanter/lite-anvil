@@ -8,9 +8,12 @@ edit_uri: ""
 
 docs_dir: docs_src
 site_dir: docs
+exclude_docs: |
+  _overrides/
 
 theme:
   name: material
+  custom_dir: docs_src/_overrides
   logo: assets/logo.png
   favicon: assets/logo.png
   font:
