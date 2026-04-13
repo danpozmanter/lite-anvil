@@ -1,5 +1,13 @@
 # Change Log
 
+## [2.8.1] - 2026-04-13 -- Markdown preview restored.
+
+* Markdown preview pane. Toggle with `Ctrl+Shift+M` (or `Toggle Markdown Preview` in the command palette) on any `.md` / `.markdown` file. Opens a live 50/50 split alongside the editor; re-parses and re-lays-out as you type.
+* Renders headings, paragraphs, blockquotes, fenced code blocks, horizontal rules, ordered and unordered lists, GFM tables with header highlighting, inline code chips, bold/italic/strikethrough, and links.
+* Click a link: opens the URL in the OS default browser (`open` on macOS, `start` on Windows, `xdg-open` on Linux). Cursor changes to a hand while hovering a link.
+* Click a task-list checkbox: toggles the `[ ]` / `[x]` marker in the source buffer (undoable) and the filled state updates in the preview instantly.
+* Mouse wheel is routed to whichever pane the cursor is over; clicks outside the editor's pane don't reposition the source cursor.
+
 ## [2.8.0] - 2026-04-12 -- Multi-gigabyte files - performance fixes.
 
 * O(1) dirty check. Replaced per-frame full-buffer hashing with change_id check + per-frame memoization.

@@ -57,10 +57,19 @@ pub struct StyleContext {
     pub icon_big_font: u64,
     pub big_font: u64,
     pub seti_font: u64,
+    /// Scaled UI font used for markdown h1 headings.
+    pub h1_font: u64,
+    /// Scaled UI font used for markdown h2 headings.
+    pub h2_font: u64,
+    /// Scaled UI font used for markdown h3 headings.
+    pub h3_font: u64,
 
     // Metrics
     pub font_height: f64,
     pub code_font_height: f64,
+    pub h1_font_height: f64,
+    pub h2_font_height: f64,
+    pub h3_font_height: f64,
 
     // Window
     pub scale: f64,

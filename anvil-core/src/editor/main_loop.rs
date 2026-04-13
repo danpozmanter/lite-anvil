@@ -527,6 +527,9 @@ pub fn run(
         /// as the buffer's current change_id matches. Avoids rehashing the
         /// whole buffer 4+ times per render frame for tab labels and status.
         dirty_cache: std::cell::Cell<Option<(i64, bool)>>,
+        /// Rendered markdown preview state. Idle (zero-cost) until the user
+        /// toggles preview on for this tab.
+        preview: crate::editor::markdown_preview::MarkdownPreviewState,
     }
 
     /// Byte threshold above which `doc_is_modified` short-circuits to a pure
@@ -666,6 +669,7 @@ pub fn run(
             cached_scroll_y: -1.0,
             cached_hint_count: 0,
             dirty_cache: std::cell::Cell::new(None),
+            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
         });
         true
     }
@@ -766,6 +770,7 @@ pub fn run(
                     cached_scroll_y: -1.0,
                     cached_hint_count: 0,
                     dirty_cache: std::cell::Cell::new(None),
+            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
                 });
             } else if open_file_into(file, docs) {
                 autoreload.watch(file);
@@ -887,6 +892,7 @@ pub fn run(
                             cached_scroll_y: -1.0,
                             cached_hint_count: 0,
                             dirty_cache: std::cell::Cell::new(None),
+            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
                         });
                     } else {
                         open_file_into(file, &mut docs);
@@ -921,6 +927,7 @@ pub fn run(
             cached_scroll_y: -1.0,
             cached_hint_count: 0,
             dirty_cache: std::cell::Cell::new(None),
+            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
         });
     }
 
@@ -1138,6 +1145,7 @@ pub fn run(
             "root:close-or-quit",
             "doc:save-as",
             "core:save-as-dialog",
+            "core:toggle-markdown-preview",
         ];
         for cmd in palette_extras {
             if seen.insert((*cmd).to_string()) {
@@ -1707,6 +1715,7 @@ pub fn run(
                         cached_scroll_y: -1.0,
                         cached_hint_count: 0,
                         dirty_cache: std::cell::Cell::new(None),
+            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
                     });
                     active_tab = docs.len() - 1;
                 }
@@ -1833,6 +1842,31 @@ pub fn run(
                 }
                 "core:toggle-minimap" => {
                     minimap_visible = !minimap_visible;
+                }
+                "core:toggle-markdown-preview" => {
+                    if let Some(doc) = docs.get_mut(active_tab) {
+                        let is_md = doc.path.ends_with(".md")
+                            || doc.path.ends_with(".markdown")
+                            || doc.name.ends_with(".md")
+                            || doc.name.ends_with(".markdown");
+                        if is_md {
+                            doc.preview.enabled = !doc.preview.enabled;
+                            if doc.preview.enabled {
+                                // Force a reparse + relayout on first draw.
+                                doc.preview.cached_change_id = -1;
+                                doc.preview.cached_width = 0.0;
+                                doc.preview.layout.clear();
+                                doc.preview.scroll_y = 0.0;
+                                doc.preview.target_scroll_y = 0.0;
+                            }
+                        } else {
+                            info_message = Some((
+                                "Markdown preview: active file is not a markdown document"
+                                    .to_string(),
+                                Instant::now(),
+                            ));
+                        }
+                    }
                 }
                 "core:toggle-line-wrapping" => {
                     line_wrapping = !line_wrapping;
@@ -4617,9 +4651,87 @@ pub fn run(
                         }
                     }
 
+                    // Markdown preview click routing: if the click is in
+                    // the preview pane, check checkbox regions first (they
+                    // are small targets), then link regions, then bail out
+                    // so the click doesn't fall through to the editor.
+                    if let Some(doc) = docs.get_mut(active_tab) {
+                        if doc.preview.enabled && *button == MouseButton::Left {
+                            let pr = doc.preview.rect;
+                            if pr.w > 0.0
+                                && *x >= pr.x
+                                && *x < pr.x + pr.w
+                                && *y >= pr.y
+                                && *y < pr.y + pr.h
+                            {
+                                // Checkbox first.
+                                let cb = doc
+                                    .preview
+                                    .checkbox_regions
+                                    .iter()
+                                    .find(|r| *x >= r.x1 && *x <= r.x2 && *y >= r.y1 && *y <= r.y2)
+                                    .cloned();
+                                if let Some(cb) = cb {
+                                    if let Some(buf_id) = doc.view.buffer_id {
+                                        let src = buffer::with_buffer(buf_id, |b| {
+                                            Ok(b.lines.join(""))
+                                        })
+                                        .unwrap_or_default();
+                                        if let Some((line, col, ch)) =
+                                            crate::editor::markdown_preview::toggle_task_at(
+                                                &src,
+                                                cb.source_start,
+                                                cb.checked,
+                                            )
+                                        {
+                                            let _ = buffer::with_buffer_mut(buf_id, |b| {
+                                                buffer::push_undo(b);
+                                                if line <= b.lines.len() {
+                                                    let l = &mut b.lines[line - 1];
+                                                    let byte_pos = char_to_byte(l, col - 1);
+                                                    if byte_pos < l.len() {
+                                                        l.replace_range(
+                                                            byte_pos..byte_pos + 1,
+                                                            &ch.to_string(),
+                                                        );
+                                                        b.change_id += 1;
+                                                    }
+                                                }
+                                                Ok(())
+                                            });
+                                            // Force reparse next draw so the
+                                            // checkbox visibly fills/clears.
+                                            doc.preview.cached_change_id = -1;
+                                        }
+                                    }
+                                    redraw = true;
+                                    continue;
+                                }
+                                // Link next.
+                                if let Some(lr) =
+                                    doc.preview.link_regions.iter().find(|r| {
+                                        *x >= r.x1 && *x <= r.x2 && *y >= r.y1 && *y <= r.y2
+                                    })
+                                {
+                                    crate::editor::markdown_preview::open_url(&lr.href);
+                                }
+                                redraw = true;
+                                continue;
+                            }
+                        }
+                    }
+
                     if let Some(doc) = docs.get_mut(active_tab) {
                         let dv = &mut doc.view;
                         if let Some(buf_id) = dv.buffer_id {
+                            // When the editor is split-paned with a preview,
+                            // reject clicks that land outside its rect so
+                            // cursor/selection math isn't fed stray coords.
+                            let dvr = dv.rect();
+                            if *x < dvr.x || *x >= dvr.x + dvr.w {
+                                redraw = true;
+                                continue;
+                            }
                             let line_h = style.code_font_height * 1.2;
                             let gutter_w = dv.gutter_width;
                             let click_line =
@@ -4755,7 +4867,21 @@ pub fn run(
                         }
                     }
                     let sidebar_w = if sidebar_visible { sidebar_width } else { 0.0 };
-                    if subsystems.has_sidebar() && sidebar_visible && (*x - sidebar_w).abs() < 5.0
+                    // Hand cursor when hovering a markdown preview link.
+                    let hover_link = docs
+                        .get(active_tab)
+                        .map(|d| {
+                            d.preview.enabled
+                                && d.preview.link_regions.iter().any(|r| {
+                                    *x >= r.x1 && *x <= r.x2 && *y >= r.y1 && *y <= r.y2
+                                })
+                        })
+                        .unwrap_or(false);
+                    if hover_link {
+                        crate::window::set_cursor("hand");
+                    } else if subsystems.has_sidebar()
+                        && sidebar_visible
+                        && (*x - sidebar_w).abs() < 5.0
                     {
                         crate::window::set_cursor("sizeh");
                     } else if !sidebar_dragging && !editor_mouse_down {
@@ -4786,9 +4912,17 @@ pub fn run(
                     if subsystems.has_sidebar() && sidebar_visible && mouse_x < sidebar_width {
                         // Mouse is over the sidebar -- scroll sidebar only.
                         sidebar_scroll = (sidebar_scroll - scroll_amt).max(0.0);
-                    } else {
-                        // Mouse is over the editor — scroll editor only.
-                        if let Some(doc) = docs.get_mut(active_tab) {
+                    } else if let Some(doc) = docs.get_mut(active_tab) {
+                        // Route wheel to whichever pane the cursor is over
+                        // in split preview mode.
+                        let over_preview = doc.preview.enabled
+                            && doc.preview.rect.w > 0.0
+                            && mouse_x >= doc.preview.rect.x
+                            && mouse_x < doc.preview.rect.x + doc.preview.rect.w;
+                        if over_preview {
+                            doc.preview.target_scroll_y =
+                                (doc.preview.target_scroll_y - scroll_amt).max(0.0);
+                        } else {
                             let dv = &mut doc.view;
                             dv.target_scroll_y = (dv.target_scroll_y - scroll_amt).max(0.0);
                         }
@@ -4856,6 +4990,7 @@ pub fn run(
                             cached_scroll_y: -1.0,
                             cached_hint_count: 0,
                             dirty_cache: std::cell::Cell::new(None),
+            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
                         });
                         active_tab = docs.len() - 1;
                         autoreload.watch(&j.path);
@@ -5458,8 +5593,39 @@ pub fn run(
             };
             empty_view.set_rect(content_rect);
             if let Some(doc) = docs.get_mut(active_tab) {
-                let dv = &mut doc.view;
-                dv.set_rect(content_rect);
+                if doc.preview.enabled {
+                    // Split the content area into a 50/50 editor | preview
+                    // pane. The editor keeps float rects (its existing
+                    // wrap/click math has always tolerated them); the
+                    // preview rect is snapped to integer pixels so the
+                    // background fill and clip rect enclose every logical
+                    // pixel. Without snapping, `draw_rect`'s i32 cast
+                    // truncates the bottom of the fill, leaving a stale
+                    // pixel row that reads as a thin blue line from a
+                    // previously drawn heading rule.
+                    let half_w = (content_rect.w * 0.5).floor();
+                    let left = crate::editor::types::Rect {
+                        x: content_rect.x,
+                        y: content_rect.y,
+                        w: half_w,
+                        h: content_rect.h,
+                    };
+                    let right_x = (content_rect.x + half_w).round();
+                    let right_y = content_rect.y.floor();
+                    let right_bottom = (content_rect.y + content_rect.h).ceil();
+                    let right_right = (content_rect.x + content_rect.w).ceil();
+                    let right = crate::editor::types::Rect {
+                        x: right_x,
+                        y: right_y,
+                        w: right_right - right_x,
+                        h: right_bottom - right_y,
+                    };
+                    doc.view.set_rect(left);
+                    doc.preview.rect = right;
+                } else {
+                    doc.view.set_rect(content_rect);
+                    doc.preview.rect = crate::editor::types::Rect::default();
+                }
             }
             status_view.set_rect(crate::editor::types::Rect {
                 x: 0.0,
@@ -6428,6 +6594,63 @@ pub fn run(
                     }
                 } else {
                     empty_view.draw_native(&mut draw_ctx, &style);
+                }
+                crate::editor::app_state::clip_init(width, height);
+
+                // Markdown preview pane (split, drawn to the right of the
+                // editor view when enabled on the active doc). Runs after
+                // the normal doc draw so it renders into its own rect.
+                if let Some(doc) = docs.get_mut(active_tab) {
+                    if doc.preview.enabled && doc.preview.rect.w > 0.0 {
+                        if let Some(buf_id) = doc.view.buffer_id {
+                            // Reparse the source when the buffer changes.
+                            let cur_change_id =
+                                buffer::with_buffer(buf_id, |b| Ok(b.change_id)).unwrap_or(0);
+                            if cur_change_id != doc.preview.cached_change_id {
+                                let text = buffer::with_buffer(buf_id, |b| Ok(b.lines.join("")))
+                                    .unwrap_or_default();
+                                doc.preview.blocks = crate::editor::markdown::parse(&text);
+                                doc.preview.cached_change_id = cur_change_id;
+                                doc.preview.layout.clear();
+                            }
+                            let rect = doc.preview.rect;
+                            // Smooth-scroll toward the target, clamped to
+                            // [0, max_scroll].
+                            doc.preview.scroll_y +=
+                                (doc.preview.target_scroll_y - doc.preview.scroll_y) * 0.25;
+                            let max_scroll =
+                                (doc.preview.content_height - rect.h).max(0.0);
+                            if doc.preview.target_scroll_y > max_scroll {
+                                doc.preview.target_scroll_y = max_scroll;
+                            }
+                            if doc.preview.scroll_y > max_scroll {
+                                doc.preview.scroll_y = max_scroll;
+                            }
+                            if doc.preview.scroll_y < 0.0 {
+                                doc.preview.scroll_y = 0.0;
+                            }
+                            // Divider between editor and preview.
+                            use crate::editor::view::DrawContext as _;
+                            draw_ctx.draw_rect(
+                                rect.x,
+                                rect.y,
+                                style.divider_size.max(1.0),
+                                rect.h,
+                                style.divider.to_array(),
+                            );
+                            let pane_x = rect.x + style.divider_size.max(1.0);
+                            let pane_w = rect.w - style.divider_size.max(1.0);
+                            crate::editor::markdown_preview::draw(
+                                &mut draw_ctx,
+                                &mut doc.preview,
+                                &style,
+                                pane_x,
+                                rect.y,
+                                pane_w,
+                                rect.h,
+                            );
+                        }
+                    }
                 }
                 crate::editor::app_state::clip_init(width, height);
 
@@ -9516,6 +9739,24 @@ fn load_fonts(
 
     let ui = load(&config.fonts.ui, &mut ctx)?;
     let code = load(&config.fonts.code, &mut ctx)?;
+
+    // Load scaled heading fonts from the UI font path. Sizes scale the body
+    // font size (`config.fonts.ui.size`) by decreasing factors so h1 > h2 >
+    // h3 > h4 (= body). h4-h6 reuse the body slot. Any load failure falls
+    // back to the body font so a missing path never blocks startup.
+    let load_heading = |mul: f64, ctx: &mut crate::editor::draw_context::NativeDrawContext| {
+        let spec = crate::editor::config::FontSpec {
+            path: config.fonts.ui.path.clone(),
+            size: ((config.fonts.ui.size as f64) * mul).round().max(1.0) as u32,
+            options: config.fonts.ui.options.clone(),
+            ..Default::default()
+        };
+        load(&spec, ctx).unwrap_or(ui)
+    };
+    let h1 = load_heading(1.75, &mut ctx);
+    let h2 = load_heading(1.45, &mut ctx);
+    let h3 = load_heading(1.2, &mut ctx);
+
     let (icon, big, icon_big, seti) = if is_single_file() {
         (ui, ui, ui, ui)
     } else {
@@ -9575,15 +9816,15 @@ fn load_fonts(
         (icon, big, icon_big, seti)
     };
 
-    FONT_SLOTS.with(|s| *s.borrow_mut() = Some((ui, code, icon, big, icon_big, seti)));
+    FONT_SLOTS.with(|s| *s.borrow_mut() = Some((ui, code, icon, big, icon_big, seti, h1, h2, h3)));
 
     Ok(ctx)
 }
 
 use std::cell::RefCell;
 
-/// (ui, code, icon, big, icon_big, seti) font slot ids.
-type FontSlotIds = (u64, u64, u64, u64, u64, u64);
+/// (ui, code, icon, big, icon_big, seti, h1, h2, h3) font slot ids.
+type FontSlotIds = (u64, u64, u64, u64, u64, u64, u64, u64, u64);
 
 thread_local! {
     static FONT_SLOTS: RefCell<Option<FontSlotIds>> = const { RefCell::new(None) };
@@ -9598,8 +9839,8 @@ fn build_style(
     use crate::editor::types::Color;
     use crate::editor::view::DrawContext as _;
 
-    let (ui, code, icon, big, icon_big, seti) =
-        FONT_SLOTS.with(|s| s.borrow().unwrap_or((0, 0, 0, 0, 0, 0)));
+    let (ui, code, icon, big, icon_big, seti, h1, h2, h3) =
+        FONT_SLOTS.with(|s| s.borrow().unwrap_or((0, 0, 0, 0, 0, 0, 0, 0, 0)));
 
     StyleContext {
         font: ui,
@@ -9608,8 +9849,14 @@ fn build_style(
         icon_big_font: icon_big,
         big_font: big,
         seti_font: seti,
+        h1_font: h1,
+        h2_font: h2,
+        h3_font: h3,
         font_height: ctx.font_height(ui),
         code_font_height: ctx.font_height(code),
+        h1_font_height: ctx.font_height(h1),
+        h2_font_height: ctx.font_height(h2),
+        h3_font_height: ctx.font_height(h3),
         padding_x: config.ui.padding_x as f64,
         padding_y: config.ui.padding_y as f64,
         divider_size: config.ui.divider_size as f64,

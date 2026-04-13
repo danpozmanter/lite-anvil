@@ -41,6 +41,10 @@ pub mod log_view;
 pub mod lsp;
 pub mod lsp_client;
 #[allow(dead_code)]
+pub mod markdown;
+#[allow(dead_code)]
+pub mod markdown_preview;
+#[allow(dead_code)]
 pub mod nag_view;
 pub mod main_loop;
 #[allow(dead_code)]
