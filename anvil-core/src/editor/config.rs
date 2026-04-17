@@ -2,8 +2,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Typed editor configuration. Every field corresponds to a key in the Lua
-/// `core.config` table. Deserializable from TOML with sensible defaults.
+/// Typed editor configuration. Deserialised from the user's `config.toml`
+/// with sensible defaults for every field.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct NativeConfig {

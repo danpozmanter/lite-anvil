@@ -107,7 +107,8 @@ pub const HUGE_FILE_THRESHOLD: u64 = 50 * 1024 * 1024;
 /// files just under `HUGE_FILE_THRESHOLD` that still get edited heavily.
 pub const UNDO_MEMORY_BUDGET: usize = 64 * 1024 * 1024;
 
-/// Core document buffer state, independent of any Lua types.
+/// Document buffer state: lines, selections, undo/redo, and metadata
+/// (encoding, BOM, line endings) learned at load time.
 pub struct BufferState {
     pub lines: Vec<String>,
     pub selections: Vec<usize>,

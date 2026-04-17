@@ -8,7 +8,7 @@ use crate::editor::error::RegexError;
 /// `(start, end)` byte span. Index 0 is the whole match.
 pub type CaptureGroups = Vec<Option<(usize, usize)>>;
 
-// PCRE2 match-time option constants (same values as the Lua-facing module).
+// PCRE2 match-time option constants (mirrors the values in PCRE2's header).
 pub const ANCHORED: u32 = 0x80000000;
 pub const ENDANCHORED: u32 = 0x20000000;
 pub const NOTBOL: u32 = 0x00000001;
@@ -104,8 +104,8 @@ impl NativeRegex {
         }
     }
 
-    /// Run `cmatch` compatible with the Lua API: returns 1-based (start, end+1)
-    /// pairs for group 0 followed by all capture groups. Empty vec means no match.
+    /// Match at byte offset `start` and return 1-based `(start, end+1)`
+    /// pairs for group 0 followed by each capture group. Empty vec = no match.
     pub fn cmatch_at(&self, subject: &[u8], start: usize) -> Result<Vec<i64>, RegexError> {
         let mut locs = self.inner.capture_locations();
         match self.inner.captures_read_at(&mut locs, subject, start) {

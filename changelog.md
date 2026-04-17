@@ -1,5 +1,20 @@
 # Change Log
 
+## [2.9.0] - 2026-04-17 -- Statically-linked C deps, no GPU drivers loaded, big code cleanup.
+
+* Static C deps. SDL3, FreeType, and PCRE2 are now compiled from vendored source and statically linked into `lite-anvil` / `nano-anvil`. No `libSDL3.*` / `libfreetype.*` / `libpcre2-*.*` / `libpng*` / `libbrotli*` / `libbz2.*` / `libz.*` ships with the editor; Linux `ldd` output shrinks from ten libraries to just the libc family. Distro drift (Nix's GPU-enabled SDL3, Homebrew's freetype version, Debian's pcre2-dev) no longer changes the binary's behavior — source builders on NixOS, Arch, Debian, Fedora, macOS, and Windows all get the same editor.
+  * `sdl3-sys` uses `build-from-source-static` with `no-sdl-gpu` / `no-sdl-camera` / `no-sdl-joystick` / `no-sdl-haptic` / `no-sdl-hidapi` / `no-sdl-sensor` / `no-sdl-dialog` / `no-sdl-tray` / `no-sdl-power` + `sdl-lean-and-mean`.
+  * `pcre2-sys` is forced static via `PCRE2_SYS_STATIC=1` in `.cargo/config.toml`.
+  * `freetype-sys` uses its compile-from-source fallback via `FREETYPE2_NO_PKG_CONFIG=1`. FreeType's bundled build leaves PNG / BZIP2 / Brotli / HarfBuzz off by default — the only capability lost is color-emoji PNG font tables and WOFF2, neither of which we render.
+  * Source-build prerequisites: cmake + a C compiler. No `libfreetype*-dev` / `libpcre2-dev` / `libsdl3-dev` / vcpkg packages needed on any platform. See `BUILDING.md`.
+* No GPU driver load at runtime. `window::init` sets `SDL_FRAMEBUFFER_ACCELERATION=0`, `SDL_VIDEO_DRIVER=x11,wayland`, and `SDL_RENDER_DRIVER=software` before `SDL_Init`. The framebuffer hint is load-bearing: without it, `SDL_GetWindowSurface` silently creates an OpenGL SDL_Renderer for "accelerated" presentation on Linux, which dlopens `libGL` / `libGLX_nvidia` / `libnvidia-glcore` and balloons RSS from ~18 MB to ~70 MB. With the hint, RSS at startup is ~32 MB and no GPU libraries are mapped.
+* Packaging cleanup. `release.yml`, `install.sh`, and the local build scripts drop every manual C-lib build step (git-clone SDL + cmake on all platforms, manual freetype / pcre2 on Mac Intel, vcpkg installs on Windows, `brew install freetype pcre2` on Mac ARM, `libfreetype6-dev libpcre2-dev` apt packages on Linux). Windows no longer bundles the VC runtime DLLs either — `+crt-static` plus the static C deps leave the archive as just two exes + `data/` + `data-nano/`. `lite-anvil/build.rs` and `nano-anvil/build.rs` shrink to empty stubs.
+* Code cleanup. Removed 12 dead modules (`view_bridge`, `view_types`, `scheduler`, `symbol_index`, `highlighter`, `doc_layout`, `doc_ops`, `event_loop`, `command_view`, `plugins`, `commands`, `views`) — ~2,800 lines of Lua-era residue. Dropped the blanket `#[allow(dead_code)]` attributes in `editor/mod.rs`. Stale Lua-era doc comments rewritten throughout.
+  * Extracted three new modules from `main_loop`: `open_doc` (per-tab state + session I/O, ~400 lines), `cmdview` (file-picker helpers, ~290 lines), and `commands_dispatch` (the unified command-dispatch match body, ~840 lines pulled in via `include!()`).
+  * Moved `build_render_lines`, `click_to_doc_pos`, `simple_tokenize`, `syntax_color`, `draw_breadcrumb`, and `format_window_title` out of `main_loop` into `doc_view` where they belong.
+  * Collapsed three independent nag-bar state trackers (unsaved-changes, reload-from-disk, create-directory) into a single `Nag` enum with four variants — only one prompt can be active at a time and the draw/key paths match on it once.
+  * Consolidated 14 scattered `#[cfg(feature = "sdl")]` gates under a new `sdl_only!` macro that bulk-gates a contiguous item block.
+  
 ## [2.8.5] - 2026-04-17 -- Long-path ergonomics in the file picker, breadcrumb, and status bar.
 
 * The Open / Save / Open Recent picker now handles long paths gracefully. The input area horizontally auto-scrolls so the caret is always visible and clips its text to the box (previously long paths bled past the border); `<` / `>` hints appear at the edges when content is scrolled off.

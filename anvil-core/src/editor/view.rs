@@ -1,9 +1,8 @@
 use crate::editor::event::{EditorEvent, EventResult};
 use crate::editor::types::Rect;
 
-/// Drawing context passed to views during the render phase.
-/// Initially wraps Lua renderer calls; will be replaced with
-/// direct SDL rendering in a future phase.
+/// Drawing context passed to views during the render phase. Concrete
+/// impls talk to SDL for real rendering; tests use a recording stub.
 pub trait DrawContext {
     /// Draw a filled rectangle.
     fn draw_rect(&mut self, x: f64, y: f64, w: f64, h: f64, color: [u8; 4]);

@@ -23,8 +23,8 @@ const COMMANDS: &[(&str, &str)] = &[
 #[derive(Debug)]
 pub struct EmptyView {
     rect: Rect,
-    /// Pre-resolved display strings for commands (format string applied).
-    /// Empty until populated by the Lua shim which has access to keymap.
+    /// Pre-resolved display strings for commands (e.g. "Open File (Ctrl+O)"),
+    /// populated by the caller that has access to the current keymap.
     pub display_commands: Vec<String>,
     pub version: String,
 }

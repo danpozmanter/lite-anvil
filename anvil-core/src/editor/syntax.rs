@@ -70,7 +70,7 @@ impl Default for SyntaxDefinition {
     }
 }
 
-/// Resolved value from the JSON graph. Mirrors the JSON structure without Lua types.
+/// Resolved value from the JSON graph (string, number, bool, array, object, or null).
 #[derive(Debug, Clone)]
 pub enum GraphValue {
     Null,

@@ -29,7 +29,7 @@ impl LogView {
         }
     }
 
-    /// Sync entries from the Lua core.log_items table.
+    /// Replace the log entries shown in the view.
     pub fn sync_entries(&mut self, entries: Vec<LogEntry>) {
         self.last_item_count = entries.len();
         self.entries = entries;

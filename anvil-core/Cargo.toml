@@ -11,7 +11,38 @@ default = ["sdl"]
 sdl = ["dep:sdl3-sys"]
 
 [dependencies]
-sdl3-sys = { version = "0.6", features = ["use-pkg-config", "use-vcpkg"], optional = true }
+# Build SDL3 from vendored source, statically, as part of this crate's
+# build graph. That way source builders on any distro (Nix, Arch, Debian,
+# Gentoo, ...), as well as Homebrew Macs and stock Windows boxes, always
+# end up with the exact SDL3 we expect — rather than whatever libSDL3
+# the system happens to provide via pkg-config / vcpkg, which may have
+# extra GPU / audio / joystick subsystems on by default.
+#
+# `sdl-lean-and-mean` and the `no-sdl-*` flags turn off subsystems the
+# editor never touches (the SDL_GPU API, camera, joystick, haptic,
+# sensor, HIDAPI, dialog, tray, power) so the resulting static library
+# is smaller and avoids probing hardware it can't use.
+#
+# Note: sdl3-sys 0.6.3 does not yet expose Cargo features for SDL_OPENGL
+# / SDL_VULKAN / SDL_WAYLAND, so those remain compiled in. Runtime hints
+# set in `window::init` steer SDL toward X11 + software surfaces on
+# Linux to keep actual GPU usage off.
+#
+# Prerequisite for source builders: cmake + a C compiler (both already
+# required by other deps in most setups).
+sdl3-sys = { version = "0.6.3", features = [
+    "build-from-source-static",
+    "sdl-lean-and-mean",
+    "no-sdl-gpu",
+    "no-sdl-camera",
+    "no-sdl-joystick",
+    "no-sdl-haptic",
+    "no-sdl-hidapi",
+    "no-sdl-sensor",
+    "no-sdl-dialog",
+    "no-sdl-tray",
+    "no-sdl-power",
+], optional = true }
 fontdue = "0.9.3"
 freetype = "0.7.2"
 notify = "8.2.0"

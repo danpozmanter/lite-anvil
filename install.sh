@@ -84,17 +84,7 @@ install_linux() {
             || { $sudo_cmd rm -rf "$share_nano_dir"; $sudo_cmd cp -r "$data_nano_src/." "$share_nano_dir/"; }
     fi
 
-    local sdl3_nogl_src="$stage_dir/lib/sdl3-nogl"
-    if [ -d "$sdl3_nogl_src" ]; then
-        local lib_dir
-        if [ "$SYSTEM" -eq 1 ]; then
-            lib_dir=/usr/local/lib/nano-anvil
-        else
-            lib_dir="$HOME/.local/lib/nano-anvil"
-        fi
-        $sudo_cmd mkdir -p "$lib_dir"
-        $sudo_cmd cp -P "$sdl3_nogl_src"/libSDL3.so* "$lib_dir/"
-    fi
+    # SDL3 is statically linked — no libSDL3 to install next to the binary.
 
     $sudo_cmd cp "$stage_dir/com.lite_anvil.LiteAnvil.desktop" "$app_dir/lite-anvil.desktop"
     if [ -f "$stage_dir/com.nano_anvil.NanoAnvil.desktop" ]; then

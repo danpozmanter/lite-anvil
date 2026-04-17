@@ -35,7 +35,6 @@ pub fn count_chars_range(bytes: &[u8], start: usize, end: usize) -> usize {
 
 /// Count UTF-8 characters in `bytes[i-1..j]` where `i` and `j` are 1-based
 /// byte indices (inclusive). Negative indices wrap from the end.
-/// Matches the Lua `utf8.len(s [, i [, j]])` semantics.
 pub fn len(bytes: &[u8], i: Option<i64>, j: Option<i64>) -> usize {
     let blen = bytes.len() as i64;
     let mut i = i.unwrap_or(1);
@@ -150,7 +149,6 @@ pub fn codepoint_at(bytes: &[u8], pos: usize) -> Option<(u32, usize)> {
 
 /// Advance past the character at 1-based byte position `pos`.
 /// Returns `(end_byte_pos_1based, codepoint)`, or `None` if past the end.
-/// Matches the `utf8extra.next(s, pos)` Lua semantics.
 pub fn next(bytes: &[u8], pos: Option<i64>) -> Option<(i64, u32)> {
     let pos = (pos.unwrap_or(0) + 1) as usize;
     if pos == 0 || pos > bytes.len() {

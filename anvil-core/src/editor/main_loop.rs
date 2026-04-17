@@ -1,4 +1,23 @@
 //! Editor main loop.
+//!
+//! The module is split into two visually-distinct sections: `pub fn run`
+//! and the big `#[cfg(feature = "sdl")] fn run` it delegates to live
+//! near the top; the bottom 1.4k lines are supporting helpers most of
+//! which only make sense when the `sdl` feature is on. Those helpers
+//! are bulk-gated via the `sdl_only!` macro below so each one doesn't
+//! need its own `#[cfg(feature = "sdl")]` attribute.
+
+/// Wrap a block of items with `#[cfg(feature = "sdl")]`. Lets a long
+/// run of SDL-only helpers share a single gate declaration at the top
+/// instead of attributing every individual fn.
+macro_rules! sdl_only {
+    ($($item:item)*) => {
+        $(
+            #[cfg(feature = "sdl")]
+            $item
+        )*
+    };
+}
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -26,7 +45,9 @@ fn use_git() -> bool {
 use crate::editor::buffer;
 use crate::editor::config::NativeConfig;
 use crate::editor::context_menu::{ContextMenu, MenuItem};
-use crate::editor::doc_view::{DocView, RenderLine, RenderToken};
+use crate::editor::doc_view::{
+    build_render_lines, click_to_doc_pos, syntax_color, DocView, RenderLine, SYNTAX_COLORS,
+};
 use crate::editor::empty_view::EmptyView;
 use crate::editor::event::{EditorEvent, MouseButton};
 use crate::editor::keymap::NativeKeymap;
@@ -73,10 +94,7 @@ const MIN_SIDEBAR_W: f64 = 100.0;
 /// Collapse redundant `.` segments in a path string. Preserves a single
 /// leading `./` for relative paths and leaves absolute paths intact.
 /// Does not touch `..` segments (we don't want to silently traverse symlinks).
-/// Collapse redundant `.` segments in a path string. Preserves a single
-/// leading `./` for relative paths and leaves absolute paths intact.
-/// Does not touch `..` segments (we don't want to silently traverse symlinks).
-fn normalize_path(p: &str) -> String {
+pub(crate) fn normalize_path(p: &str) -> String {
     use std::path::Component;
     let path = Path::new(p);
     let mut out = PathBuf::new();
@@ -234,7 +252,7 @@ fn parse_hex_color(s: &str) -> Option<[u8; 4]> {
 }
 
 /// File watcher state for autoreload on external changes.
-struct AutoreloadState {
+pub(crate) struct AutoreloadState {
     watcher: Option<notify::RecommendedWatcher>,
     rx: Option<Receiver<notify::Result<Event>>>,
     watched_paths: HashSet<String>,
@@ -255,7 +273,7 @@ impl AutoreloadState {
     }
 
     /// Start watching a file path for external changes.
-    fn watch(&mut self, path: &str) {
+    pub(crate) fn watch(&mut self, path: &str) {
         if self.watched_paths.contains(path) {
             return;
         }
@@ -269,7 +287,7 @@ impl AutoreloadState {
     }
 
     /// Stop watching a file path.
-    fn unwatch(&mut self, path: &str) {
+    pub(crate) fn unwatch(&mut self, path: &str) {
         if self.watched_paths.remove(path) {
             if let Some(ref mut w) = self.watcher {
                 let _ = w.unwatch(Path::new(path));
@@ -331,17 +349,6 @@ fn comment_marker_for_path(
         .block_comment
         .as_ref()
         .map(|(o, c)| CommentMarker::Block(o.clone(), c.clone()))
-}
-
-/// Session data for save/restore.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SessionData {
-    files: Vec<String>,
-    active: usize,
-    #[serde(default)]
-    active_project: String,
-    #[serde(default)]
-    unsaved_content: Vec<String>,
 }
 
 /// Run the editor main loop. Returns true if restart requested.
@@ -513,316 +520,16 @@ pub fn run(
         command: None,
     });
 
-    // Open files from CLI args.
-    struct OpenDoc {
-        view: DocView,
-        path: String,
-        name: String,
-        saved_change_id: i64,
-        saved_signature: u32,
-        indent_type: String,
-        indent_size: usize,
-        git_changes: std::collections::HashMap<usize, crate::editor::git::LineChange>,
-        /// Cached tokenized render lines. Invalidated only when the buffer
-        /// content changes (edits, undo/redo, reload), NOT on cursor movement.
-        cached_render: Vec<RenderLine>,
-        /// The buffer change_id when cached_render was last built.
-        cached_change_id: i64,
-        /// The scroll-y when cached_render was last built (rebuild on scroll).
-        cached_scroll_y: f64,
-        /// Number of inlay hints when cached_render was last built.
-        cached_hint_count: usize,
-        /// Memoized dirty-check. `(change_id, is_modified)` — valid as long
-        /// as the buffer's current change_id matches. Avoids rehashing the
-        /// whole buffer 4+ times per render frame for tab labels and status.
-        dirty_cache: std::cell::Cell<Option<(i64, bool)>>,
-        /// Rendered markdown preview state. Idle (zero-cost) until the user
-        /// toggles preview on for this tab.
-        preview: crate::editor::markdown_preview::MarkdownPreviewState,
-    }
-
-    /// Byte threshold above which `doc_is_modified` short-circuits to a pure
-    /// change-id comparison, skipping the `content_signature` fallback that
-    /// would otherwise scan the whole buffer. Below this size, the signature
-    /// fallback still runs so "edit then undo back to saved" correctly clears
-    /// the dirty flag; above it, that niche optimization is sacrificed for
-    /// responsiveness on multi-GB files.
-    const DIRTY_STRICT_FALLBACK_BYTES: u64 = 8 * 1024 * 1024;
-
-    /// Check if a document has unsaved modifications.
-    ///
-    /// - Fast path: `change_id == saved_change_id` → clean (O(1)).
-    /// - Small-buffer path: compare cached content signature against the
-    ///   saved one; catches "undo back to saved state".
-    /// - Huge-buffer path: any change_id mismatch is treated as modified.
-    ///
-    /// The per-doc `dirty_cache` memoizes the answer for the current
-    /// change_id so tab-bar and status-bar rendering only pay the cost once.
-    fn doc_is_modified(doc: &OpenDoc) -> bool {
-        let Some(buf_id) = doc.view.buffer_id else {
-            return false;
-        };
-        buffer::with_buffer_mut(buf_id, |b| {
-            // Fast path: change_id matches saved → definitely not modified.
-            if b.change_id == doc.saved_change_id {
-                doc.dirty_cache.set(Some((b.change_id, false)));
-                return Ok(false);
-            }
-            // Per-frame memo: same change_id since last check → reuse result.
-            if let Some((cid, result)) = doc.dirty_cache.get() {
-                if cid == b.change_id {
-                    return Ok(result);
-                }
-            }
-            // Huge buffers skip the signature fallback entirely.
-            if b.total_bytes > DIRTY_STRICT_FALLBACK_BYTES {
-                doc.dirty_cache.set(Some((b.change_id, true)));
-                return Ok(true);
-            }
-            // Small buffers: content-signature fallback (catches undo-to-saved).
-            let modified = buffer::content_signature_cached(b) != doc.saved_signature;
-            doc.dirty_cache.set(Some((b.change_id, modified)));
-            Ok(modified)
-        })
-        .unwrap_or(false)
-    }
-
-    /// Builds the "X has unsaved changes, quit anyway?" prompt. If more than
-    /// one modified doc exists, the subject becomes "Multiple files".
-    fn nag_msg_quit(docs: &[OpenDoc]) -> String {
-        let modified: Vec<&OpenDoc> = docs.iter().filter(|d| doc_is_modified(d)).collect();
-        let label = if modified.len() == 1 {
-            let name = &modified[0].name;
-            if name.is_empty() { "untitled".to_string() } else { name.clone() }
-        } else {
-            "Multiple files".to_string()
-        };
-        format!("{label} has unsaved changes, quit anyway?")
-    }
-
-    /// Builds the "X has unsaved changes, close anyway?" prompt for a single
-    /// tab. Always shows the filename, never collapses to "Multiple files".
-    fn nag_msg_close(name: &str) -> String {
-        let label = if name.is_empty() { "untitled" } else { name };
-        format!("{label} has unsaved changes, close anyway?")
-    }
+    // Open files from CLI args. Per-tab state and session/file I/O live
+    // in `crate::editor::open_doc`.
+    use crate::editor::open_doc::{
+        check_file_size_limit, doc_is_modified, nag_msg_close, nag_msg_quit, open_file_into,
+        project_session_key, restore_project_session, save_project_session,
+        scroll_new_doc_to_line, split_path_line, OpenDoc, BG_LOAD_THRESHOLD,
+    };
 
     let mut docs: Vec<OpenDoc> = Vec::new();
     let mut active_tab: usize = 0;
-
-    /// Files larger than this threshold load on a background thread with a
-    /// progress overlay instead of blocking the UI.
-    const BG_LOAD_THRESHOLD: u64 = 25 * 1024 * 1024; // 25 MB
-
-    /// Check file size against hard limit. Returns Err with a message if the
-    /// file exceeds the limit.
-    fn check_file_size_limit(path: &str, hard_limit_mb: u32) -> Result<u64, String> {
-        let sz = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        let limit_bytes = (hard_limit_mb as u64) * 1024 * 1024;
-        if sz > limit_bytes {
-            Err(format!(
-                "File too large: {:.1} MB exceeds hard limit of {} MB (set large_file.hard_limit_mb in config.toml)",
-                sz as f64 / (1024.0 * 1024.0),
-                hard_limit_mb
-            ))
-        } else {
-            Ok(sz)
-        }
-    }
-
-    /// Open a file and add it to the docs list.
-    fn open_file_into(path: &str, docs: &mut Vec<OpenDoc>) -> bool {
-        // Resolve to an absolute path so doc.path round-trips through session
-        // save/load even if the cwd changes between runs. `std::path::absolute`
-        // does NOT touch the filesystem (preserves symlinks, works for missing
-        // files), unlike fs::canonicalize. Falls back to normalize_path on the
-        // rare error case so the error message is still meaningful.
-        let resolved = std::path::absolute(path)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| normalize_path(path));
-        let path = resolved.as_str();
-        let mut buf_state = buffer::default_buffer_state();
-        if let Err(e) = buffer::load_file(&mut buf_state, path) {
-            eprintln!("Failed to open {path}: {e}");
-            return false;
-        }
-        let initial_change_id = buf_state.change_id;
-        let (indent_type, indent_size, _score) =
-            crate::editor::picker::detect_indent(&buf_state.lines, 100, 2);
-        let buf_id = buffer::insert_buffer(buf_state);
-        let mut dv = DocView::new();
-        dv.buffer_id = Some(buf_id);
-        dv.indent_size = indent_size;
-        let name = std::path::Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string());
-        let git_changes = if use_git() {
-            crate::editor::git::diff_file(path)
-        } else {
-            std::collections::HashMap::new()
-        };
-        let saved_sig =
-            buffer::with_buffer(buf_id, |b| Ok(buffer::content_signature(&b.lines))).unwrap_or(0);
-        docs.push(OpenDoc {
-            view: dv,
-            path: path.to_string(),
-            name,
-            saved_change_id: initial_change_id,
-            saved_signature: saved_sig,
-            indent_type: indent_type.to_string(),
-            indent_size,
-            git_changes,
-            cached_render: Vec::new(),
-            cached_change_id: -1,
-            cached_scroll_y: -1.0,
-            cached_hint_count: 0,
-            dirty_cache: std::cell::Cell::new(None),
-            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
-        });
-        true
-    }
-
-    /// Derive a storage-safe key from a project root path.
-    fn project_session_key(root: &str) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let canonical = std::fs::canonicalize(root)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| root.to_string());
-        let mut h = DefaultHasher::new();
-        canonical.hash(&mut h);
-        format!("proj_{:016x}", h.finish())
-    }
-
-    /// Save the current open files for a project so they can be restored later.
-    fn save_project_session(
-        userdir: &std::path::Path,
-        root: &str,
-        docs: &[OpenDoc],
-        active_tab: usize,
-    ) {
-        if root == "." || root.is_empty() {
-            return;
-        }
-        let mut files = Vec::new();
-        let mut unsaved_content = Vec::new();
-        for doc in docs {
-            if doc.path.is_empty() {
-                files.push("__untitled__".to_string());
-                let content = doc
-                    .view
-                    .buffer_id
-                    .and_then(|id| buffer::with_buffer(id, |b| Ok(b.lines.join(""))).ok())
-                    .unwrap_or_default();
-                unsaved_content.push(content);
-            } else {
-                files.push(doc.path.clone());
-                unsaved_content.push(String::new());
-            }
-        }
-        let session = SessionData {
-            files,
-            active: active_tab,
-            active_project: root.to_string(),
-            unsaved_content,
-        };
-        if let Ok(json) = serde_json::to_string_pretty(&session) {
-            let _ = storage::save_text(
-                userdir,
-                "project_session",
-                &project_session_key(root),
-                &json,
-            );
-        }
-    }
-
-    /// Restore previously saved open files for a project. Returns the active tab
-    /// index if files were restored.
-    fn restore_project_session(
-        userdir: &std::path::Path,
-        root: &str,
-        docs: &mut Vec<OpenDoc>,
-        autoreload: &mut AutoreloadState,
-    ) -> Option<usize> {
-        let key = project_session_key(root);
-        let data = storage::load_text(userdir, "project_session", &key).ok()??;
-        let session: SessionData = serde_json::from_str(&data).ok()?;
-        for (i, file) in session.files.iter().enumerate() {
-            if file == "__untitled__" {
-                let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
-                if let Some(content) = session.unsaved_content.get(i) {
-                    if !content.is_empty() {
-                        let _ = buffer::with_buffer_mut(buf_id, |b| {
-                            b.lines = content.lines().map(|l| format!("{l}\n")).collect();
-                            if b.lines.is_empty() {
-                                b.lines.push("\n".to_string());
-                            }
-                            b.change_id += 1;
-                            Ok(())
-                        });
-                    }
-                }
-                let mut dv = DocView::new();
-                dv.buffer_id = Some(buf_id);
-                docs.push(OpenDoc {
-                    view: dv,
-                    path: String::new(),
-                    name: "untitled".to_string(),
-                    saved_change_id: 1,
-                    saved_signature: buffer::content_signature(&["\n".to_string()]),
-                    indent_type: "soft".to_string(),
-                    indent_size: 2,
-                    git_changes: std::collections::HashMap::new(),
-                    cached_render: Vec::new(),
-                    cached_change_id: -1,
-                    cached_scroll_y: -1.0,
-                    cached_hint_count: 0,
-                    dirty_cache: std::cell::Cell::new(None),
-            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
-                });
-            } else if open_file_into(file, docs) {
-                autoreload.watch(file);
-            }
-        }
-        if docs.is_empty() {
-            None
-        } else {
-            Some(session.active.min(docs.len().saturating_sub(1)))
-        }
-    }
-
-    /// Split `path:N` into `(path, Some(N))`. Handles Windows drive letters
-    /// (e.g. `C:\foo`) by only treating the trailing `:digits` as a line number.
-    fn split_path_line(input: &str) -> (&str, Option<usize>) {
-        if let Some(pos) = input.rfind(':') {
-            let suffix = &input[pos + 1..];
-            // Must be all digits and non-empty, and the part before the colon
-            // must be a non-empty path (rules out bare `:42`).
-            if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) && pos > 0 {
-                if let Ok(n) = suffix.parse::<usize>() {
-                    return (&input[..pos], Some(n));
-                }
-            }
-        }
-        (input, None)
-    }
-
-    /// After `open_file_into` pushes a doc, scroll it to `line`.
-    fn scroll_new_doc_to_line(docs: &mut [OpenDoc], line: usize, style_line_h: f64) {
-        if let Some(doc) = docs.last_mut() {
-            if let Some(buf_id) = doc.view.buffer_id {
-                let _ = buffer::with_buffer_mut(buf_id, |b| {
-                    let ln = line.min(b.lines.len()).max(1);
-                    b.selections = vec![ln, 1, ln, 1];
-                    Ok(())
-                });
-                let y = ((line as f64 - 1.0) * style_line_h - doc.view.rect().h / 2.0).max(0.0);
-                doc.view.scroll_y = y;
-                doc.view.target_scroll_y = y;
-            }
-        }
-    }
 
     let line_h_for_scroll = style.code_font_height * 1.2;
     let mut has_cli_files = false;
@@ -856,7 +563,7 @@ pub fn run(
         } else {
             (arg.as_str(), None)
         };
-        if open_file_into(actual_path, &mut docs) {
+        if open_file_into(actual_path, &mut docs, use_git()) {
             if let Some(ln) = line {
                 scroll_new_doc_to_line(&mut docs, ln, line_h_for_scroll);
             }
@@ -868,7 +575,7 @@ pub fn run(
     let mut restored_project = String::new();
     if !single_file_mode && !has_cli_files {
         if let Ok(Some(data)) = storage::load_text(userdir_path, "session", "files") {
-            if let Ok(session) = serde_json::from_str::<SessionData>(&data) {
+            if let Ok(session) = serde_json::from_str::<crate::editor::open_doc::SessionData>(&data) {
                 for (i, file) in session.files.iter().enumerate() {
                     if file == "__untitled__" {
                         let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
@@ -904,7 +611,7 @@ pub fn run(
             preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
                         });
                     } else {
-                        open_file_into(file, &mut docs);
+                        open_file_into(file, &mut docs, use_git());
                     }
                 }
                 if session.active < docs.len() {
@@ -1018,21 +725,6 @@ pub fn run(
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
 
-    /// Add a path to a recent list (dedup, prepend, truncate).
-    fn update_recent(list: &mut Vec<String>, path: &str, limit: usize) {
-        let canonical = std::fs::canonicalize(path)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| path.to_string());
-        if canonical.is_empty() {
-            return;
-        }
-        list.retain(|p| p != &canonical);
-        list.insert(0, canonical);
-        if list.len() > limit {
-            list.truncate(limit);
-        }
-    }
-
     let fps = config.fps as f64;
     let mut redraw = true;
     let mut quit = false;
@@ -1103,21 +795,43 @@ pub fn run(
     // (start_line, start_col, end_line, end_col), all 1-based.
     let mut find_selection_range: Option<(usize, usize, usize, usize)> = None;
 
-    // Nag view state.
-    let mut nag_active = false;
-    let mut nag_message = String::new();
-    let mut nag_tab_to_close: Option<usize> = None;
+    // Nag bar state. The three prompts the editor can raise —
+    // "unsaved changes on close/quit?", "file changed on disk, reload?",
+    // and "parent directory missing, create and save?" — are modelled as
+    // a single enum instead of three independent `bool + data` sets so
+    // only one nag can be active at a time and the draw code can match
+    // on it once.
+    #[derive(Default)]
+    enum Nag {
+        #[default]
+        None,
+        /// "FOO has unsaved changes, close/quit anyway?" — `tab_to_close`
+        /// is `Some(i)` to close that tab on Yes, `None` to quit.
+        UnsavedChanges {
+            message: String,
+            tab_to_close: Option<usize>,
+        },
+        /// "File changed on disk, reload?" — applies to the doc at `path`.
+        ReloadFromDisk {
+            path: String,
+        },
+        /// "Directory does not exist: PARENT. Create it and save?" — on
+        /// Yes, mkdir -p the parent and save to `save_path`; other fields
+        /// are needed to complete the interrupted Save / Save As.
+        CreateDir {
+            parent: String,
+            save_path: String,
+            doc_tab: usize,
+            from_save_as: bool,
+        },
+    }
+    impl Nag {
+        fn is_unsaved(&self) -> bool {
+            matches!(self, Nag::UnsavedChanges { .. })
+        }
+    }
+    let mut nag = Nag::None;
     let mut info_message: Option<(String, Instant)> = font_warning.map(|msg| (msg, Instant::now()));
-
-    // "Save into a path whose parent directory does not exist" confirmation.
-    // `mkdir_pending_*` records what to do after the Yes/No answer so that
-    // the same prompt serves both Save As (cmdview flow) and doc:save on an
-    // existing path whose directory has since been deleted.
-    let mut mkdir_nag_active = false;
-    let mut mkdir_nag_parent = String::new();
-    let mut mkdir_pending_save_path = String::new();
-    let mut mkdir_pending_doc_tab: usize = 0;
-    let mut mkdir_pending_from_save_as = false;
 
     // Command palette state.
     let mut palette_active = false;
@@ -1212,14 +926,14 @@ pub fn run(
         cmds
     };
 
-    // Command view modes for keyboard-navigated text input.
-    #[derive(Clone, Copy, PartialEq)]
-    enum CmdViewMode {
-        OpenFile,
-        OpenFolder,
-        OpenRecent,
-        SaveAs,
-    }
+    // Command view state. Helpers and the `CmdViewMode` enum live in
+    // `crate::editor::cmdview`.
+    use crate::editor::cmdview::{
+        dir_with_trailing_sep, effective_root, path_suggest, refresh_cmdview_suggestions,
+        remember_recent_file, update_recent, CmdViewMode,
+    };
+    #[cfg(feature = "sdl")]
+    use crate::editor::cmdview::truncate_left_to_width;
     let mut cmdview_active = false;
     let mut cmdview_mode = CmdViewMode::OpenFile;
     let mut cmdview_text = String::new();
@@ -1501,200 +1215,6 @@ pub fn run(
         count
     }
 
-    /// Shrink `text` from the LEFT until it fits inside `max_w` pixels,
-    /// prefixing the result with `…` when truncated. Used for the file
-    /// picker's suggestion list so the filename (the meaningful tail of a
-    /// long path) stays visible on screen instead of the drive prefix.
-    #[cfg(feature = "sdl")]
-    fn truncate_left_to_width(
-        text: &str,
-        max_w: f64,
-        font: u64,
-        ctx: &mut crate::editor::draw_context::NativeDrawContext,
-    ) -> String {
-        use crate::editor::view::DrawContext as _;
-        if max_w <= 0.0 {
-            return String::new();
-        }
-        if ctx.font_width(font, text) <= max_w {
-            return text.to_string();
-        }
-        let ellipsis = "…";
-        let ellipsis_w = ctx.font_width(font, ellipsis);
-        let budget = (max_w - ellipsis_w).max(0.0);
-        // Walk from the right edge inwards, consuming chars until adding
-        // the next one would exceed the budget.
-        let chars: Vec<char> = text.chars().collect();
-        let mut keep_from = chars.len();
-        let mut w = 0.0f64;
-        let mut tmp = [0u8; 4];
-        for ch in chars.iter().rev() {
-            let cw = ctx.font_width(font, ch.encode_utf8(&mut tmp));
-            if w + cw > budget {
-                break;
-            }
-            w += cw;
-            keep_from -= 1;
-        }
-        if keep_from == 0 {
-            // The whole string fits without truncation — unlikely given
-            // the earlier check, but keep the fallback honest.
-            text.to_string()
-        } else {
-            let suffix: String = chars[keep_from..].iter().collect();
-            format!("{ellipsis}{suffix}")
-        }
-    }
-
-    /// Normalise a directory path for display in the command view: strip
-    /// any trailing `/` or `\` and append the platform's native separator.
-    /// Used whenever the picker needs to seed its input with "start
-    /// browsing from here"; keeping the native separator means follow-up
-    /// typing and the suggestions list don't end up visually mixing
-    /// `/` and `\` on Windows.
-    fn dir_with_trailing_sep(path: &str) -> String {
-        let sep = std::path::MAIN_SEPARATOR;
-        let trimmed = path.trim_end_matches(['/', '\\']);
-        format!("{trimmed}{sep}")
-    }
-
-    /// Absolute project root, falling back to the user's home directory if
-    /// empty. Windows uses `USERPROFILE`; Unix uses `HOME`.
-    fn effective_root(project_root: &str) -> String {
-        if project_root.is_empty() {
-            let key = if cfg!(target_os = "windows") {
-                "USERPROFILE"
-            } else {
-                "HOME"
-            };
-            std::env::var(key).unwrap_or_else(|_| ".".to_string())
-        } else {
-            std::path::absolute(project_root)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| project_root.to_string())
-        }
-    }
-
-    /// Add a path to `recent_files` (dedup + cap) and persist it to disk.
-    fn remember_recent_file(
-        list: &mut Vec<String>,
-        path: &str,
-        userdir_path: &std::path::Path,
-    ) {
-        update_recent(list, path, 100);
-        let _ = crate::editor::storage::save_text(
-            userdir_path,
-            "session",
-            "recent_files",
-            &serde_json::to_string(list).unwrap_or_default(),
-        );
-    }
-
-    /// Refresh suggestions for the current cmdview mode after the input text changes.
-    fn refresh_cmdview_suggestions(
-        mode: CmdViewMode,
-        text: &str,
-        project_root: &str,
-        recent_files: &[String],
-        recent_projects: &[String],
-        out: &mut Vec<String>,
-    ) {
-        let dirs_only = mode == CmdViewMode::OpenFolder;
-        if mode == CmdViewMode::OpenRecent {
-            let query = text.to_lowercase();
-            let mut combined: Vec<String> = Vec::new();
-            for p in recent_files.iter().chain(recent_projects.iter()) {
-                if !combined.contains(p) {
-                    combined.push(p.clone());
-                }
-            }
-            *out = if query.is_empty() {
-                combined
-            } else {
-                combined
-                    .into_iter()
-                    .filter(|p| p.to_lowercase().contains(&query))
-                    .collect()
-            };
-        } else {
-            *out = path_suggest(text, project_root, dirs_only);
-        }
-    }
-
-    /// List filesystem entries matching a typed path prefix.
-    ///
-    /// On Windows, both `/` and `\` are accepted as separators since the
-    /// initial `cmdview_text` and anything the user types in Explorer use
-    /// backslashes, while URLs / config files use forward slashes. The
-    /// suggestions are rendered with the platform's native separator so
-    /// the display stays consistent.
-    fn path_suggest(text: &str, project_root: &str, dirs_only: bool) -> Vec<String> {
-        let sep = std::path::MAIN_SEPARATOR;
-        let home_key = if cfg!(target_os = "windows") {
-            "USERPROFILE"
-        } else {
-            "HOME"
-        };
-
-        let expanded = if let Some(rest) = text.strip_prefix('~') {
-            if let Some(home) = std::env::var_os(home_key) {
-                format!("{}{rest}", home.to_string_lossy())
-            } else {
-                text.to_string()
-            }
-        } else {
-            text.to_string()
-        };
-
-        let last_sep = expanded
-            .rfind(|c: char| c == '/' || c == '\\');
-        let (dir, prefix) = match last_sep {
-            Some(pos) => (&expanded[..=pos], &expanded[pos + 1..]),
-            None => (project_root, expanded.as_str()),
-        };
-
-        let lookup: std::path::PathBuf = if std::path::Path::new(dir).is_absolute() {
-            std::path::PathBuf::from(dir)
-        } else {
-            std::path::Path::new(project_root).join(dir)
-        };
-
-        let mut results = Vec::new();
-        let Ok(entries) = std::fs::read_dir(&lookup) else {
-            return results;
-        };
-        let prefix_lower = prefix.to_lowercase();
-        let mut entries_sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-        entries_sorted.sort_by_key(|e| e.file_name());
-
-        let dir_has_trailing_sep = dir.ends_with('/') || dir.ends_with('\\');
-        for entry in entries_sorted {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') && !prefix.starts_with('.') {
-                continue;
-            }
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            if dirs_only && !is_dir {
-                continue;
-            }
-            if !prefix_lower.is_empty() && !name.to_lowercase().starts_with(&prefix_lower) {
-                continue;
-            }
-            let display = if dir_has_trailing_sep || dir.is_empty() {
-                format!("{dir}{name}")
-            } else {
-                format!("{dir}{sep}{name}")
-            };
-            let display = if is_dir {
-                format!("{display}{sep}")
-            } else {
-                display
-            };
-            results.push(display);
-        }
-        results
-    }
-
     // Context menu state.
     let mut context_menu = ContextMenu::new();
 
@@ -1721,9 +1241,6 @@ pub fn run(
 
     // Autoreload: watch open files for external changes.
     let mut autoreload = AutoreloadState::new();
-    // Nag state for autoreload (distinct from close-tab nag).
-    let mut reload_nag_active = false;
-    let mut reload_nag_path = String::new();
     for doc in &docs {
         autoreload.watch(&doc.path);
     }
@@ -1818,864 +1335,24 @@ pub fn run(
         crate::signal::clear_shutdown();
     }
 
-    // ─── Unified command dispatch ─────────────────────────────────────────
-    // Single source of truth for command handling. Both the keyboard binding
-    // path and the command palette invoke this macro. Adding a new command
-    // means editing exactly one match arm here. Pass the command as `String`.
-    macro_rules! dispatch_command {
-        ($cmd_arg:expr) => {{
-            let cmd: String = $cmd_arg;
-            match cmd.as_str() {
-                "core:quit" => {
-                    if single_file_mode && docs.iter().any(doc_is_modified) {
-                        nag_active = true;
-                        nag_message = nag_msg_quit(&docs);
-                        nag_tab_to_close = None;
-                    } else {
-                        quit = true;
-                    }
-                }
-                "core:force-quit" => {
-                    quit = true;
-                }
-                "core:find-command" => {
-                    palette_active = true;
-                    palette_query.clear();
-                    palette_results = all_commands.clone();
-                    palette_selected = 0;
-                }
-                "core:new-doc" => {
-                    let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
-                    let mut dv = DocView::new();
-                    dv.buffer_id = Some(buf_id);
-                    docs.push(OpenDoc {
-                        view: dv,
-                        path: String::new(),
-                        name: "untitled".to_string(),
-                        saved_change_id: 1,
-                        saved_signature: buffer::content_signature(&["\n".to_string()]),
-                        indent_type: "soft".to_string(),
-                        indent_size: 2,
-                        git_changes: std::collections::HashMap::new(),
-                        cached_render: Vec::new(),
-                        cached_change_id: -1,
-                        cached_scroll_y: -1.0,
-                        cached_hint_count: 0,
-                        dirty_cache: std::cell::Cell::new(None),
-            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
-                    });
-                    active_tab = docs.len() - 1;
-                }
-                "root:close" => {
-                    if !docs.is_empty() {
-                        if doc_is_modified(&docs[active_tab]) {
-                            nag_message = nag_msg_close(&docs[active_tab].name);
-                            nag_active = true;
-                            nag_tab_to_close = Some(active_tab);
-                        } else {
-                            if let Some(d) = docs.get(active_tab) {
-                                autoreload.unwatch(&d.path);
-                            }
-                            docs.remove(active_tab);
-                            if docs.is_empty() {
-                                active_tab = 0;
-                            } else if active_tab >= docs.len() {
-                                active_tab = docs.len() - 1;
-                            }
-                        }
-                    }
-                }
-                "core:close-project-folder" => {
-                    if subsystems.has_sidebar() {
-                        if docs.iter().any(doc_is_modified) {
-                            nag_active = true;
-                            nag_message = nag_msg_quit(&docs);
-                            nag_tab_to_close = None;
-                        } else {
-                            save_project_session(userdir_path, &project_root, &docs, active_tab);
-                            save_expanded_folders(
-                                &sidebar_entries,
-                                userdir_path,
-                                &project_session_key(&project_root),
-                            );
-                            for d in &docs { autoreload.unwatch(&d.path); }
-                            docs.clear();
-                            pending_render_cache = None;
-                            active_tab = 0;
-                            project_root = String::new();
-                            sidebar_entries = Vec::new();
-                            sidebar_visible = false;
-                        }
-                    }
-                }
-                "root:close-all" => {
-                    if !single_file_mode {
-                        if docs.iter().any(doc_is_modified) {
-                            nag_active = true;
-                            nag_message = nag_msg_quit(&docs);
-                            nag_tab_to_close = None;
-                        } else {
-                            for d in &docs { autoreload.unwatch(&d.path); }
-                            docs.clear();
-                            active_tab = 0;
-                        }
-                    }
-                }
-                "root:close-all-others" => {
-                    if !single_file_mode {
-                        let keep = active_tab;
-                        for i in (0..docs.len()).rev() {
-                            if i != keep {
-                                autoreload.unwatch(&docs[i].path);
-                                docs.remove(i);
-                            }
-                        }
-                        active_tab = 0;
-                    }
-                }
-                "root:close-or-quit" => {
-                    if docs.is_empty() {
-                        quit = true;
-                    } else if doc_is_modified(&docs[active_tab]) {
-                        nag_message = nag_msg_close(&docs[active_tab].name);
-                        nag_active = true;
-                        nag_tab_to_close = Some(active_tab);
-                    } else {
-                        autoreload.unwatch(&docs[active_tab].path);
-                        docs.remove(active_tab);
-                        if docs.is_empty() {
-                            quit = true;
-                        } else if active_tab >= docs.len() {
-                            active_tab = docs.len() - 1;
-                        }
-                    }
-                }
-                "root:switch-to-next-tab" => {
-                    if !single_file_mode && !docs.is_empty() {
-                        active_tab = (active_tab + 1) % docs.len();
-                    }
-                }
-                "root:switch-to-previous-tab" => {
-                    if !single_file_mode && !docs.is_empty() {
-                        active_tab = if active_tab == 0 { docs.len() - 1 } else { active_tab - 1 };
-                    }
-                }
-                "root:toggle-sidebar" | "core:toggle-sidebar" => {
-                    if subsystems.has_sidebar() {
-                        sidebar_visible = !sidebar_visible;
-                    }
-                }
-                "core:toggle-terminal" => {
-                    if subsystems.has_terminal() {
-                        terminal.visible = !terminal.visible;
-                        if terminal.visible && terminal.terminals.is_empty() {
-                            terminal.spawn(&project_root);
-                            log_to_file(userdir, "Terminal spawned via toggle");
-                        }
-                        terminal.focused = terminal.visible;
-                    }
-                }
-                "core:new-terminal" => {
-                    if subsystems.has_terminal() {
-                        if terminal.spawn(&project_root) {
-                            log_to_file(userdir, &format!("New terminal {} spawned", terminal.terminals.len()));
-                        }
-                    }
-                }
-                "core:close-terminal" => {
-                    if subsystems.has_terminal() {
-                        terminal.close_active();
-                    }
-                }
-                "core:toggle-minimap" => {
-                    minimap_visible = !minimap_visible;
-                }
-                "core:toggle-markdown-preview" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        let is_md = doc.path.ends_with(".md")
-                            || doc.path.ends_with(".markdown")
-                            || doc.name.ends_with(".md")
-                            || doc.name.ends_with(".markdown");
-                        if is_md {
-                            doc.preview.enabled = !doc.preview.enabled;
-                            if doc.preview.enabled {
-                                // Force a reparse + relayout on first draw.
-                                doc.preview.cached_change_id = -1;
-                                doc.preview.cached_width = 0.0;
-                                doc.preview.layout.clear();
-                                doc.preview.scroll_y = 0.0;
-                                doc.preview.target_scroll_y = 0.0;
-                            }
-                        } else {
-                            info_message = Some((
-                                "Markdown preview: active file is not a markdown document"
-                                    .to_string(),
-                                Instant::now(),
-                            ));
-                        }
-                    }
-                }
-                "core:toggle-line-wrapping" => {
-                    line_wrapping = !line_wrapping;
-                    let _ = crate::editor::storage::save_text(
-                        userdir_path,
-                        "session",
-                        "line_wrapping",
-                        if line_wrapping { "true" } else { "false" },
-                    );
-                    // Invalidate the per-tab render cache so wrapped and
-                    // un-wrapped layouts don't get re-used across toggles.
-                    for d in docs.iter_mut() {
-                        d.cached_render.clear();
-                        d.cached_change_id = -1;
-                    }
-                    // Reset horizontal scroll when turning wrap on so the
-                    // right edge of wrapped lines is always visible.
-                    if line_wrapping {
-                        if let Some(doc) = docs.get_mut(active_tab) {
-                            doc.view.scroll_x = 0.0;
-                            doc.view.target_scroll_x = 0.0;
-                        }
-                    }
-                }
-                "core:toggle-whitespace" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        doc.view.show_whitespace = !doc.view.show_whitespace;
-                    }
-                }
-                "core:toggle-hidden-files" => {
-                    if subsystems.has_sidebar() {
-                        sidebar_show_hidden = !sidebar_show_hidden;
-                        sidebar_entries = scan_directory(&project_root, 0, sidebar_show_hidden);
-                        restore_expanded_folders(
-                            &mut sidebar_entries,
-                            userdir_path,
-                            sidebar_show_hidden,
-                            &project_session_key(&project_root),
-                        );
-                        let label = if sidebar_show_hidden { "Showing hidden files" } else { "Hiding hidden files" };
-                        info_message = Some((label.to_string(), Instant::now()));
-                    }
-                }
-                "core:check-for-updates" => {
-                    if subsystems.has_update_check() {
-                        let current = env!("CARGO_PKG_VERSION");
-                        match std::process::Command::new("curl")
-                            .args(["-sL", "--max-time", "5",
-                                   "https://api.github.com/repos/danpozmanter/lite-anvil/releases/latest"])
-                            .output()
-                        {
-                            Ok(output) if output.status.success() => {
-                                let body = String::from_utf8_lossy(&output.stdout);
-                                // Parse the tag_name from the JSON response.
-                                let latest = body
-                                    .split("\"tag_name\"")
-                                    .nth(1)
-                                    .and_then(|s| s.split('"').nth(1))
-                                    .map(|s| s.trim_start_matches('v'))
-                                    .unwrap_or("");
-                                if latest.is_empty() {
-                                    info_message = Some(("Could not determine latest version".to_string(), Instant::now()));
-                                } else if latest == current {
-                                    info_message = Some((format!("Up to date (v{current})"), Instant::now()));
-                                } else {
-                                    info_message = Some((format!("New version available: v{latest} (current: v{current})"), Instant::now()));
-                                }
-                            }
-                            _ => {
-                                info_message = Some(("Update check failed (no network or curl not found)".to_string(), Instant::now()));
-                            }
-                        }
-                    }
-                }
-                "core:cycle-theme" => {
-                    if !available_themes.is_empty() {
-                        current_theme_idx = (current_theme_idx + 1) % available_themes.len();
-                        let new_theme = &available_themes[current_theme_idx];
-                        let tp = Path::new(datadir)
-                            .join("assets")
-                            .join("themes")
-                            .join(format!("{new_theme}.json"))
-                            .to_string_lossy()
-                            .into_owned();
-                        if let Ok(palette) = crate::editor::style::load_theme_palette(&tp) {
-                            apply_theme_to_style(&mut style, &palette);
-                        }
-                    }
-                }
-                "core:open-user-settings" => {
-                    let settings_path = Path::new(userdir)
-                        .join("config.toml")
-                        .to_string_lossy()
-                        .into_owned();
-                    if !std::path::Path::new(&settings_path).exists() {
-                        let _ = std::fs::write(&settings_path, NativeConfig::default_toml_template());
-                    }
-                    if open_file_into(&settings_path, &mut docs) {
-                        active_tab = docs.len() - 1;
-                    }
-                }
-                "about:version" => {
-                    info_message = Some((
-                        format!("{} v{}", if subsystems.has_sidebar() { "Lite-Anvil" } else { "Nano-Anvil" }, env!("CARGO_PKG_VERSION")),
-                        Instant::now(),
-                    ));
-                }
-                "core:project-replace" => {
-                    if subsystems.has_find_in_files() {
-                        project_replace_active = true;
-                        project_replace_search.clear();
-                        project_replace_with.clear();
-                        project_replace_focus_on_replace = false;
-                        project_replace_results.clear();
-                        project_replace_selected = 0;
-                    }
-                }
-                "core:project-search" => {
-                    if subsystems.has_find_in_files() {
-                        project_search_active = true;
-                        project_search_query.clear();
-                        project_search_results.clear();
-                        project_search_selected = 0;
-                    }
-                }
-                "core:git-status" => {
-                    if subsystems.has_git() {
-                        git_status_active = true;
-                        git_status_entries = run_git_status(&project_root);
-                        git_status_selected = 0;
-                    }
-                }
-                "git:blame" => {
-                    if subsystems.has_git() {
-                        if let Some(doc) = docs.get(active_tab) {
-                            if !doc.path.is_empty() {
-                                git_blame_active = !git_blame_active;
-                                if git_blame_active {
-                                    git_blame_lines = run_git_blame(&doc.path);
-                                }
-                            }
-                        }
-                    }
-                }
-                "git:log" => {
-                    if subsystems.has_git() {
-                        if let Some(doc) = docs.get(active_tab) {
-                            if !doc.path.is_empty() {
-                                git_log_active = true;
-                                git_log_entries = run_git_log(&doc.path);
-                                git_log_selected = 0;
-                            }
-                        }
-                    }
-                }
-                "core:open-recent" => {
-                    if subsystems.has_picker() {
-                        cmdview_active = true;
-                        cmdview_mode = CmdViewMode::OpenRecent;
-                        cmdview_text.clear();
-                        cmdview_cursor = 0;
-                        cmdview_label = "Open Recent:".to_string();
-                        let mut combined: Vec<String> = Vec::new();
-                        for p in &recent_files {
-                            if !combined.contains(p) {
-                                combined.push(p.clone());
-                            }
-                        }
-                        for p in &recent_projects {
-                            if !combined.contains(p) {
-                                combined.push(p.clone());
-                            }
-                        }
-                        cmdview_suggestions = combined;
-                        cmdview_selected = 0;
-                    }
-                }
-                "core:open-project-folder" => {
-                    if subsystems.has_picker() {
-                        cmdview_active = true;
-                        cmdview_mode = CmdViewMode::OpenFolder;
-                        // Always start from the absolute project root so backspace
-                        // navigation can walk up directories cleanly.
-                        let abs_root = effective_root(&project_root);
-                        cmdview_text = dir_with_trailing_sep(&abs_root);
-                        cmdview_cursor = cmdview_text.len();
-                        cmdview_label = "Open Folder:".to_string();
-                        cmdview_suggestions = path_suggest(&cmdview_text, &project_root, true);
-                        cmdview_selected = 0;
-                    }
-                }
-                "core:open-file" | "core:open-file-from-project" => {
-                    if subsystems.has_picker() || single_file_mode {
-                        cmdview_active = true;
-                        cmdview_mode = CmdViewMode::OpenFile;
-                        let abs_root = effective_root(&project_root);
-                        if let Some(doc) = docs.get(active_tab) {
-                            if let Some(pos) = doc.path.rfind(|c: char| c == '/' || c == '\\') {
-                                cmdview_text = dir_with_trailing_sep(&doc.path[..pos]);
-                            } else {
-                                cmdview_text = dir_with_trailing_sep(&abs_root);
-                            }
-                        } else {
-                            cmdview_text = dir_with_trailing_sep(&abs_root);
-                        }
-                        cmdview_cursor = cmdview_text.len();
-                        cmdview_label = "Open File:".to_string();
-                        cmdview_suggestions = path_suggest(&cmdview_text, &project_root, false);
-                        cmdview_selected = 0;
-                    }
-                }
-                "core:find" | "find-replace:find" => {
-                    find_active = true;
-                    replace_active = false;
-                    find_focus_on_replace = false;
-                    find_query.clear();
-                    find_matches.clear();
-                    find_current = None;
-                    find_in_selection = false;
-                    find_selection_range = None;
-                    if let Some(doc) = docs.get(active_tab) {
-                        find_anchor = doc_cursor(&doc.view);
-                        // If there's a multi-line selection, auto-enable
-                        // find-in-selection mode.
-                        let anchor = doc_anchor(&doc.view);
-                        let cursor = doc_cursor(&doc.view);
-                        if anchor.0 != cursor.0 {
-                            find_in_selection = true;
-                            let (sl, sc) = if anchor < cursor { anchor } else { cursor };
-                            let (el, ec) = if anchor < cursor { cursor } else { anchor };
-                            find_selection_range = Some((sl, sc, el, ec));
-                        }
-                    }
-                }
-                "core:find-replace" | "find-replace:replace" => {
-                    find_active = true;
-                    replace_active = true;
-                    find_focus_on_replace = false;
-                    find_query.clear();
-                    replace_query.clear();
-                    find_matches.clear();
-                    find_current = None;
-                    if let Some(doc) = docs.get(active_tab) {
-                        find_anchor = doc_cursor(&doc.view);
-                    }
-                }
-                "find-replace:repeat-find" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        let dv = &mut doc.view;
-                        if find_matches.is_empty() && !find_query.is_empty() {
-                            let sel = if find_in_selection { find_selection_range } else { None };
-                            find_matches = compute_find_matches_filtered(
-                                dv, &find_query, find_use_regex, find_whole_word, find_case_insensitive, sel,
-                            );
-                        }
-                        if !find_matches.is_empty() {
-                            let (cl, cc) = doc_cursor(dv);
-                            let idx = find_match_at_or_after(&find_matches, cl, cc)
-                                .unwrap_or(0);
-                            find_current = Some(idx);
-                            select_find_match(dv, find_matches[idx]);
-                        }
-                    }
-                }
-                "find-replace:previous-find" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        let dv = &mut doc.view;
-                        if find_matches.is_empty() && !find_query.is_empty() {
-                            let sel = if find_in_selection { find_selection_range } else { None };
-                            find_matches = compute_find_matches_filtered(
-                                dv, &find_query, find_use_regex, find_whole_word, find_case_insensitive, sel,
-                            );
-                        }
-                        if !find_matches.is_empty() {
-                            let (al, ac) = doc_anchor(dv);
-                            let idx = find_match_before(&find_matches, al, ac)
-                                .unwrap_or(find_matches.len() - 1);
-                            find_current = Some(idx);
-                            select_find_match(dv, find_matches[idx]);
-                        }
-                    }
-                }
-                "doc:go-to-line" => {
-                    cmdview_active = true;
-                    cmdview_mode = CmdViewMode::OpenFile; // reuse mode, Enter parses as line number
-                    cmdview_text.clear();
-                    cmdview_cursor = 0;
-                    cmdview_label = "Go To Line:".to_string();
-                    cmdview_suggestions.clear();
-                    cmdview_selected = 0;
-                }
-                "doc:save-as" => {
-                    completion.hide();
-                    cmdview_active = true;
-                    cmdview_mode = CmdViewMode::SaveAs;
-                    if let Some(doc) = docs.get(active_tab) {
-                        if !doc.path.is_empty() {
-                            cmdview_text = doc.path.clone();
-                        } else {
-                            // Fall back to the user's home directory (via
-                            // `effective_root`) rather than the cwd when
-                            // there is no project folder, so Nano-Anvil
-                            // doesn't default Save As to `/` when launched
-                            // from a desktop entry without a working dir.
-                            let abs_root = effective_root(&project_root);
-                            cmdview_text = dir_with_trailing_sep(&abs_root);
-                        }
-                    } else {
-                        cmdview_text = String::new();
-                    }
-                    cmdview_cursor = cmdview_text.len();
-                    cmdview_label = "Save As:".to_string();
-                    cmdview_suggestions = path_suggest(&cmdview_text, &project_root, false);
-                    cmdview_selected = 0;
-                }
-                "doc:save" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        if let Some(buf_id) = doc.view.buffer_id {
-                            let path = doc.path.clone();
-                            if path.is_empty() {
-                                // No path yet -- open the Save As text input.
-                                completion.hide();
-                                cmdview_active = true;
-                                cmdview_mode = CmdViewMode::SaveAs;
-                                let abs_root = effective_root(&project_root);
-                                cmdview_text = dir_with_trailing_sep(&abs_root);
-                                cmdview_cursor = cmdview_text.len();
-                                cmdview_label = "Save As:".to_string();
-                                cmdview_suggestions =
-                                    path_suggest(&cmdview_text, &project_root, false);
-                                cmdview_selected = 0;
-                            } else {
-                                // If the parent directory vanished since the
-                                // file was opened, ask before recreating it.
-                                let parent_missing = std::path::Path::new(&path)
-                                    .parent()
-                                    .map(|p| !p.as_os_str().is_empty() && !p.exists())
-                                    .unwrap_or(false);
-                                if parent_missing {
-                                    let parent_str = std::path::Path::new(&path)
-                                        .parent()
-                                        .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_default();
-                                    mkdir_nag_active = true;
-                                    mkdir_nag_parent = parent_str;
-                                    mkdir_pending_save_path = path.clone();
-                                    mkdir_pending_doc_tab = active_tab;
-                                    mkdir_pending_from_save_as = false;
-                                    continue;
-                                }
-                                let atomic = config.files.atomic_save;
-                                let saved_id = buffer::with_buffer(buf_id, |b| {
-                                    buffer::save_file(b, &path, b.crlf, atomic)
-                                        .map_err(|_| buffer::BufferError::UnknownBuffer)?;
-                                    Ok(b.change_id)
-                                });
-                                if let Ok(id) = saved_id {
-                                    doc.saved_change_id = id;
-                                    doc.saved_signature = buffer::with_buffer(buf_id, |b| Ok(buffer::content_signature(&b.lines))).unwrap_or(0);
-                                }
-                                log_to_file(userdir, &format!("Saved {path}"));
-                                if subsystems.has_git() {
-                                    doc.git_changes = crate::editor::git::diff_file(&path);
-                                }
-                                if subsystems.has_lsp() {
-                                    let save_ext = path.rsplit('.').next().unwrap_or("");
-                                    if ext_to_lsp_filetype(save_ext).is_some() {
-                                        if let Some(tid) = lsp_state.transport_id {
-                                            if lsp_state.initialized {
-                                                let uri = path_to_uri(&path);
-                                                let _ = lsp::send_message(tid, &lsp_did_save(&uri));
-                                                let line_count = buffer::with_buffer(buf_id, |b| Ok(b.lines.len())).unwrap_or(100);
-                                                let req_id = lsp_state.next_id();
-                                                lsp_state.pending_requests.insert(req_id, "textDocument/inlayHint".to_string());
-                                                lsp_state.inlay_hints.clear();
-                                                let _ = lsp::send_message(tid, &lsp_inlay_hint_request(req_id, &uri, 0, line_count));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                "doc:undo" | "doc:redo" => {
-                    if let Some(doc) = docs.get(active_tab) {
-                        if let Some(buf_id) = doc.view.buffer_id {
-                            let _ = buffer::with_buffer_mut(buf_id, |b| {
-                                if cmd == "doc:undo" { buffer::undo(b); } else { buffer::redo(b); }
-                                Ok(())
-                            });
-                        }
-                        if subsystems.has_lsp() {
-                            if lsp_state.transport_id.is_some() && lsp_state.initialized {
-                                lsp_state.inlay_hints.clear();
-                                let ext = doc.path.rsplit('.').next().unwrap_or("");
-                                if !doc.path.is_empty() && ext_to_lsp_filetype(ext).is_some() {
-                                    lsp_state.last_change = Some(Instant::now());
-                                    lsp_state.pending_change_uri = Some(path_to_uri(&doc.path));
-                                    lsp_state.pending_change_version += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                "doc:cut" => {
-                    if let Some(doc) = docs.get(active_tab) {
-                        if let Some(buf_id) = doc.view.buffer_id {
-                            let _ = buffer::with_buffer_mut(buf_id, |b| {
-                                let text = buffer::get_selected_text(b);
-                                if !text.is_empty() {
-                                    crate::window::set_clipboard_text(&text);
-                                    buffer::push_undo(b);
-                                    buffer::delete_selection(b);
-                                }
-                                Ok(())
-                            });
-                        }
-                    }
-                }
-                "doc:copy" => {
-                    if let Some(doc) = docs.get(active_tab) {
-                        if let Some(buf_id) = doc.view.buffer_id {
-                            let _ = buffer::with_buffer(buf_id, |b| {
-                                let text = buffer::get_selected_text(b);
-                                if !text.is_empty() {
-                                    crate::window::set_clipboard_text(&text);
-                                }
-                                Ok(())
-                            });
-                        }
-                    }
-                }
-                "doc:paste" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        if let Some(buf_id) = doc.view.buffer_id {
-                            if let Some(text) = crate::window::get_clipboard_text() {
-                                let text = if config.format_on_paste {
-                                    convert_paste_indent(
-                                        &text,
-                                        &doc.indent_type,
-                                        doc.indent_size,
-                                    )
-                                } else {
-                                    text
-                                };
-                                let _ = buffer::with_buffer_mut(buf_id, |b| {
-                                    buffer::push_undo(b);
-                                    buffer::delete_selection(b);
-                                    let line = b.selections[0];
-                                    let col = b.selections[1];
-                                    if line <= b.lines.len() {
-                                        let l = &mut b.lines[line - 1];
-                                        let byte_pos = char_to_byte(l, col - 1);
-                                        let after = l[byte_pos..].to_string();
-                                        l.truncate(byte_pos);
-                                        let paste_lines: Vec<&str> = text.split('\n').collect();
-                                        if paste_lines.len() == 1 {
-                                            l.push_str(&text);
-                                            l.push_str(&after);
-                                            let new_col = col + text.chars().count();
-                                            b.selections = vec![line, new_col, line, new_col];
-                                        } else {
-                                            l.push_str(paste_lines[0]);
-                                            l.push('\n');
-                                            let mut cur_line = line;
-                                            for (i, pl) in paste_lines.iter().enumerate().skip(1) {
-                                                cur_line += 1;
-                                                if i == paste_lines.len() - 1 {
-                                                    let new_col = pl.chars().count() + 1;
-                                                    let mut new_line = pl.to_string();
-                                                    new_line.push_str(&after);
-                                                    b.lines.insert(cur_line - 1, new_line);
-                                                    b.selections = vec![cur_line, new_col, cur_line, new_col];
-                                                } else {
-                                                    b.lines.insert(cur_line - 1, format!("{pl}\n"));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Ok(())
-                                });
-                            }
-                        }
-                    }
-                }
-                "doc:upper-case" | "doc:lower-case" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        if let Some(buf_id) = doc.view.buffer_id {
-                            let is_upper = cmd == "doc:upper-case";
-                            let _ = buffer::with_buffer_mut(buf_id, |b| {
-                                let text = buffer::get_selected_text(b);
-                                if !text.is_empty() {
-                                    buffer::push_undo(b);
-                                    buffer::delete_selection(b);
-                                    let converted = if is_upper { text.to_uppercase() } else { text.to_lowercase() };
-                                    let line = b.selections[0];
-                                    let col = b.selections[1];
-                                    if line <= b.lines.len() {
-                                        let l = &mut b.lines[line - 1];
-                                        let byte_pos = l.char_indices().nth(col - 1).map(|(i, _)| i).unwrap_or(l.len());
-                                        l.insert_str(byte_pos, &converted);
-                                        let new_col = col + converted.chars().count();
-                                        b.selections = vec![line, col, line, new_col];
-                                    }
-                                }
-                                Ok(())
-                            });
-                        }
-                    }
-                }
-                "doc:reload" => {
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        if !doc.path.is_empty() {
-                            if let Some(buf_id) = doc.view.buffer_id {
-                                let path = doc.path.clone();
-                                let _ = buffer::with_buffer_mut(buf_id, |b| {
-                                    let mut fresh = buffer::default_buffer_state();
-                                    let _ = buffer::load_file(&mut fresh, &path);
-                                    b.lines = fresh.lines;
-                                    b.change_id += 1;
-                                    Ok(())
-                                });
-                            }
-                        }
-                    }
-                }
-                "git:pull" | "git:push" | "git:commit" | "git:stash" => {
-                    if subsystems.has_git() {
-                        let git_cmd = match cmd.as_str() {
-                            "git:pull" => vec!["pull"],
-                            "git:push" => vec!["push"],
-                            "git:commit" => vec!["commit", "--allow-empty-message", "-m", ""],
-                            "git:stash" => vec!["stash"],
-                            _ => vec![],
-                        };
-                        if !git_cmd.is_empty() {
-                            let _ = std::process::Command::new("git")
-                                .arg("-C").arg(&project_root)
-                                .args(&git_cmd)
-                                .output();
-                        }
-                    }
-                }
-                "lsp:hover" => {
-                    if subsystems.has_lsp() {
-                        if let Some(doc) = docs.get(active_tab) {
-                            if let Some(buf_id) = doc.view.buffer_id {
-                                if let Some(tid) = lsp_state.transport_id {
-                                    if lsp_state.initialized && !doc.path.is_empty() {
-                                        let (cl, cc) = buffer::with_buffer(buf_id, |b| {
-                                            Ok((*b.selections.get(2).unwrap_or(&1), *b.selections.get(3).unwrap_or(&1)))
-                                        }).unwrap_or((1, 1));
-                                        let uri = path_to_uri(&doc.path);
-                                        let req_id = lsp_state.next_id();
-                                        lsp_state.pending_requests.insert(req_id, "textDocument/hover".to_string());
-                                        let _ = lsp::send_message(tid, &lsp_hover_request(req_id, &uri, cl - 1, cc - 1));
-                                        hover.line = cl;
-                                        hover.col = cc;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                "lsp:go-to-definition" => {
-                    if subsystems.has_lsp() {
-                        if let Some(doc) = docs.get(active_tab) {
-                            if let Some(buf_id) = doc.view.buffer_id {
-                                if let Some(tid) = lsp_state.transport_id {
-                                    if lsp_state.initialized && !doc.path.is_empty() {
-                                        let (cl, cc) = buffer::with_buffer(buf_id, |b| {
-                                            Ok((*b.selections.get(2).unwrap_or(&1), *b.selections.get(3).unwrap_or(&1)))
-                                        }).unwrap_or((1, 1));
-                                        let uri = path_to_uri(&doc.path);
-                                        let req_id = lsp_state.next_id();
-                                        lsp_state.pending_requests.insert(req_id, "textDocument/definition".to_string());
-                                        let _ = lsp::send_message(tid, &lsp_definition_request(req_id, &uri, cl - 1, cc - 1));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                "lsp:go-to-implementation" | "lsp:go-to-type-definition" | "lsp:find-references" => {
-                    if subsystems.has_lsp() {
-                        let method = match cmd.as_str() {
-                            "lsp:go-to-implementation" => "textDocument/implementation",
-                            "lsp:go-to-type-definition" => "textDocument/typeDefinition",
-                            "lsp:find-references" => "textDocument/references",
-                            _ => unreachable!(),
-                        };
-                        if let Some(doc) = docs.get(active_tab) {
-                            if let Some(buf_id) = doc.view.buffer_id {
-                                if let Some(tid) = lsp_state.transport_id {
-                                    if lsp_state.initialized && !doc.path.is_empty() {
-                                        let (cl, cc) = buffer::with_buffer(buf_id, |b| {
-                                            Ok((*b.selections.get(2).unwrap_or(&1), *b.selections.get(3).unwrap_or(&1)))
-                                        }).unwrap_or((1, 1));
-                                        let uri = path_to_uri(&doc.path);
-                                        let req_id = lsp_state.next_id();
-                                        lsp_state.pending_requests.insert(req_id, method.to_string());
-                                        let _ = lsp::send_message(tid, &lsp_position_request(req_id, method, &uri, cl - 1, cc - 1));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                "scale:increase" | "scale:decrease" | "scale:reset" => {
-                    // Handled by direct key check above the dispatch.
-                }
-                _ => {
-                    // Default: forward to handle_doc_command and bump LSP edit tracking.
-                    // Keyboard-initiated: auto-scroll to keep cursor visible.
-                    if let Some(doc) = docs.get_mut(active_tab) {
-                        let marker = comment_marker_for_path(&doc.path, &syntax_index);
-                        handle_doc_command(
-                            &mut doc.view,
-                            &cmd,
-                            &style,
-                            &doc.indent_type,
-                            doc.indent_size,
-                            marker.as_ref(),
-                            true,
-                            line_wrapping,
-                        );
-                    }
-                    let is_edit_cmd = matches!(cmd.as_str(),
-                        "doc:newline" | "doc:newline-below" | "doc:newline-above"
-                        | "doc:backspace" | "doc:delete"
-                        | "doc:delete-to-previous-word-start" | "doc:delete-to-next-word-end"
-                        | "doc:indent" | "doc:unindent"
-                        | "doc:toggle-line-comments"
-                        | "doc:move-lines-up" | "doc:move-lines-down"
-                        | "doc:duplicate-lines" | "doc:delete-lines"
-                        | "doc:join-lines"
-                        | "core:sort-lines" | "doc:fold" | "doc:unfold" | "doc:unfold-all"
-                    );
-                    if is_edit_cmd && lsp_state.transport_id.is_some() && lsp_state.initialized {
-                        lsp_state.inlay_hints.clear();
-                        if let Some(doc) = docs.get(active_tab) {
-                            if !doc.path.is_empty() {
-                                lsp_state.last_change = Some(Instant::now());
-                                lsp_state.pending_change_uri = Some(path_to_uri(&doc.path));
-                                lsp_state.pending_change_version += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }};
-    }
+    // Unified command dispatch. The match body lives in
+    // `commands_dispatch.rs` and is pulled in textually via `include!()`
+    // so its ~830 lines of arms run in this scope and can read/write
+    // every local variable directly. (A `macro_rules!` wrapper would
+    // break: its `let cmd: String = $cmd_arg` binding is hygienic, so
+    // the included `match cmd.as_str()` can't see it.) The three
+    // invocations below each declare a local `cmd: String` before the
+    // include so the dispatch body has it in scope.
 
     loop {
         if crate::signal::shutdown_requested() {
             crate::signal::clear_shutdown();
             if docs.iter().any(doc_is_modified) {
-                nag_active = true;
+                nag = Nag::UnsavedChanges {
+                    message: nag_msg_quit(&docs),
+                    tab_to_close: None,
+                };
                 redraw = true;
-                nag_message = nag_msg_quit(&docs);
-                nag_tab_to_close = None;
             } else {
                 quit = true;
             }
@@ -2686,10 +1363,11 @@ pub fn run(
             match &event {
                 EditorEvent::Quit => {
                     if single_file_mode && docs.iter().any(doc_is_modified) {
-                        nag_active = true;
+                        nag = Nag::UnsavedChanges {
+                            message: nag_msg_quit(&docs),
+                            tab_to_close: None,
+                        };
                         redraw = true;
-                        nag_message = nag_msg_quit(&docs);
-                        nag_tab_to_close = None;
                     } else {
                         quit = true;
                     }
@@ -3053,7 +1731,7 @@ pub fn run(
                                                 Ok(sz) => {
                                                     if sz > BG_LOAD_THRESHOLD && load_job.is_none() {
                                                         load_job = Some(spawn_load(&actual, sz));
-                                                    } else if open_file_into(&actual, &mut docs) {
+                                                    } else if open_file_into(&actual, &mut docs, use_git()) {
                                                         active_tab = docs.len() - 1;
                                                         autoreload.watch(&actual);
                                                         remember_recent_file(&mut recent_files, &actual, userdir_path);
@@ -3080,9 +1758,7 @@ pub fn run(
                                         if p.is_dir() {
                                             // Check for unsaved changes before switching.
                                             if docs.iter().any(doc_is_modified) {
-                                                nag_active = true;
-                                                nag_message = nag_msg_quit(&docs);
-                                                nag_tab_to_close = None;
+                                                nag = Nag::UnsavedChanges { message: nag_msg_quit(&docs), tab_to_close: None };
                                             } else {
                                                 if subsystems.has_sidebar() {
                                                     save_project_session(
@@ -3117,7 +1793,7 @@ pub fn run(
                                                         userdir_path,
                                                         &project_root,
                                                         &mut docs,
-                                                        &mut autoreload,
+                                                        &mut autoreload, use_git(),
                                                     ) {
                                                         active_tab = tab;
                                                     }
@@ -3143,16 +1819,14 @@ pub fn run(
                                     CmdViewMode::OpenRecent => {
                                         cmdview_active = false;
                                         if p.is_file() {
-                                            if open_file_into(&path, &mut docs) {
+                                            if open_file_into(&path, &mut docs, use_git()) {
                                                 active_tab = docs.len() - 1;
                                                 autoreload.watch(&path);
                                                 remember_recent_file(&mut recent_files, &path, userdir_path);
                                             }
                                         } else if p.is_dir() {
                                             if docs.iter().any(doc_is_modified) {
-                                                nag_active = true;
-                                                nag_message = nag_msg_quit(&docs);
-                                                nag_tab_to_close = None;
+                                                nag = Nag::UnsavedChanges { message: nag_msg_quit(&docs), tab_to_close: None };
                                             } else {
                                                 if subsystems.has_sidebar() {
                                                     save_project_session(
@@ -3186,7 +1860,7 @@ pub fn run(
                                                         userdir_path,
                                                         &project_root,
                                                         &mut docs,
-                                                        &mut autoreload,
+                                                        &mut autoreload, use_git(),
                                                     ) {
                                                         active_tab = tab;
                                                     }
@@ -3232,11 +1906,7 @@ pub fn run(
                                                 .parent()
                                                 .map(|p| p.to_string_lossy().to_string())
                                                 .unwrap_or_default();
-                                            mkdir_nag_active = true;
-                                            mkdir_nag_parent = parent_str;
-                                            mkdir_pending_save_path = save_path.clone();
-                                            mkdir_pending_doc_tab = active_tab;
-                                            mkdir_pending_from_save_as = true;
+                                            nag = Nag::CreateDir { parent: parent_str, save_path: save_path.clone(), doc_tab: active_tab, from_save_as: true };
                                             continue;
                                         }
                                         if let Some(doc) = docs.get_mut(active_tab) {
@@ -3404,7 +2074,7 @@ pub fn run(
                                     let tab_idx = docs.iter().position(|d| d.path == path);
                                     let idx = if let Some(i) = tab_idx {
                                         i
-                                    } else if open_file_into(&path, &mut docs) {
+                                    } else if open_file_into(&path, &mut docs, use_git()) {
                                         autoreload.watch(&path);
                                         remember_recent_file(&mut recent_files, &path, userdir_path);
                                         docs.len() - 1
@@ -3584,7 +2254,7 @@ pub fn run(
                                     let tab_idx = docs.iter().position(|d| d.path == full_path);
                                     let idx = if let Some(i) = tab_idx {
                                         i
-                                    } else if open_file_into(&full_path, &mut docs) {
+                                    } else if open_file_into(&full_path, &mut docs, use_git()) {
                                         autoreload.watch(&full_path);
                                         remember_recent_file(&mut recent_files, &full_path, userdir_path);
                                         docs.len() - 1
@@ -3707,10 +2377,19 @@ pub fn run(
                     // pending save; No backs off without writing. Escape /N
                     // also closes the originating Save As picker so the user
                     // is not left staring at it.
-                    if mkdir_nag_active {
+                    if let Nag::CreateDir {
+                        parent: parent_str,
+                        save_path,
+                        doc_tab,
+                        from_save_as,
+                    } = &nag
+                    {
+                        let save_path = save_path.clone();
+                        let parent_str = parent_str.clone();
+                        let tab = *doc_tab;
+                        let is_save_as = *from_save_as;
                         match key.as_str() {
                             "y" | "Y" | "return" | "keypad enter" => {
-                                let save_path = mkdir_pending_save_path.clone();
                                 let parent = std::path::Path::new(&save_path)
                                     .parent()
                                     .map(|p| p.to_path_buf());
@@ -3721,20 +2400,17 @@ pub fn run(
                                 if !create_ok {
                                     info_message = Some((
                                         format!(
-                                            "Could not create directory {}",
-                                            mkdir_nag_parent
+                                            "Could not create directory {parent_str}"
                                         ),
                                         Instant::now(),
                                     ));
-                                    mkdir_nag_active = false;
-                                    if mkdir_pending_from_save_as {
+                                    nag = Nag::None;
+                                    if is_save_as {
                                         cmdview_active = false;
                                     }
                                     redraw = true;
                                     continue;
                                 }
-                                let tab = mkdir_pending_doc_tab;
-                                let is_save_as = mkdir_pending_from_save_as;
                                 if let Some(doc) = docs.get_mut(tab) {
                                     if let Some(buf_id) = doc.view.buffer_id {
                                         let atomic = config.files.atomic_save;
@@ -3778,7 +2454,7 @@ pub fn run(
                                         }
                                     }
                                 }
-                                mkdir_nag_active = false;
+                                nag = Nag::None;
                                 if is_save_as {
                                     cmdview_active = false;
                                 }
@@ -3786,8 +2462,8 @@ pub fn run(
                                 continue;
                             }
                             "n" | "N" | "escape" => {
-                                mkdir_nag_active = false;
-                                if mkdir_pending_from_save_as {
+                                nag = Nag::None;
+                                if is_save_as {
                                     cmdview_active = false;
                                 }
                                 redraw = true;
@@ -3801,13 +2477,14 @@ pub fn run(
                     }
 
                     // Nag view intercepts keys when active; dismiss any overlay.
-                    if nag_active {
+                    if let Nag::UnsavedChanges { tab_to_close, .. } = &nag {
+                        let tab_to_close = *tab_to_close;
                         cmdview_active = false;
                         palette_active = false;
                         match key.as_str() {
                             "y" | "Y" | "return" | "keypad enter" => {
                                 // Yes: discard unsaved changes and proceed.
-                                if let Some(idx) = nag_tab_to_close {
+                                if let Some(idx) = tab_to_close {
                                     if let Some(d) = docs.get(idx) {
                                         autoreload.unwatch(&d.path);
                                     }
@@ -3820,15 +2497,13 @@ pub fn run(
                                 } else {
                                     quit = true;
                                 }
-                                nag_active = false;
-                                nag_tab_to_close = None;
+                                nag = Nag::None;
                                 redraw = true;
                                 continue;
                             }
                             "n" | "N" | "escape" => {
                                 // No / Cancel: leave everything as-is.
-                                nag_active = false;
-                                nag_tab_to_close = None;
+                                nag = Nag::None;
                                 redraw = true;
                                 continue;
                             }
@@ -3840,11 +2515,11 @@ pub fn run(
                     }
 
                     // Reload nag intercepts keys when active.
-                    if reload_nag_active {
+                    if let Nag::ReloadFromDisk { path } = &nag {
+                        let rpath = path.clone();
                         match key.as_str() {
                             "y" | "Y" => {
                                 // Reload from disk.
-                                let rpath = reload_nag_path.clone();
                                 if let Some(doc) = docs.iter_mut().find(|d| d.path == rpath) {
                                     if let Some(buf_id) = doc.view.buffer_id {
                                         let _ = buffer::with_buffer_mut(buf_id, |b| {
@@ -3862,14 +2537,12 @@ pub fn run(
                                         }
                                     }
                                 }
-                                reload_nag_active = false;
-                                reload_nag_path.clear();
+                                nag = Nag::None;
                                 redraw = true;
                                 continue;
                             }
                             "n" | "N" | "escape" => {
-                                reload_nag_active = false;
-                                reload_nag_path.clear();
+                                nag = Nag::None;
                                 redraw = true;
                                 continue;
                             }
@@ -3895,7 +2568,7 @@ pub fn run(
                                     // If the selected item is a file path, open it.
                                     if cmd.starts_with('/') && std::path::Path::new(&cmd).is_file()
                                     {
-                                        if open_file_into(&cmd, &mut docs) {
+                                        if open_file_into(&cmd, &mut docs, use_git()) {
                                             active_tab = docs.len() - 1;
                                             autoreload.watch(&cmd);
                                             remember_recent_file(&mut recent_files, &cmd, userdir_path);
@@ -3904,7 +2577,10 @@ pub fn run(
                                         continue;
                                     }
                                     // Execute the selected command.
-                                    dispatch_command!(cmd);
+                                    {
+                                        let cmd: String = cmd;
+                                        include!("commands_dispatch.rs");
+                                    }
                                 }
                                 redraw = true;
                                 continue;
@@ -4215,7 +2891,10 @@ pub fn run(
 
                     if let Some(cmds) = keymap.on_key_pressed(key, mods) {
                         for cmd in Vec::from(cmds) {
-                            dispatch_command!(cmd);
+                            {
+                                let cmd: String = cmd;
+                                include!("commands_dispatch.rs");
+                            }
                         }
                     }
                     redraw = true;
@@ -4322,7 +3001,7 @@ pub fn run(
                         redraw = true;
                         continue;
                     }
-                    if nag_active {
+                    if nag.is_unsaved() {
                         cmdview_active = false;
                         palette_active = false;
                         redraw = true;
@@ -4512,11 +3191,14 @@ pub fn run(
                         doc.view.target_scroll_y = doc.view.scroll_y;
                     }
                     // Nag bar button click handling.
-                    if nag_active && *button == MouseButton::Left {
-                        use crate::editor::view::DrawContext as _;
-                        let bar_h = style.font_height + style.padding_y * 2.0;
-                        if *y < bar_h {
-                            let msg_w = draw_ctx.font_width(style.font, &nag_message);
+                    if let Nag::UnsavedChanges { message, tab_to_close } = &nag {
+                        if *button == MouseButton::Left {
+                            let message = message.clone();
+                            let tab_to_close = *tab_to_close;
+                            use crate::editor::view::DrawContext as _;
+                            let bar_h = style.font_height + style.padding_y * 2.0;
+                            if *y < bar_h {
+                            let msg_w = draw_ctx.font_width(style.font, &message);
                             let btn_pad = style.padding_x;
                             let mut bx = style.padding_x + msg_w + btn_pad * 2.0;
                             for (i, label) in ["Yes", "No"].iter().enumerate() {
@@ -4524,7 +3206,7 @@ pub fn run(
                                 if *x >= bx && *x <= bx + lw {
                                     if i == 0 {
                                         // Yes: discard unsaved changes and proceed.
-                                        if let Some(idx) = nag_tab_to_close {
+                                        if let Some(idx) = tab_to_close {
                                             if let Some(d) = docs.get(idx) {
                                                 autoreload.unwatch(&d.path);
                                             }
@@ -4537,8 +3219,7 @@ pub fn run(
                                         }
                                     }
                                     // No (i == 1): just dismiss the nag.
-                                    nag_active = false;
-                                    nag_tab_to_close = None;
+                                    nag = Nag::None;
                                     #[allow(unused_assignments)]
                                     {
                                         redraw = true;
@@ -4546,6 +3227,7 @@ pub fn run(
                                     continue;
                                 }
                                 bx += lw + btn_pad;
+                            }
                             }
                         }
                     }
@@ -4712,7 +3394,10 @@ pub fn run(
                             }
                             if let Some(cmd) = clicked_cmd {
                                 let cmd = cmd.to_string();
-                                dispatch_command!(cmd);
+                                {
+                                    let cmd: String = cmd;
+                                    include!("commands_dispatch.rs");
+                                }
                             }
                             redraw = true;
                             continue;
@@ -4758,7 +3443,7 @@ pub fn run(
                                 if let Some(idx) = already {
                                     active_tab = idx;
                                 } else {
-                                    if open_file_into(&entry_path, &mut docs) {
+                                    if open_file_into(&entry_path, &mut docs, use_git()) {
                                         autoreload.watch(&entry_path);
                                         active_tab = docs.len() - 1;
                                         remember_recent_file(&mut recent_files, &entry_path, userdir_path);
@@ -4802,9 +3487,7 @@ pub fn run(
                                 if *x >= close_x {
                                     // Close this tab (with nag check).
                                     if doc_is_modified(doc) {
-                                        nag_active = true;
-                                        nag_message = nag_msg_close(&doc.name);
-                                        nag_tab_to_close = Some(i);
+                                        nag = Nag::UnsavedChanges { message: nag_msg_close(&doc.name), tab_to_close: Some(i) };
                                     } else {
                                         autoreload.unwatch(&doc.path);
                                         docs.remove(i);
@@ -5541,7 +4224,7 @@ pub fn run(
                                         let tab_idx = if let Some(idx) = existing {
                                             idx
                                         } else {
-                                            open_file_into(&target_path, &mut docs);
+                                            open_file_into(&target_path, &mut docs, use_git());
                                             autoreload.watch(&target_path);
                                             remember_recent_file(&mut recent_files, &target_path, userdir_path);
                                             docs.len() - 1
@@ -5615,7 +4298,7 @@ pub fn run(
                                         let tab_idx = if let Some(idx) = existing {
                                             idx
                                         } else {
-                                            open_file_into(&target_path, &mut docs);
+                                            open_file_into(&target_path, &mut docs, use_git());
                                             autoreload.watch(&target_path);
                                             remember_recent_file(&mut recent_files, &target_path, userdir_path);
                                             docs.len() - 1
@@ -5900,8 +4583,7 @@ pub fn run(
                         .unwrap_or_else(|_| doc.path.clone());
                     if doc_canon == canonical {
                         if doc_is_modified(doc) {
-                            reload_nag_active = true;
-                            reload_nag_path = doc.path.clone();
+                            nag = Nag::ReloadFromDisk { path: doc.path.clone() };
                         } else if let Some(buf_id) = doc.view.buffer_id {
                             let path = doc.path.clone();
                             let _ = buffer::with_buffer_mut(buf_id, |b| {
@@ -5934,17 +4616,17 @@ pub fn run(
 
             if redraw {
                 // Update window title and status bar from active tab.
+                let app_name = if subsystems.has_sidebar() {
+                    "Lite-Anvil"
+                } else {
+                    "Nano-Anvil"
+                };
                 let title = docs
                     .get(active_tab)
                     .map(|d| d.name.as_str())
-                    .unwrap_or(if subsystems.has_sidebar() { "Lite-Anvil" } else { "Nano-Anvil" });
+                    .unwrap_or(app_name);
                 if window_title != title {
-                    let app_name = if subsystems.has_sidebar() { "Lite-Anvil" } else { "Nano-Anvil" };
-                    let display = if title.is_empty() {
-                        app_name.to_string()
-                    } else {
-                        format!("{title} - {app_name}")
-                    };
+                    let display = crate::editor::doc_view::format_window_title(title, app_name);
                     crate::window::set_window_title(&display);
                     window_title = title.to_string();
                 }
@@ -6238,114 +4920,17 @@ pub fn run(
                     0.0
                 };
 
-                // Draw breadcrumb bar above the document area.
-                //
-                // Layout rules when the path is wider than the bar:
-                //   * filename (the last segment) is never hidden. If it
-                //     alone doesn't fit, truncate it with a leading `…`
-                //     so the extension stays visible.
-                //   * otherwise keep as many trailing segments as will
-                //     fit, prefix the row with `… > `, and drop the rest
-                //     of the leading segments. This makes the nearest
-                //     ancestors always visible and the drive/`/` root
-                //     the first thing to go.
+                // Draw breadcrumb strip above the document area.
                 if let Some(doc) = docs.get(active_tab) {
-                    use crate::editor::view::DrawContext as _;
-                    let bc_y = tab_h;
-                    let bar_w = width - sidebar_w - minimap_w;
-                    draw_ctx.draw_rect(
+                    crate::editor::doc_view::draw_breadcrumb(
+                        &mut draw_ctx,
+                        &doc.path,
                         sidebar_w,
-                        bc_y,
-                        bar_w,
+                        tab_h,
+                        width - sidebar_w - minimap_w,
                         breadcrumb_h,
-                        style.background3.to_array(),
+                        &style,
                     );
-                    let segments: Vec<&str> = doc
-                        .path
-                        .split(|c: char| c == '/' || c == '\\')
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if !segments.is_empty() {
-                        let bx_start = sidebar_w + style.padding_x;
-                        let by = bc_y + style.padding_y * 0.25;
-                        let available = (bar_w - style.padding_x * 2.0).max(0.0);
-                        let arrow = " > ";
-                        let arrow_w = draw_ctx.font_width(style.font, arrow);
-                        let ellipsis_prefix = "… > ";
-                        let ellipsis_prefix_w =
-                            draw_ctx.font_width(style.font, ellipsis_prefix);
-
-                        // Figure out how many trailing segments fit. We
-                        // always keep the last segment, truncating it if
-                        // necessary. Then we walk leftwards, adding
-                        // whole ancestor segments while they fit.
-                        let last = *segments.last().unwrap();
-                        let last_w = draw_ctx.font_width(style.font, last);
-                        let (mut displayed, mut truncated_first) =
-                            if last_w <= available {
-                                (vec![last.to_string()], false)
-                            } else {
-                                // Filename alone overflows — shrink from
-                                // the left with an `…` so the extension
-                                // survives.
-                                let shrunk = truncate_left_to_width(
-                                    last,
-                                    available,
-                                    style.font,
-                                    &mut draw_ctx,
-                                );
-                                (vec![shrunk], false)
-                            };
-                        let mut used_w = draw_ctx.font_width(style.font, &displayed[0]);
-                        let mut first_kept_idx = segments.len() - 1;
-                        for i in (0..segments.len() - 1).rev() {
-                            let seg = segments[i];
-                            let seg_w = draw_ctx.font_width(style.font, seg);
-                            let budget = available
-                                - used_w
-                                - arrow_w
-                                - if i == 0 { 0.0 } else { ellipsis_prefix_w };
-                            if seg_w > budget {
-                                truncated_first = true;
-                                break;
-                            }
-                            used_w += seg_w + arrow_w;
-                            first_kept_idx = i;
-                            displayed.insert(0, seg.to_string());
-                        }
-
-                        let mut bx = bx_start;
-                        if truncated_first && first_kept_idx > 0 {
-                            draw_ctx.draw_text(
-                                style.font,
-                                ellipsis_prefix,
-                                bx,
-                                by,
-                                style.dim.to_array(),
-                            );
-                            bx += ellipsis_prefix_w;
-                        }
-                        for (i, seg) in displayed.iter().enumerate() {
-                            let is_last = i == displayed.len() - 1;
-                            let color = if is_last {
-                                style.text.to_array()
-                            } else {
-                                style.dim.to_array()
-                            };
-                            draw_ctx.draw_text(style.font, seg, bx, by, color);
-                            bx += draw_ctx.font_width(style.font, seg);
-                            if !is_last {
-                                draw_ctx.draw_text(
-                                    style.font,
-                                    arrow,
-                                    bx,
-                                    by,
-                                    style.dim.to_array(),
-                                );
-                                bx += arrow_w;
-                            }
-                        }
-                    }
                 }
 
                 // Draw sidebar.
@@ -6353,7 +4938,7 @@ pub fn run(
                     use crate::editor::view::DrawContext as _;
                     draw_ctx.draw_rect(0.0, 0.0, sidebar_w, height, style.background2.to_array());
 
-                    // Mini toolbar at top of sidebar (big icon font, matching 1.5.5).
+                    // Mini toolbar at the top of the sidebar (big icon font).
                     let ibf = style.icon_big_font;
                     let icon_h = draw_ctx.font_height(ibf);
                     let toolbar_h = icon_h + style.padding_y * 2.0;
@@ -7317,7 +5902,7 @@ pub fn run(
                 }
 
                 // Nag bar takes priority over all overlays.
-                if nag_active {
+                if let Nag::UnsavedChanges { message, .. } = &nag {
                     cmdview_active = false;
                     palette_active = false;
                     completion.hide();
@@ -7329,13 +5914,13 @@ pub fn run(
                     draw_ctx.draw_rect(0.0, 0.0, width, bar_h, style.nagbar.to_array());
                     draw_ctx.draw_text(
                         style.font,
-                        &nag_message,
+                        message,
                         style.padding_x,
                         style.padding_y,
                         style.nagbar_text.to_array(),
                     );
                     // Draw option buttons.
-                    let msg_w = draw_ctx.font_width(style.font, &nag_message);
+                    let msg_w = draw_ctx.font_width(style.font, message);
                     let btn_y = style.padding_y * 0.5;
                     let btn_h = style.font_height + style.padding_y;
                     let btn_pad = style.padding_x;
@@ -7375,14 +5960,13 @@ pub fn run(
                 }
 
                 // Draw "create missing directory?" confirmation bar.
-                if mkdir_nag_active {
+                if let Nag::CreateDir { parent, .. } = &nag {
                     crate::editor::app_state::clip_init(width, height);
                     use crate::editor::view::DrawContext as _;
                     let bar_h = style.font_height + style.padding_y * 2.0;
                     draw_ctx.draw_rect(0.0, 0.0, width, bar_h, style.nagbar.to_array());
                     let msg = format!(
-                        "Directory does not exist: {}. Create it and save?  [Y]es  [N]o",
-                        mkdir_nag_parent
+                        "Directory does not exist: {parent}. Create it and save?  [Y]es  [N]o"
                     );
                     draw_ctx.draw_text(
                         style.font,
@@ -7394,14 +5978,13 @@ pub fn run(
                 }
 
                 // Draw reload nag bar if active.
-                if reload_nag_active {
+                if let Nag::ReloadFromDisk { path } = &nag {
                     crate::editor::app_state::clip_init(width, height);
                     use crate::editor::view::DrawContext as _;
                     let bar_h = style.font_height + style.padding_y * 2.0;
                     draw_ctx.draw_rect(0.0, 0.0, width, bar_h, style.nagbar.to_array());
                     let msg = format!(
-                        "File changed on disk: {}. Reload?  [Y]es  [N]o",
-                        reload_nag_path
+                        "File changed on disk: {path}. Reload?  [Y]es  [N]o"
                     );
                     draw_ctx.draw_text(
                         style.font,
@@ -8364,7 +6947,7 @@ pub fn run(
         let project_root_meaningful =
             !project_root.is_empty() && project_root != "." && std::path::Path::new(&project_root).is_dir();
         if !open_files.is_empty() || project_root_meaningful {
-            let session = SessionData {
+            let session = crate::editor::open_doc::SessionData {
                 files: open_files,
                 active: active_tab,
                 active_project: project_root.clone(),
@@ -8406,8 +6989,8 @@ pub fn run(_config: NativeConfig, _args: &[String], _datadir: &str, _userdir: &s
     false
 }
 
+sdl_only! {
 /// Filter command list using fuzzy matching from the picker module.
-#[cfg(feature = "sdl")]
 fn fuzzy_filter_commands(query: &str, all_commands: &[(String, String)]) -> Vec<(String, String)> {
     if query.is_empty() {
         return all_commands.to_vec();
@@ -8421,7 +7004,6 @@ fn fuzzy_filter_commands(query: &str, all_commands: &[(String, String)]) -> Vec<
 }
 
 /// Escape a literal string for safe inclusion in a PCRE2 pattern.
-#[cfg(feature = "sdl")]
 fn regex_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -8434,7 +7016,6 @@ fn regex_escape(s: &str) -> String {
 }
 
 /// Compile the find pattern based on the current toggle state.
-#[cfg(feature = "sdl")]
 fn build_find_regex(
     query: &str,
     use_regex: bool,
@@ -8462,7 +7043,6 @@ fn build_find_regex(
 /// Scan the document and return every match as (line, col, end_col). All values
 /// are 1-based. Multi-line matches are not supported — each line is searched
 /// independently, matching the single-line cursor model.
-#[cfg(feature = "sdl")]
 fn compute_find_matches(
     dv: &DocView,
     query: &str,
@@ -8500,7 +7080,6 @@ fn compute_find_matches(
 /// Like `compute_find_matches` but optionally restricts results to the lines
 /// covered by `selection`. The range is `(start_line, start_col, end_line,
 /// end_col)`, all 1-based.
-#[cfg(feature = "sdl")]
 fn compute_find_matches_filtered(
     dv: &DocView,
     query: &str,
@@ -8531,7 +7110,6 @@ fn compute_find_matches_filtered(
 
 /// Index of the first match at or after (line, col). Wraps to 0 if nothing
 /// later exists. Returns None only for an empty match list.
-#[cfg(feature = "sdl")]
 fn find_match_at_or_after(
     matches: &[(usize, usize, usize)],
     line: usize,
@@ -8550,7 +7128,6 @@ fn find_match_at_or_after(
 
 /// Index of the last match strictly before (line, col). Wraps to the final
 /// match if nothing earlier exists. Returns None only for an empty match list.
-#[cfg(feature = "sdl")]
 fn find_match_before(matches: &[(usize, usize, usize)], line: usize, col: usize) -> Option<usize> {
     if matches.is_empty() {
         return None;
@@ -8567,7 +7144,6 @@ fn find_match_before(matches: &[(usize, usize, usize)], line: usize, col: usize)
 }
 
 /// Move the caret to the given match and scroll the view so it is visible.
-#[cfg(feature = "sdl")]
 fn select_find_match(dv: &mut DocView, m: (usize, usize, usize)) {
     let (line, col, end_col) = m;
     let Some(buf_id) = dv.buffer_id else { return };
@@ -8584,7 +7160,6 @@ fn select_find_match(dv: &mut DocView, m: (usize, usize, usize)) {
 }
 
 /// Current caret as (line, col) using the "cursor end" of the selection.
-#[cfg(feature = "sdl")]
 fn doc_cursor(dv: &DocView) -> (usize, usize) {
     dv.buffer_id
         .and_then(|id| {
@@ -8599,7 +7174,6 @@ fn doc_cursor(dv: &DocView) -> (usize, usize) {
 }
 
 /// Selection anchor as (line, col) — the "other end" from the caret.
-#[cfg(feature = "sdl")]
 fn doc_anchor(dv: &DocView) -> (usize, usize) {
     dv.buffer_id
         .and_then(|id| {
@@ -8616,7 +7190,6 @@ fn doc_anchor(dv: &DocView) -> (usize, usize) {
 /// Replace the current selection (match) with replacement text. Caller must
 /// ensure the selection is the active find match — we trust the find state
 /// machine to keep the caret aligned with `find_matches[find_current]`.
-#[cfg(feature = "sdl")]
 fn replace_current_match(dv: &mut DocView, find_query: &str, replacement: &str) {
     if find_query.is_empty() {
         return;
@@ -8724,7 +7297,6 @@ fn char_count(s: &str) -> usize {
 /// `line_wrapping`: when true, horizontal auto-scroll is suppressed since the
 /// cursor is always reachable by wrap — scrolling right would push content
 /// out of view even though nothing extends past the visual right edge.
-#[cfg(feature = "sdl")]
 fn handle_doc_command(
     dv: &mut DocView,
     cmd: &str,
@@ -9551,7 +8123,6 @@ fn handle_doc_command(
 }
 
 /// Scroll view so the cursor line is visible.
-#[cfg(feature = "sdl")]
 fn scroll_to_cursor(dv: &mut DocView) {
     let Some(buf_id) = dv.buffer_id else { return };
     let _ = buffer::with_buffer(buf_id, |b| {
@@ -9640,618 +8211,8 @@ fn apply_theme_to_style(style: &mut StyleContext, palette: &crate::editor::style
     }
 }
 
-thread_local! {
-    static SYNTAX_COLORS: std::cell::RefCell<std::collections::HashMap<String, [u8; 4]>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-/// Get syntax color from loaded theme, with fallback.
-fn syntax_color(token_type: &str, style: &StyleContext) -> [u8; 4] {
-    SYNTAX_COLORS.with(|s| {
-        let colors = s.borrow();
-        if let Some(c) = colors.get(token_type) {
-            return *c;
-        }
-        // Markdown emphasis types fall back to keyword2 (matching 1.5.5 behavior).
-        if token_type.starts_with("markdown_") {
-            if let Some(c) = colors.get("keyword2") {
-                return *c;
-            }
-        }
-        // Fallback: check "normal" key for symbol/operator.
-        if let Some(c) = colors.get("normal") {
-            if token_type == "symbol" || token_type == "operator" {
-                return *c;
-            }
-        }
-        style.text.to_array()
-    })
-}
-
-/// Classify a word as a syntax token type based on common keywords.
-fn classify_word(word: &str, ext: &str) -> &'static str {
-    match ext {
-        "rs" => match word {
-            "fn" | "let" | "mut" | "pub" | "use" | "mod" | "struct" | "enum" | "impl" | "trait"
-            | "for" | "while" | "loop" | "if" | "else" | "match" | "return" | "break"
-            | "continue" | "where" | "type" | "const" | "static" | "ref" | "self" | "Self"
-            | "super" | "crate" | "as" | "in" | "move" | "async" | "await" | "unsafe"
-            | "extern" | "dyn" | "true" | "false" => "keyword",
-            "bool" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
-            | "i64" | "i128" | "isize" | "f32" | "f64" | "str" | "String" | "Option" | "Result"
-            | "Vec" | "Box" | "Arc" | "Mutex" | "HashMap" | "Ok" | "Err" | "Some" | "None" => {
-                "keyword2"
-            }
-            _ => "normal",
-        },
-        "lua" => match word {
-            "local" | "function" | "end" | "if" | "then" | "else" | "elseif" | "for" | "while"
-            | "do" | "repeat" | "until" | "return" | "break" | "in" | "and" | "or" | "not"
-            | "true" | "false" | "nil" => "keyword",
-            _ => "normal",
-        },
-        "py" => match word {
-            "def" | "class" | "if" | "elif" | "else" | "for" | "while" | "return" | "import"
-            | "from" | "as" | "try" | "except" | "finally" | "with" | "yield" | "lambda"
-            | "and" | "or" | "not" | "in" | "is" | "True" | "False" | "None" | "pass" | "break"
-            | "continue" | "raise" | "global" | "nonlocal" | "async" | "await" => "keyword",
-            _ => "normal",
-        },
-        "js" | "ts" | "jsx" | "tsx" => match word {
-            "function" | "var" | "let" | "const" | "if" | "else" | "for" | "while" | "do"
-            | "switch" | "case" | "break" | "continue" | "return" | "new" | "delete" | "typeof"
-            | "instanceof" | "class" | "extends" | "import" | "export" | "default" | "from"
-            | "try" | "catch" | "finally" | "throw" | "async" | "await" | "yield" | "true"
-            | "false" | "null" | "undefined" | "this" | "super" => "keyword",
-            _ => "normal",
-        },
-        "c" | "h" | "cpp" | "hpp" | "cc" => match word {
-            "if" | "else" | "for" | "while" | "do" | "switch" | "case" | "break" | "continue"
-            | "return" | "struct" | "enum" | "union" | "typedef" | "static" | "const"
-            | "extern" | "void" | "int" | "char" | "float" | "double" | "long" | "short"
-            | "unsigned" | "signed" | "sizeof" | "NULL" | "true" | "false" | "class" | "public"
-            | "private" | "protected" | "virtual" | "override" | "template" | "typename"
-            | "namespace" | "using" | "new" | "delete" | "throw" | "try" | "catch" | "#include"
-            | "#define" => "keyword",
-            _ => "normal",
-        },
-        "toml" => match word {
-            "true" | "false" => "keyword",
-            _ => "normal",
-        },
-        _ => "normal",
-    }
-}
-
-/// Tokenize a line into colored tokens using simple keyword + string/comment detection.
-fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Vec<RenderToken> {
-    let mut tokens = Vec::new();
-    let mut chars = line.chars().peekable();
-    let mut current = String::new();
-    let mut in_string: Option<char> = None;
-    let mut in_line_comment = false;
-
-    while let Some(&ch) = chars.peek() {
-        if in_line_comment {
-            current.push(ch);
-            chars.next();
-            continue;
-        }
-
-        if let Some(quote) = in_string {
-            current.push(ch);
-            chars.next();
-            if ch == quote {
-                tokens.push(RenderToken {
-                    text: current.clone(),
-                    color: syntax_color("string", style),
-                });
-                current.clear();
-                in_string = None;
-            }
-            continue;
-        }
-
-        // Check for line comments.
-        if ch == '/' {
-            let mut peek = chars.clone();
-            peek.next();
-            if peek.peek() == Some(&'/') {
-                if !current.is_empty() {
-                    let tt = classify_word(&current, ext);
-                    tokens.push(RenderToken {
-                        text: current.clone(),
-                        color: syntax_color(tt, style),
-                    });
-                    current.clear();
-                }
-                in_line_comment = true;
-                current.push(ch);
-                chars.next();
-                continue;
-            }
-        }
-        if ch == '#'
-            && (ext == "py" || ext == "toml" || ext == "sh" || ext == "yml" || ext == "yaml")
-        {
-            if !current.is_empty() {
-                let tt = classify_word(&current, ext);
-                tokens.push(RenderToken {
-                    text: current.clone(),
-                    color: syntax_color(tt, style),
-                });
-                current.clear();
-            }
-            in_line_comment = true;
-            current.push(ch);
-            chars.next();
-            continue;
-        }
-        if ch == '-' && ext == "lua" {
-            let mut peek = chars.clone();
-            peek.next();
-            if peek.peek() == Some(&'-') {
-                if !current.is_empty() {
-                    let tt = classify_word(&current, ext);
-                    tokens.push(RenderToken {
-                        text: current.clone(),
-                        color: syntax_color(tt, style),
-                    });
-                    current.clear();
-                }
-                in_line_comment = true;
-                current.push(ch);
-                chars.next();
-                continue;
-            }
-        }
-
-        // Strings.
-        if ch == '"' || ch == '\'' {
-            if !current.is_empty() {
-                let tt = classify_word(&current, ext);
-                tokens.push(RenderToken {
-                    text: current.clone(),
-                    color: syntax_color(tt, style),
-                });
-                current.clear();
-            }
-            in_string = Some(ch);
-            current.push(ch);
-            chars.next();
-            continue;
-        }
-
-        // Numbers.
-        if ch.is_ascii_digit() && current.is_empty() {
-            let mut num = String::new();
-            while let Some(&c) = chars.peek() {
-                if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == 'x' || c == 'b' {
-                    num.push(c);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            tokens.push(RenderToken {
-                text: num,
-                color: syntax_color("number", style),
-            });
-            continue;
-        }
-
-        // Word boundary.
-        if ch.is_alphanumeric() || ch == '_' {
-            current.push(ch);
-            chars.next();
-        } else {
-            if !current.is_empty() {
-                let tt = classify_word(&current, ext);
-                tokens.push(RenderToken {
-                    text: current.clone(),
-                    color: syntax_color(tt, style),
-                });
-                current.clear();
-            }
-            tokens.push(RenderToken {
-                text: ch.to_string(),
-                color: syntax_color("symbol", style),
-            });
-            chars.next();
-        }
-    }
-
-    // Flush remaining.
-    if !current.is_empty() {
-        let color = if in_line_comment {
-            syntax_color("comment", style)
-        } else if in_string.is_some() {
-            syntax_color("string", style)
-        } else {
-            let tt = classify_word(&current, ext);
-            syntax_color(tt, style)
-        };
-        tokens.push(RenderToken {
-            text: current,
-            color,
-        });
-    }
-
-    tokens
-}
-
-/// Map a mouse click in doc-view coordinates to a `(line, col)` position
-/// in the underlying buffer. When line wrapping is active a single logical
-/// line can span multiple visual rows, so the visible row is looked up in
-/// `cached_render` first. If the cache is empty or stale (no overlap with
-/// the click), we fall back to the simpler "row = logical line" mapping
-/// used when wrap is off.
-#[cfg(feature = "sdl")]
-#[allow(clippy::too_many_arguments)]
-fn click_to_doc_pos(
-    dv: &DocView,
-    buf_id: u64,
-    cached: &[RenderLine],
-    x: f64,
-    y: f64,
-    text_x_start: f64,
-    line_h: f64,
-    style: &StyleContext,
-    draw_ctx: &mut crate::editor::draw_context::NativeDrawContext,
-) -> (usize, usize) {
-    use crate::editor::view::DrawContext as _;
-    let rect = dv.rect();
-    // Clicked visual row relative to the first rendered row.
-    let first_logical = cached
-        .first()
-        .map(|l| l.line_number as f64)
-        .unwrap_or(1.0);
-    let first_row_y = rect.y + (first_logical - 1.0) * line_h - dv.scroll_y;
-    let row_f = (y - first_row_y) / line_h;
-    let clicked_idx = if row_f < 0.0 { 0 } else { row_f.floor() as usize };
-
-    // Resolve the logical line + wrap offset from the cached render lines.
-    if let Some(line) = cached.get(clicked_idx) {
-        let line_idx = line.line_number;
-        let wrap_offset = line.wrap_start_col;
-        let col_within_row = if x > text_x_start {
-            let full_text: String = line.tokens.iter().map(|t| t.text.as_str()).collect();
-            let mut col = 0usize;
-            let mut cx = text_x_start;
-            for ch in full_text.chars() {
-                let cw = draw_ctx.font_width(style.code_font, &ch.to_string());
-                if cx + cw / 2.0 > x {
-                    break;
-                }
-                cx += cw;
-                col += 1;
-            }
-            col
-        } else {
-            0
-        };
-        return (line_idx, wrap_offset + col_within_row + 1);
-    }
-
-    // Cache miss: fall back to the naive mapping (no wrap) so clicks below
-    // the rendered area still land somewhere sensible.
-    let click_line = ((y - rect.y + dv.scroll_y) / line_h).floor() as usize + 1;
-    let click_col = if x > text_x_start {
-        buffer::with_buffer(buf_id, |b| {
-            let line_idx = click_line.min(b.lines.len()).max(1);
-            let text = b.lines[line_idx - 1].trim_end_matches('\n');
-            let mut col = 1usize;
-            let mut cx = text_x_start;
-            for ch in text.chars() {
-                let cw = draw_ctx.font_width(style.code_font, &ch.to_string());
-                if cx + cw / 2.0 > x {
-                    break;
-                }
-                cx += cw;
-                col += 1;
-            }
-            Ok(col)
-        })
-        .unwrap_or(1)
-    } else {
-        1
-    };
-    (click_line, click_col)
-}
-
-/// Build render lines from buffer for the visible range, with syntax highlighting.
-#[cfg(feature = "sdl")]
-fn build_render_lines(
-    buf_id: u64,
-    dv: &DocView,
-    style: &StyleContext,
-    file_ext: &str,
-    compiled: Option<&CompiledSyntax>,
-    wrap_width: Option<f64>,
-    inlay_hints: &[InlayHint],
-) -> Vec<RenderLine> {
-    let line_h = style.code_font_height * 1.2;
-    let visible_lines = ((dv.rect().h / line_h).ceil() as usize).max(1);
-    let hint_color = SYNTAX_COLORS.with(|s| {
-        s.borrow()
-            .get("comment")
-            .copied()
-            .unwrap_or(style.dim.to_array())
-    });
-
-    buffer::with_buffer(buf_id, |b| {
-        let first = ((dv.scroll_y / line_h).floor() as usize).max(0) + 1;
-        let last = (first + visible_lines + 1).min(b.lines.len());
-        let mut render = Vec::new();
-        let mut i = first;
-        while i <= last && i <= b.lines.len() {
-            // Skip folded lines.
-            let mut folded = false;
-            for (fs, fe) in &dv.folds {
-                if i > *fs && i <= *fe {
-                    folded = true;
-                    break;
-                }
-            }
-            if folded {
-                i += 1;
-                continue;
-            }
-            let raw_line = &b.lines[i - 1];
-            let text = raw_line.trim_end_matches('\n');
-            let mut tokens: Vec<RenderToken> = if let Some(syntax) = compiled {
-                let toks = tokenizer::tokenize_line(syntax, raw_line);
-                toks.iter()
-                    .map(|t| {
-                        let trimmed = t.text.trim_end_matches('\n').to_string();
-                        // Rust attributes (#[...]) should render as normal/white, not keyword blue.
-                        let tt = if t.token_type == "keyword" && trimmed.starts_with("#[") {
-                            "attribute"
-                        } else {
-                            &t.token_type
-                        };
-                        RenderToken {
-                            text: trimmed,
-                            color: syntax_color(tt, style),
-                        }
-                    })
-                    .collect()
-            } else {
-                simple_tokenize(text, file_ext, style)
-            };
-
-            // Bracket pair colorization: color ()[]{}  by nesting depth.
-            let bracket_colors: [Option<[u8; 4]>; 3] = SYNTAX_COLORS.with(|s| {
-                let c = s.borrow();
-                [
-                    c.get("bracket1").copied(),
-                    c.get("bracket2").copied(),
-                    c.get("bracket3").copied(),
-                ]
-            });
-            if bracket_colors[0].is_some() {
-                let mut depth: usize = 0;
-                let mut new_tokens = Vec::with_capacity(tokens.len());
-                for tok in tokens {
-                    let has_bracket = tok.text.contains(['(', ')', '[', ']', '{', '}']);
-                    if !has_bracket {
-                        new_tokens.push(tok);
-                        continue;
-                    }
-                    let base = tok.color;
-                    let mut run = String::new();
-                    for ch in tok.text.chars() {
-                        if matches!(ch, '(' | '[' | '{') {
-                            if !run.is_empty() {
-                                new_tokens.push(RenderToken {
-                                    text: std::mem::take(&mut run),
-                                    color: base,
-                                });
-                            }
-                            let bc = bracket_colors[depth % 3].unwrap_or(base);
-                            new_tokens.push(RenderToken {
-                                text: ch.to_string(),
-                                color: bc,
-                            });
-                            depth += 1;
-                        } else if matches!(ch, ')' | ']' | '}') {
-                            if !run.is_empty() {
-                                new_tokens.push(RenderToken {
-                                    text: std::mem::take(&mut run),
-                                    color: base,
-                                });
-                            }
-                            depth = depth.saturating_sub(1);
-                            let bc = bracket_colors[depth % 3].unwrap_or(base);
-                            new_tokens.push(RenderToken {
-                                text: ch.to_string(),
-                                color: bc,
-                            });
-                        } else {
-                            run.push(ch);
-                        }
-                    }
-                    if !run.is_empty() {
-                        new_tokens.push(RenderToken {
-                            text: run,
-                            color: base,
-                        });
-                    }
-                }
-                tokens = new_tokens;
-            }
-
-            // Inject inlay hints inline between tokens.
-            // Hints use byte_col (0-based byte offset in the line text).
-            // This matches the 1.5.5 approach: split tokens at hint byte positions.
-            let mut line_hints: Vec<(usize, &str)> = inlay_hints
-                .iter()
-                .filter(|h| h.line == i - 1)
-                .map(|h| {
-                    // Convert 0-based char col to 1-based byte col (matching legacy).
-                    let byte_col = text
-                        .char_indices()
-                        .nth(h.col)
-                        .map(|(bi, _)| bi + 1)
-                        .unwrap_or(text.len() + 1);
-                    (byte_col, h.label.as_str())
-                })
-                .collect();
-            line_hints.sort_by_key(|h| h.0);
-
-            if !line_hints.is_empty() {
-                let mut new_tokens = Vec::new();
-                let mut byte_col = 1usize; // 1-based
-                let mut hint_idx = 0;
-                for tok in &tokens {
-                    let tok_bytes = tok.text.len();
-                    let token_end = byte_col + tok_bytes;
-                    if hint_idx < line_hints.len() && line_hints[hint_idx].0 < token_end {
-                        let mut remaining = tok.text.as_str();
-                        let mut cur_col = byte_col;
-                        while hint_idx < line_hints.len() && line_hints[hint_idx].0 < token_end {
-                            let (hcol, display) = line_hints[hint_idx];
-                            if hcol > cur_col && !remaining.is_empty() {
-                                let split_at = (hcol - cur_col).min(remaining.len());
-                                let (before, after) = remaining.split_at(split_at);
-                                new_tokens.push(RenderToken {
-                                    text: before.to_string(),
-                                    color: tok.color,
-                                });
-                                cur_col += split_at;
-                                remaining = after;
-                            }
-                            new_tokens.push(RenderToken {
-                                text: display.to_string(),
-                                color: hint_color,
-                            });
-                            hint_idx += 1;
-                        }
-                        if !remaining.is_empty() {
-                            new_tokens.push(RenderToken {
-                                text: remaining.to_string(),
-                                color: tok.color,
-                            });
-                        }
-                    } else {
-                        new_tokens.push(tok.clone());
-                    }
-                    byte_col = token_end;
-                }
-                while hint_idx < line_hints.len() {
-                    new_tokens.push(RenderToken {
-                        text: line_hints[hint_idx].1.to_string(),
-                        color: hint_color,
-                    });
-                    hint_idx += 1;
-                }
-                tokens = new_tokens;
-            }
-
-            // If wrapping enabled, split tokens across multiple render lines.
-            if let Some(max_w) = wrap_width {
-                // Use the measured monospace char width when we have one
-                // (populated each frame from the draw context), falling back
-                // to a height-based estimate only before the first render.
-                let char_w = if dv.code_char_w > 0.0 {
-                    dv.code_char_w
-                } else {
-                    style.code_font_height * 0.6
-                };
-                let max_chars = (max_w / char_w).floor() as usize;
-                if max_chars > 0 && text.chars().count() > max_chars {
-                    // Word-aware wrap: prefer breaking at whitespace when a
-                    // space is available within the current segment, and
-                    // fall back to a hard cut at max_chars otherwise. Each
-                    // emitted row shares the logical line_number so cursor
-                    // and click math can locate the line; `wrap_start_col`
-                    // records the 0-based char offset of the row's first
-                    // char in the full line, so `full_col = wrap_start_col
-                    // + col_within_row`. Original tokens are sliced at the
-                    // wrap boundaries so syntax colors survive the wrap
-                    // (otherwise highlighted constructs like markdown image
-                    // links collapse to the default text color).
-                    let token_chars: Vec<Vec<char>> =
-                        tokens.iter().map(|t| t.text.chars().collect()).collect();
-                    let total: usize = token_chars.iter().map(|c| c.len()).sum();
-                    // Cumulative char offset at the start of each token; last
-                    // entry is `total` and acts as a sentinel.
-                    let mut token_offsets: Vec<usize> = Vec::with_capacity(tokens.len() + 1);
-                    token_offsets.push(0);
-                    for cs in &token_chars {
-                        token_offsets.push(token_offsets.last().unwrap() + cs.len());
-                    }
-
-                    // Flat char view for wrap-break search.
-                    let chars: Vec<char> =
-                        token_chars.iter().flat_map(|c| c.iter().copied()).collect();
-                    let mut offset = 0;
-                    while offset < total {
-                        let hard_end = (offset + max_chars).min(total);
-                        let mut end = hard_end;
-                        if hard_end < total {
-                            let mut j = hard_end;
-                            while j > offset + 1 {
-                                j -= 1;
-                                if chars[j - 1].is_whitespace() {
-                                    end = j;
-                                    break;
-                                }
-                            }
-                        }
-                        // Slice each original token that overlaps [offset,
-                        // end) into the row's token list, preserving colors.
-                        let mut row_tokens: Vec<RenderToken> =
-                            Vec::with_capacity(tokens.len());
-                        for (tidx, tok) in tokens.iter().enumerate() {
-                            let tok_start = token_offsets[tidx];
-                            let tok_end = token_offsets[tidx + 1];
-                            if tok_end <= offset || tok_start >= end {
-                                continue;
-                            }
-                            let clip_start = offset.max(tok_start);
-                            let clip_end = end.min(tok_end);
-                            let local_start = clip_start - tok_start;
-                            let local_end = clip_end - tok_start;
-                            let chunk: String =
-                                token_chars[tidx][local_start..local_end].iter().collect();
-                            if !chunk.is_empty() {
-                                row_tokens.push(RenderToken {
-                                    text: chunk,
-                                    color: tok.color,
-                                });
-                            }
-                        }
-                        render.push(RenderLine {
-                            line_number: i,
-                            wrap_start_col: offset,
-                            tokens: row_tokens,
-                        });
-                        offset = end;
-                    }
-                } else {
-                    render.push(RenderLine {
-                        line_number: i,
-                        wrap_start_col: 0,
-                        tokens,
-                    });
-                }
-            } else {
-                render.push(RenderLine {
-                    line_number: i,
-                    wrap_start_col: 0,
-                    tokens,
-                });
-            }
-            i += 1;
-        }
-        Ok(render)
-    })
-    .unwrap_or_default()
-}
 
 /// Load fonts from NativeConfig into a draw context.
-#[cfg(feature = "sdl")]
 fn load_fonts(
     config: &NativeConfig,
 ) -> Result<crate::editor::draw_context::NativeDrawContext, String> {
@@ -10395,7 +8356,6 @@ thread_local! {
 }
 
 /// Build a StyleContext from NativeConfig and loaded fonts.
-#[cfg(feature = "sdl")]
 fn build_style(
     config: &NativeConfig,
     ctx: &crate::editor::draw_context::NativeDrawContext,
@@ -10452,6 +8412,7 @@ fn build_style(
     }
 }
 
+}
 #[cfg(not(feature = "sdl"))]
 fn build_style(_config: &NativeConfig, _ctx: &()) -> StyleContext {
     StyleContext::default()

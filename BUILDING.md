@@ -12,13 +12,26 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ### System libraries
 
-| Library | Ubuntu/Debian | Fedora | Arch | macOS (Homebrew) |
+| Tool | Ubuntu/Debian | Fedora | Arch | macOS (Homebrew) |
 |---------|--------------|--------|------|------------------|
-| SDL3 | `libsdl3-dev` | `SDL3-devel` | `sdl3` | `sdl3` |
-| FreeType2 | `libfreetype6-dev` | `freetype-devel` | `freetype2` | `freetype` |
-| PCRE2 | `libpcre2-dev` | `pcre2-devel` | `pcre2` | `pcre2` |
+| CMake + C compiler | `cmake build-essential` | `cmake gcc` | `cmake base-devel` | `cmake` (via Xcode CLT) |
 
-On **Windows**, dependencies are resolved via vcpkg (see the CI workflow).
+That's it — no library dev packages required. SDL3, FreeType, and
+PCRE2 are all compiled from vendored source by their respective `-sys`
+crates during `cargo build` and statically linked into the resulting
+binaries. This keeps the editor's subsystems (no GPU / no camera / no
+joystick / etc.) and regex semantics identical across NixOS, Arch,
+Debian, Homebrew Mac, and Windows — there is no system-SDL3 or
+system-libpcre2 variance to worry about.
+
+On **Linux**, still install the X11 dev headers SDL3 needs at compile
+time: `libx11-dev libxext-dev libxcursor-dev libxinerama-dev libxi-dev
+libxrandr-dev libxkbcommon-dev` (Ubuntu) — or add
+`wayland-protocols libwayland-dev` if you want Wayland available as a
+fallback.
+
+On **Windows**, the MSVC toolchain (Visual Studio Build Tools) ships
+cmake and a C/C++ compiler; nothing else to install.
 
 ## Build
 

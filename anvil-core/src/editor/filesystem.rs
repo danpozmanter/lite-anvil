@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 // ── Directory monitor ────────────────────────────────────────────────────────
 
-/// Core directory monitoring state, independent of Lua.
+/// Directory-watcher state: the `notify` backend plus its event receiver
+/// and the set of registered paths.
 pub struct DirMonitorInner {
     watcher: RecommendedWatcher,
     rx: Receiver<notify::Result<notify::Event>>,
@@ -306,7 +307,7 @@ pub fn glob_to_lua_pattern(glob: &str) -> String {
     out
 }
 
-/// Parsed gitignore rule (pure data, no Lua types).
+/// Parsed gitignore rule.
 #[derive(Debug, Clone)]
 pub struct GitignoreRule {
     pub base_dir: Option<String>,

@@ -133,6 +133,39 @@ pub fn set_app_metadata(name: &str, identifier: &str) {
 /// Initialise SDL3 video subsystem. Must be called once on the main thread before
 /// the editor starts.
 pub fn init() -> Result<()> {
+    // Nudge SDL toward a no-GPU presentation path. Our static SDL3 build
+    // still has OpenGL / Vulkan / Wayland compiled in because sdl3-sys
+    // 0.6 doesn't expose Cargo features to disable them at CMake time;
+    // these hints steer it away from them at runtime so the editor
+    // behaves the same on a Nix / Arch / Fedora source build as on our
+    // old hand-crafted "no-GL" tarballs.
+    //
+    //  * FRAMEBUFFER_ACCELERATION=0 — the important one. By default on
+    //    Linux, `SDL_GetWindowSurface` silently spins up an SDL_Renderer
+    //    (OpenGL) to present via a texture, which dlopens libGL +
+    //    libGLX_nvidia + libnvidia-glcore + friends and balloons RSS
+    //    from ~18 MB to ~70 MB. Setting this hint tells SDL to use the
+    //    plain X11 SHM framebuffer path with no GL involvement at all.
+    //  * VIDEO_DRIVER=x11,wayland — prefer X11 (which can present via
+    //    MIT-SHM with no GL) on Linux, only falling back to Wayland
+    //    when X11 is absent. Windows and macOS ignore this hint.
+    //  * RENDER_DRIVER=software — belt-and-braces: if anything in the
+    //    stack does spin up SDL_Renderer, force the CPU backend.
+    unsafe {
+        SDL_SetHint(
+            c"SDL_FRAMEBUFFER_ACCELERATION".as_ptr(),
+            c"0".as_ptr(),
+        );
+        SDL_SetHint(
+            c"SDL_VIDEO_DRIVER".as_ptr(),
+            c"x11,wayland".as_ptr(),
+        );
+        SDL_SetHint(
+            c"SDL_RENDER_DRIVER".as_ptr(),
+            c"software".as_ptr(),
+        );
+    }
+
     APP_NAME.with(|name| {
         APP_IDENTIFIER.with(|ident| {
             // SDL copies these strings internally, so the borrow only needs

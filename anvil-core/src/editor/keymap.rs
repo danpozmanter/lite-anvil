@@ -153,7 +153,7 @@ fn format_stroke(stroke: &str) -> String {
         .join("+")
 }
 
-/// Default keybindings (matches the Lua build_default_bindings).
+/// Default keybindings, merged with any user overrides from config.toml.
 const DEFAULT_BINDINGS: &[(&str, &[&str])] = &[
     ("ctrl+p", &["core:find-command"]),
     ("ctrl+q", &["core:quit"]),

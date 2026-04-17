@@ -23,7 +23,7 @@ pub enum ProcessError {
     Runtime(String),
 }
 
-/// Core subprocess state, independent of Lua.
+/// Subprocess state: pid, pipe fds, exit status, and timeouts.
 pub struct ProcessInner {
     pub pid: pid_t,
     pub running: bool,

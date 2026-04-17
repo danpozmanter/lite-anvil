@@ -6,7 +6,7 @@ use std::ffi::CString;
 #[cfg(unix)]
 const INVALID_FD: c_int = -1;
 
-/// Terminal PTY inner state, independent of Lua.
+/// Terminal PTY state: master fd, child pid, size, and exit code.
 #[cfg(unix)]
 pub struct TerminalInner {
     pub pid: pid_t,

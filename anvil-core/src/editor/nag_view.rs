@@ -36,7 +36,7 @@ pub struct NagView {
     pub underline_progress: f64,
     pub dim_alpha: f64,
     pub queue_count: i64,
-    /// Pre-computed button positions from Lua each_option.
+    /// Pre-computed button positions for click hit-testing.
     pub buttons: Vec<NagButton>,
     /// Root view size for dimming overlay.
     pub root_w: f64,

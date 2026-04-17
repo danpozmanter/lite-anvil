@@ -36,7 +36,7 @@ impl Default for ToolbarView {
     }
 }
 
-/// Draw toolbar items natively using symbols and rects from Lua.
+/// Draw toolbar items from the provided symbols + bounding rects.
 pub fn draw_toolbar(
     ctx: &mut dyn DrawContext,
     style: &crate::editor::style_ctx::StyleContext,

@@ -13,7 +13,7 @@ pub fn clamp(n: f64, lo: f64, hi: f64) -> f64 {
     n.min(hi).max(lo)
 }
 
-/// Round half-away-from-zero (matches Lua `common.round`).
+/// Round half-away-from-zero.
 pub fn round(n: f64) -> f64 {
     if n >= 0.0 {
         (n + 0.5).floor()
