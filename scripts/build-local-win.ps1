@@ -57,6 +57,28 @@ if (Test-Path $WindowsResources) {
     Copy-Item -Path $WindowsResources -Destination $StageDir
 }
 
+# Bundle SDL3.dll so it loads from the exe directory at runtime.
+$SdlCandidates = @(
+    'C:\sdl3-nogl\bin\SDL3.dll',
+    (Join-Path $RootDir 'lib\sdl3-nogl\SDL3.dll'),
+    (Join-Path $RootDir 'SDL\build\Release\SDL3.dll')
+)
+$SdlDll = $SdlCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($SdlDll) {
+    Copy-Item -Path $SdlDll -Destination $StageDir
+} else {
+    Write-Warning 'SDL3.dll not found; the package will not run on clean Windows systems.'
+}
+
+# Bundle vcpkg dynamic dependencies (freetype, pcre2-8, etc.) next to the exe.
+# Without these, Windows reports 0xc000007b on systems that don't have them.
+$VcpkgBin = 'C:\vcpkg\installed\x64-windows\bin'
+if (Test-Path $VcpkgBin) {
+    Get-ChildItem -Path $VcpkgBin -Filter *.dll | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination $StageDir
+    }
+}
+
 Compress-Archive -Path $StageDir -DestinationPath $Archive
 
 Write-Host "Built archive: $Archive"

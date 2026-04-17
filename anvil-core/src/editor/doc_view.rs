@@ -56,9 +56,17 @@ impl Default for DocView {
 }
 
 /// A resolved line for native document drawing.
+///
+/// When line wrapping is off, each logical line produces exactly one
+/// `RenderLine` with `wrap_start_col = 0`. When wrapping is on, a long
+/// logical line is split into multiple `RenderLine` entries that all share
+/// the same `line_number`; continuation rows carry `wrap_start_col` equal
+/// to the 0-based character offset of the first char shown in that row
+/// (so cursor and click math can add it back to get a logical column).
 #[derive(Debug, Clone)]
 pub struct RenderLine {
     pub line_number: usize,
+    pub wrap_start_col: usize,
     pub tokens: Vec<RenderToken>,
 }
 
@@ -124,7 +132,10 @@ impl DocView {
 
         // Pass 1: gutter-side content drawn under the full clip. Line
         // highlights span the whole row (gutter + text), then line numbers,
-        // fold markers, and git markers paint inside the gutter.
+        // fold markers, and git markers paint inside the gutter. Gutter
+        // decorations only appear on the first visual row of each logical
+        // line (wrap_start_col == 0) so they don't repeat on continuation
+        // rows when wrapping is enabled.
         for (i, line) in lines.iter().enumerate() {
             let y = self.rect.y + first_visual_row + (i as f64 * line_h) - self.scroll_y;
             if y + line_h < self.rect.y || y > self.rect.y + self.rect.h {
@@ -143,42 +154,46 @@ impl DocView {
                 );
             }
 
-            // Line number
-            let ln_str = line.line_number.to_string();
-            let ln_w = ctx.font_width(style.code_font, &ln_str);
-            let ln_x = self.rect.x + gutter_w - ln_w - style.padding_x;
+            let is_first_row = line.wrap_start_col == 0;
             let text_y = y + (line_h - style.code_font_height) / 2.0;
-            let ln_color = if line.line_number == cursor_line {
-                style.line_number2.to_array()
-            } else {
-                style.line_number.to_array()
-            };
-            ctx.draw_text(style.code_font, &ln_str, ln_x, text_y, ln_color);
 
-            // Fold indicator in gutter
-            if self.folds.iter().any(|(s, _)| *s == line.line_number) {
-                let fold_x = self.rect.x + 4.0;
-                ctx.draw_text(style.code_font, ">", fold_x, text_y, style.dim.to_array());
-            }
-
-            // Bookmark marker
-            if self.bookmarks.contains(&line.line_number) {
-                let bm_x = self.rect.x + 2.0;
-                let bm_y = y + line_h * 0.3;
-                let bm_size = line_h * 0.4;
-                ctx.draw_rect(bm_x, bm_y, bm_size, bm_size, style.accent.to_array());
-            }
-
-            // Git gutter marker
-            if let Some(change) = git_changes.get(&line.line_number) {
-                use crate::editor::git::LineChange;
-                let marker_w = 3.0;
-                let marker_color = match change {
-                    LineChange::Added => style.good.to_array(),
-                    LineChange::Modified => style.warn.to_array(),
-                    LineChange::Deleted => style.error.to_array(),
+            if is_first_row {
+                // Line number
+                let ln_str = line.line_number.to_string();
+                let ln_w = ctx.font_width(style.code_font, &ln_str);
+                let ln_x = self.rect.x + gutter_w - ln_w - style.padding_x;
+                let ln_color = if line.line_number == cursor_line {
+                    style.line_number2.to_array()
+                } else {
+                    style.line_number.to_array()
                 };
-                ctx.draw_rect(self.rect.x, y, marker_w, line_h, marker_color);
+                ctx.draw_text(style.code_font, &ln_str, ln_x, text_y, ln_color);
+
+                // Fold indicator in gutter
+                if self.folds.iter().any(|(s, _)| *s == line.line_number) {
+                    let fold_x = self.rect.x + 4.0;
+                    ctx.draw_text(style.code_font, ">", fold_x, text_y, style.dim.to_array());
+                }
+
+                // Bookmark marker
+                if self.bookmarks.contains(&line.line_number) {
+                    let bm_x = self.rect.x + 2.0;
+                    let bm_y = y + line_h * 0.3;
+                    let bm_size = line_h * 0.4;
+                    ctx.draw_rect(bm_x, bm_y, bm_size, bm_size, style.accent.to_array());
+                }
+
+                // Git gutter marker
+                if let Some(change) = git_changes.get(&line.line_number) {
+                    use crate::editor::git::LineChange;
+                    let marker_w = 3.0;
+                    let marker_color = match change {
+                        LineChange::Added => style.good.to_array(),
+                        LineChange::Modified => style.warn.to_array(),
+                        LineChange::Deleted => style.error.to_array(),
+                    };
+                    ctx.draw_rect(self.rect.x, y, marker_w, line_h, marker_color);
+                }
             }
         }
 
@@ -188,7 +203,10 @@ impl DocView {
 
         // Pass 2: text-area content. Indent guides, selection highlights,
         // tokens, whitespace markers, the column-80 guide, and cursors all
-        // use scroll_x and must be clipped to the text area.
+        // use scroll_x and must be clipped to the text area. With wrap on,
+        // each `RenderLine` is one visual row: selection and cursor math
+        // adjust for `wrap_start_col` so the coordinates map back to the
+        // underlying logical line columns.
         for (i, line) in lines.iter().enumerate() {
             let y = self.rect.y + first_visual_row + (i as f64 * line_h) - self.scroll_y;
             if y + line_h < self.rect.y || y > self.rect.y + self.rect.h {
@@ -196,26 +214,33 @@ impl DocView {
             }
             let text_y = y + (line_h - style.code_font_height) / 2.0;
 
-            // Indent guides
             let full_text: String = line.tokens.iter().map(|t| t.text.as_str()).collect();
-            let indent_size = self.indent_size.max(1);
-            let leading: usize = full_text
-                .chars()
-                .take_while(|c| c.is_ascii_whitespace() && *c != '\n')
-                .map(|c| if c == '\t' { indent_size } else { 1 })
-                .sum();
-            let levels = if leading > 0 && indent_size > 0 {
-                leading / indent_size
-            } else {
-                0
-            };
-            if levels > 0 {
-                let space_w = ctx.font_width(style.code_font, " ");
-                let step = space_w * indent_size as f64;
-                let guide_color = style.guide_color();
-                for g in 0..levels {
-                    let gx = text_x + style.padding_x - self.scroll_x + step * g as f64;
-                    ctx.draw_rect(gx, y, 1.0, line_h, guide_color);
+            let row_char_count = full_text.chars().count();
+            let row_start = line.wrap_start_col; // 0-based char offset in logical line
+            let row_end = row_start + row_char_count; // exclusive
+
+            // Indent guides: only on the first visual row of a line (leading
+            // whitespace only appears there).
+            if line.wrap_start_col == 0 {
+                let indent_size = self.indent_size.max(1);
+                let leading: usize = full_text
+                    .chars()
+                    .take_while(|c| c.is_ascii_whitespace() && *c != '\n')
+                    .map(|c| if c == '\t' { indent_size } else { 1 })
+                    .sum();
+                let levels = if leading > 0 && indent_size > 0 {
+                    leading / indent_size
+                } else {
+                    0
+                };
+                if levels > 0 {
+                    let space_w = ctx.font_width(style.code_font, " ");
+                    let step = space_w * indent_size as f64;
+                    let guide_color = style.guide_color();
+                    for g in 0..levels {
+                        let gx = text_x + style.padding_x - self.scroll_x + step * g as f64;
+                        ctx.draw_rect(gx, y, 1.0, line_h, guide_color);
+                    }
                 }
             }
 
@@ -225,28 +250,34 @@ impl DocView {
                 if ln < sel.line1 || ln > sel.line2 {
                     continue;
                 }
-                let start_col = if ln == sel.line1 { sel.col1 } else { 1 };
-                let end_col = if ln == sel.line2 {
-                    sel.col2.saturating_sub(1)
+                // Logical-line selection columns (1-based inclusive of start,
+                // exclusive of end).
+                let line_start_col = if ln == sel.line1 { sel.col1 } else { 1 };
+                let line_end_col = if ln == sel.line2 {
+                    sel.col2
                 } else {
                     usize::MAX
                 };
-                let sel_text: String = line.tokens.iter().map(|t| t.text.as_str()).collect();
+                // Clip to this visual row's [row_start+1, row_end+1) range.
+                let row_start_col = row_start + 1;
+                let row_end_col = row_end + 1;
+                let clipped_start = line_start_col.max(row_start_col);
+                let clipped_end = line_end_col.min(row_end_col);
+                if clipped_start >= clipped_end {
+                    continue;
+                }
+                // Convert to 0-based offsets within the row's text.
+                let start_in_row = clipped_start - row_start_col;
+                let end_in_row = clipped_end - row_start_col;
                 let sel_x = text_x + style.padding_x - self.scroll_x
                     + ctx.font_width(
                         style.code_font,
-                        &sel_text
-                            .chars()
-                            .take(start_col.saturating_sub(1))
-                            .collect::<String>(),
+                        &full_text.chars().take(start_in_row).collect::<String>(),
                     );
                 let sel_end_x = text_x + style.padding_x - self.scroll_x
                     + ctx.font_width(
                         style.code_font,
-                        &sel_text
-                            .chars()
-                            .take(end_col.min(sel_text.len()))
-                            .collect::<String>(),
+                        &full_text.chars().take(end_in_row).collect::<String>(),
                     );
                 let sel_w = (sel_end_x - sel_x).max(0.0);
                 ctx.draw_rect(sel_x, y, sel_w, line_h, style.selection.to_array());
@@ -263,7 +294,6 @@ impl DocView {
             if self.show_whitespace {
                 let ws_color = style.guide_color();
                 let space_w = ctx.font_width(style.code_font, " ");
-                let full_text: String = line.tokens.iter().map(|t| t.text.as_str()).collect();
                 let mut wx = text_x + style.padding_x - self.scroll_x;
                 for ch in full_text.chars() {
                     match ch {
@@ -290,8 +320,13 @@ impl DocView {
                         }
                     }
                 }
-                // Show newline marker at end of line.
-                ctx.draw_text(style.code_font, "\\n", wx, text_y, ws_color);
+                // Newline marker only after the final visual row of a line.
+                let is_last_row_for_line = lines
+                    .get(i + 1)
+                    .is_none_or(|n| n.line_number != line.line_number);
+                if is_last_row_for_line {
+                    ctx.draw_text(style.code_font, "\\n", wx, text_y, ws_color);
+                }
             }
         }
 
@@ -305,7 +340,12 @@ impl DocView {
             }
         }
 
-        // Cursors (primary + extras)
+        // Cursors (primary + extras). When wrapping is on, a single logical
+        // line may appear across several `RenderLine` entries; locate the
+        // specific visual row whose [wrap_start_col, wrap_start_col +
+        // row_chars] range contains the cursor column. A cursor past the
+        // last char of the logical line pins to the final wrap row so
+        // navigating to the end of a wrapped line is always visible.
         if cursor_visible {
             let mut all_cursors = vec![(cursor_line, cursor_col)];
             for &(cl, cc) in extra_cursors {
@@ -314,20 +354,41 @@ impl DocView {
                 }
             }
             for &(cl, cc) in &all_cursors {
-                for line in lines {
-                    if line.line_number == cl {
-                        let y = self.rect.y
-                            + first_visual_row
-                            + ((cl - lines[0].line_number) as f64 * line_h)
-                            - self.scroll_y;
-                        let full_text: String =
-                            line.tokens.iter().map(|t| t.text.as_str()).collect();
-                        let before: String = full_text.chars().take(cc.saturating_sub(1)).collect();
-                        let cx = text_x + style.padding_x - self.scroll_x
-                            + ctx.font_width(style.code_font, &before);
-                        ctx.draw_rect(cx, y, style.caret_width, line_h, style.caret.to_array());
+                let mut target: Option<(usize, &RenderLine, usize)> = None;
+                for (i, line) in lines.iter().enumerate() {
+                    if line.line_number != cl {
+                        continue;
+                    }
+                    let row_chars: usize =
+                        line.tokens.iter().map(|t| t.text.chars().count()).sum();
+                    let row_start_col = line.wrap_start_col + 1;
+                    let row_end_col = line.wrap_start_col + row_chars + 1;
+                    // Next row for the same logical line, if any, starts at
+                    // row_end_col. A cursor sitting exactly at row_end_col
+                    // belongs to the start of the next wrap row rather than
+                    // the end of this one.
+                    let is_last_row_for_line = lines
+                        .get(i + 1)
+                        .is_none_or(|n| n.line_number != cl);
+                    let within = if is_last_row_for_line {
+                        cc >= row_start_col
+                    } else {
+                        cc >= row_start_col && cc < row_end_col
+                    };
+                    if within {
+                        let within_col = cc.saturating_sub(row_start_col);
+                        target = Some((i, line, within_col));
                         break;
                     }
+                }
+                if let Some((i, line, within_col)) = target {
+                    let y = self.rect.y + first_visual_row + (i as f64 * line_h) - self.scroll_y;
+                    let full_text: String =
+                        line.tokens.iter().map(|t| t.text.as_str()).collect();
+                    let before: String = full_text.chars().take(within_col).collect();
+                    let cx = text_x + style.padding_x - self.scroll_x
+                        + ctx.font_width(style.code_font, &before);
+                    ctx.draw_rect(cx, y, style.caret_width, line_h, style.caret.to_array());
                 }
             }
         }

@@ -41,6 +41,7 @@ pub struct NativeConfig {
     pub terminal: TerminalConfig,
     pub ui: UiConfig,
     pub fonts: FontsConfig,
+    pub files: FilesConfig,
     pub long_line_indicator: bool,
     pub long_line_indicator_width: u32,
     pub transitions: bool,
@@ -133,6 +134,20 @@ pub struct NativeTokenizerConfig {
 pub struct TerminalConfig {
     pub placement: String,
     pub reuse_mode: String,
+}
+
+/// File-handling options that cut across the save / load pipeline.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FilesConfig {
+    /// When `true`, saves go through a temp file and a rename, so a crash
+    /// mid-write leaves the original file intact. The rename installs a
+    /// new inode, so mode bits, ownership, ACLs, xattrs, and hardlinks
+    /// are copied across explicitly. When `false` (the default), saves
+    /// write the new content directly over the existing inode with
+    /// truncate-then-write, preserving all file metadata for free at the
+    /// cost of crash-safety.
+    pub atomic_save: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -277,6 +292,7 @@ impl NativeConfig {
             terminal: TerminalConfig::default(),
             ui: UiConfig::default(),
             fonts: FontsConfig::with_datadir(datadir),
+            files: FilesConfig::default(),
             long_line_indicator: false,
             long_line_indicator_width: 1,
             transitions: true,
@@ -418,13 +434,13 @@ impl NativeConfig {
     /// Fill in default font paths for fonts that have no path set.
     pub fn resolve_font_paths(&mut self, datadir: &str) {
         if self.fonts.ui.path.is_none() {
-            self.fonts.ui.path = Some(format!("{datadir}/fonts/Lilex-Regular.ttf"));
+            self.fonts.ui.path = Some(join_font_path(datadir, "Lilex-Regular.ttf"));
         }
         if self.fonts.code.path.is_none() {
-            self.fonts.code.path = Some(format!("{datadir}/fonts/Lilex-Medium.ttf"));
+            self.fonts.code.path = Some(join_font_path(datadir, "Lilex-Medium.ttf"));
         }
         if self.fonts.icon.path.is_none() {
-            self.fonts.icon.path = Some(format!("{datadir}/fonts/icons.ttf"));
+            self.fonts.icon.path = Some(join_font_path(datadir, "icons.ttf"));
         }
     }
 }
@@ -488,6 +504,12 @@ impl Default for TerminalConfig {
     }
 }
 
+impl Default for FilesConfig {
+    fn default() -> Self {
+        Self { atomic_save: false }
+    }
+}
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -516,16 +538,26 @@ impl Default for FontSpec {
     }
 }
 
+/// Join a data directory with a font filename using the platform's native
+/// path separator, avoiding mixed forward/backward slashes on Windows.
+pub fn join_font_path(datadir: &str, filename: &str) -> String {
+    Path::new(datadir)
+        .join("fonts")
+        .join(filename)
+        .to_string_lossy()
+        .into_owned()
+}
+
 impl FontsConfig {
     fn with_datadir(datadir: &str) -> Self {
         Self {
             ui: FontSpec {
-                path: Some(format!("{datadir}/fonts/Lilex-Regular.ttf")),
+                path: Some(join_font_path(datadir, "Lilex-Regular.ttf")),
                 size: 15,
                 ..Default::default()
             },
             code: FontSpec {
-                path: Some(format!("{datadir}/fonts/Lilex-Medium.ttf")),
+                path: Some(join_font_path(datadir, "Lilex-Medium.ttf")),
                 size: 15,
                 ..Default::default()
             },
@@ -534,7 +566,7 @@ impl FontsConfig {
                 ..Default::default()
             },
             icon: FontSpec {
-                path: Some(format!("{datadir}/fonts/icons.ttf")),
+                path: Some(join_font_path(datadir, "icons.ttf")),
                 size: 16,
                 options: FontOptions {
                     antialiasing: Some("grayscale".into()),

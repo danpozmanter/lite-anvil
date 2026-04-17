@@ -855,26 +855,194 @@ pub fn load_file_with_progress<F: FnMut(u64, u64)>(
     Ok(())
 }
 
-/// Save buffer state to a file (atomic write via temp file).
-pub fn save_file(state: &BufferState, filename: &str, crlf: bool) -> Result<(), std::io::Error> {
-    let path = std::path::Path::new(filename);
-    let tmp = path.with_extension("tmp");
-    let mut f = fs::File::create(&tmp)?;
-
-    if state.bom != BomType::None {
-        f.write_all(state.bom.as_bytes())?;
+/// Save buffer state to a file.
+///
+/// `atomic = false` writes the new content over the existing inode with
+/// truncate-then-write, which naturally preserves mode bits, ownership,
+/// ACLs, xattrs, and hardlinks.
+///
+/// `atomic = true` writes to a sibling temp file and renames it over the
+/// target, so a crash mid-write leaves the original intact. Because
+/// rename installs a fresh inode, file metadata is explicitly copied
+/// from the original before the rename (permissions on all platforms;
+/// ownership and xattrs on Unix).
+pub fn save_file(
+    state: &BufferState,
+    filename: &str,
+    crlf: bool,
+    atomic: bool,
+) -> Result<(), std::io::Error> {
+    if atomic {
+        save_file_atomic(state, filename, crlf)
+    } else {
+        save_file_inplace(state, filename, crlf)
     }
+}
 
+fn write_content<W: Write>(
+    mut w: W,
+    state: &BufferState,
+    crlf: bool,
+) -> Result<(), std::io::Error> {
+    if state.bom != BomType::None {
+        w.write_all(state.bom.as_bytes())?;
+    }
     for line in &state.lines {
         let trimmed = line.trim_end_matches([' ', '\t']);
         if crlf {
-            f.write_all(trimmed.replace('\n', "\r\n").as_bytes())?;
+            w.write_all(trimmed.replace('\n', "\r\n").as_bytes())?;
         } else {
-            f.write_all(trimmed.as_bytes())?;
+            w.write_all(trimmed.as_bytes())?;
         }
     }
+    Ok(())
+}
+
+fn save_file_inplace(
+    state: &BufferState,
+    filename: &str,
+    crlf: bool,
+) -> Result<(), std::io::Error> {
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(filename)?;
+    write_content(&mut f, state, crlf)?;
     f.sync_all()?;
+    Ok(())
+}
+
+fn save_file_atomic(
+    state: &BufferState,
+    filename: &str,
+    crlf: bool,
+) -> Result<(), std::io::Error> {
+    let path = std::path::Path::new(filename);
+    let orig_meta = fs::metadata(path).ok();
+
+    let tmp = path.with_extension("tmp");
+    let mut f = fs::File::create(&tmp)?;
+    write_content(&mut f, state, crlf)?;
+    f.sync_all()?;
+    drop(f);
+
+    if let Some(meta) = orig_meta {
+        // Permissions (mode bits) — portable.
+        let _ = fs::set_permissions(&tmp, meta.permissions());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let _ = set_owner(&tmp, meta.uid(), meta.gid());
+        }
+        // Extended attributes — also covers POSIX ACLs (system.posix_acl_*)
+        // and SELinux labels (security.selinux) on Linux.
+        #[cfg(target_os = "linux")]
+        {
+            let _ = copy_xattrs(path, &tmp);
+        }
+    }
+
     fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_owner(path: &std::path::Path, uid: u32, gid: u32) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    // SAFETY: c_path is a valid NUL-terminated C string pointing to an
+    // existing filesystem path; uid and gid are plain integers. chown
+    // does not retain the pointer after returning.
+    let rc = unsafe { libc::chown(c_path.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn copy_xattrs(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let src_c = CString::new(src.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let dst_c = CString::new(dst.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+
+    // Sizing call: passing (NULL, 0) returns the required buffer size.
+    // SAFETY: src_c is a valid C string; listxattr writes nothing when
+    // given a null/zero-length buffer.
+    let sz = unsafe { libc::listxattr(src_c.as_ptr(), std::ptr::null_mut(), 0) };
+    if sz < 0 {
+        let err = std::io::Error::last_os_error();
+        // ENOTSUP: filesystem has no xattr support — nothing to copy.
+        if err.raw_os_error() == Some(libc::ENOTSUP) {
+            return Ok(());
+        }
+        return Err(err);
+    }
+    if sz == 0 {
+        return Ok(());
+    }
+
+    let mut names = vec![0u8; sz as usize];
+    // SAFETY: names has capacity sz; listxattr writes at most `sz` bytes.
+    let actual = unsafe {
+        libc::listxattr(
+            src_c.as_ptr(),
+            names.as_mut_ptr() as *mut libc::c_char,
+            names.len(),
+        )
+    };
+    if actual < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    names.truncate(actual as usize);
+
+    for raw_name in names.split(|&b| b == 0).filter(|s| !s.is_empty()) {
+        let Ok(name_c) = CString::new(raw_name) else {
+            continue;
+        };
+        // SAFETY: src_c and name_c are valid C strings; NULL buffer
+        // requests the value size.
+        let vsz = unsafe {
+            libc::getxattr(src_c.as_ptr(), name_c.as_ptr(), std::ptr::null_mut(), 0)
+        };
+        if vsz < 0 {
+            continue;
+        }
+        let mut value = vec![0u8; vsz as usize];
+        // SAFETY: buffer has capacity vsz.
+        let got = unsafe {
+            libc::getxattr(
+                src_c.as_ptr(),
+                name_c.as_ptr(),
+                value.as_mut_ptr() as *mut libc::c_void,
+                value.len(),
+            )
+        };
+        if got < 0 {
+            continue;
+        }
+        value.truncate(got as usize);
+        // SAFETY: dst_c and name_c are valid C strings; value pointer is
+        // valid for `value.len()` bytes.
+        unsafe {
+            libc::setxattr(
+                dst_c.as_ptr(),
+                name_c.as_ptr(),
+                value.as_ptr() as *const libc::c_void,
+                value.len(),
+                0,
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -1365,10 +1533,67 @@ mod tests {
         load_file(&mut state, tmp.to_str().unwrap()).unwrap();
         assert_eq!(state.lines, vec!["hello\n", "world\n"]);
         let out = std::env::temp_dir().join("liteanvil_test_buffer_rt_out.txt");
-        save_file(&state, out.to_str().unwrap(), false).unwrap();
+        save_file(&state, out.to_str().unwrap(), false, false).unwrap();
         assert_eq!(fs::read_to_string(&out).unwrap(), "hello\nworld\n");
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_file(&out);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inplace_save_preserves_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let path =
+            std::env::temp_dir().join("liteanvil_test_inplace_exec.sh");
+        fs::write(&path, "#!/bin/sh\necho old\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut state = default_buffer_state();
+        load_file(&mut state, path.to_str().unwrap()).unwrap();
+        state.lines = vec!["#!/bin/sh\n".into(), "echo new\n".into()];
+        save_file(&state, path.to_str().unwrap(), false, false).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_save_preserves_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let path =
+            std::env::temp_dir().join("liteanvil_test_atomic_exec.sh");
+        fs::write(&path, "#!/bin/sh\necho old\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut state = default_buffer_state();
+        load_file(&mut state, path.to_str().unwrap()).unwrap();
+        state.lines = vec!["#!/bin/sh\n".into(), "echo new\n".into()];
+        save_file(&state, path.to_str().unwrap(), false, true).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inplace_save_preserves_inode() {
+        use std::os::unix::fs::MetadataExt;
+        let path =
+            std::env::temp_dir().join("liteanvil_test_inplace_inode.txt");
+        fs::write(&path, "hello\n").unwrap();
+        let ino_before = fs::metadata(&path).unwrap().ino();
+
+        let mut state = default_buffer_state();
+        load_file(&mut state, path.to_str().unwrap()).unwrap();
+        state.lines = vec!["world\n".into()];
+        save_file(&state, path.to_str().unwrap(), false, false).unwrap();
+
+        let ino_after = fs::metadata(&path).unwrap().ino();
+        assert_eq!(ino_before, ino_after, "in-place save must not replace inode");
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

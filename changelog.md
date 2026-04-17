@@ -1,5 +1,19 @@
 # Change Log
 
+## [2.8.2] - 2026-04-17 -- Line wrap default & fixes, in-place save, Open Recent fix, Nano icon, Windows packaging.
+
+* Line wrapping is now on by default and the preference is persisted across sessions (`Alt+Z` toggles).
+* Wrap-aware cursor and mouse: pressing `End` on a wrapped line puts the caret on the last visual row, and clicking past the visual end of a wrapped segment maps to the correct logical column.
+* Wrap-aware rendering: line numbers, fold, bookmark, and git-gutter markers only appear on the first visual row of each logical line; indent guides and the trailing `\n` whitespace marker likewise stop repeating on continuation rows. Wrapped rows keep their syntax colors instead of collapsing to default text.
+* Saves are now in-place by default, so the executable bit (and other file metadata) survives every save. Set `files.atomic_save = true` in `config.toml` to opt into the old crash-safe write-tmp-then-rename path; the atomic path now explicitly copies permissions, ownership, and xattrs (which covers POSIX ACLs and SELinux labels on Linux).
+* Saving into a directory that does not exist prompts `Create it and save? [Y]es [N]o` instead of silently skipping or surprising you; No leaves the file unwritten.
+* Nano-Anvil defaults Save / Save As to the user's home directory (`$HOME` / `%USERPROFILE%`) when no project folder is open, instead of the current working directory.
+* Nano-Anvil now registers as `nano-anvil` (via `SDL_SetAppMetadata`) and ships `nano-anvil.png` + the updated `.desktop` file, so the Linux taskbar/dock picks the Nano-Anvil icon instead of falling through to Lite-Anvil.
+* Open Recent now filters the combined recent-files/recent-projects list as you type and persists every entry immediately (previously the file was only written on clean exit). Files opened from the sidebar, project search, LSP jumps, git-status view, and the command palette are all tracked.
+* Removed `core:open-file-dialog`, `core:open-folder-dialog`, and `core:save-as-dialog` commands together with their keybindings. `Ctrl+O`, `Ctrl+Shift+O`, `doc:save`, and `doc:save-as` use the in-app picker uniformly.
+* Windows packaging now bundles `SDL3.dll` and the vcpkg runtime DLLs (freetype, pcre2-8, zlib, ...) alongside the exe. First launch no longer fails with a missing-DLL dialog or `0xc000007b`.
+* Default font paths are built with `PathBuf::join` so Windows uses `\` throughout instead of mixing `\` and `/`, fixing the occasional `Lilex-Regular.ttf` load failure reported on some Windows installs.
+
 ## [2.8.1] - 2026-04-13 -- Markdown preview restored.
 
 * Markdown preview pane. Toggle with `Ctrl+Shift+M` (or `Toggle Markdown Preview` in the command palette) on any `.md` / `.markdown` file. Opens a live 50/50 split alongside the editor; re-parses and re-lays-out as you type.

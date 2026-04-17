@@ -100,16 +100,52 @@ fn sdl_error() -> String {
     }
 }
 
+// App metadata passed to SDL_SetAppMetadata in `init`. Defaults match
+// Lite-Anvil; Nano-Anvil overrides these via `set_app_metadata` before
+// calling `init` so the Linux taskbar matches `nano-anvil.desktop`
+// (StartupWMClass=nano-anvil, Icon=nano-anvil) instead of falling back
+// to the Lite-Anvil entry.
+thread_local! {
+    static APP_NAME: std::cell::RefCell<std::ffi::CString> =
+        std::cell::RefCell::new(
+            std::ffi::CString::new("Lite-Anvil").expect("static app name"),
+        );
+    static APP_IDENTIFIER: std::cell::RefCell<std::ffi::CString> =
+        std::cell::RefCell::new(
+            std::ffi::CString::new("com.lite-anvil.LiteAnvil").expect("static app id"),
+        );
+}
+
+/// Override the `(name, identifier)` pair passed to SDL's app metadata.
+/// Must be called before `init`. The identifier ends up as the Wayland
+/// `app_id` and influences X11 `WM_CLASS`, so it should match the
+/// `StartupWMClass` field of the app's `.desktop` file for the right
+/// taskbar icon to be picked.
+pub fn set_app_metadata(name: &str, identifier: &str) {
+    if let Ok(n) = std::ffi::CString::new(name) {
+        APP_NAME.with(|cell| *cell.borrow_mut() = n);
+    }
+    if let Ok(id) = std::ffi::CString::new(identifier) {
+        APP_IDENTIFIER.with(|cell| *cell.borrow_mut() = id);
+    }
+}
+
 /// Initialise SDL3 video subsystem. Must be called once on the main thread before
 /// the editor starts.
 pub fn init() -> Result<()> {
-    unsafe {
-        SDL_SetAppMetadata(
-            c"Lite-Anvil".as_ptr(),
-            concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast(),
-            c"com.lite-anvil.LiteAnvil".as_ptr(),
-        );
-    }
+    APP_NAME.with(|name| {
+        APP_IDENTIFIER.with(|ident| {
+            // SDL copies these strings internally, so the borrow only needs
+            // to outlive the call itself.
+            unsafe {
+                SDL_SetAppMetadata(
+                    name.borrow().as_ptr(),
+                    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast(),
+                    ident.borrow().as_ptr(),
+                );
+            }
+        });
+    });
     let ok = unsafe { SDL_Init(SDL_INIT_VIDEO) };
     if !ok {
         return Err(anyhow::anyhow!("SDL3 init failed: {}", sdl_error()));
@@ -159,11 +195,27 @@ pub fn prepare_restart() {
     });
 }
 
+// Bytes of the application icon used by `set_window_icon`. Defaults to
+// the Lite-Anvil icon; Nano-Anvil overrides it at startup via
+// `set_app_icon_bytes` before `new_window` is called.
+thread_local! {
+    static APP_ICON_BYTES: std::cell::RefCell<&'static [u8]> = const {
+        std::cell::RefCell::new(include_bytes!("../../resources/icons/lite-anvil.png"))
+    };
+}
+
+/// Replace the PNG used as the SDL window icon for the lifetime of this
+/// process. Pass the bytes of a decoded PNG (typically via
+/// `include_bytes!`); must be called before the first `new_window`.
+pub fn set_app_icon_bytes(bytes: &'static [u8]) {
+    APP_ICON_BYTES.with(|cell| *cell.borrow_mut() = bytes);
+}
+
 /// Decode the embedded PNG and set it as the SDL window icon.
 fn set_window_icon(win: *mut SDL_Window) {
-    const ICON_BYTES: &[u8] = include_bytes!("../../resources/icons/lite-anvil.png");
+    let icon_bytes: &[u8] = APP_ICON_BYTES.with(|cell| *cell.borrow());
 
-    let decoder = png::Decoder::new(std::io::Cursor::new(ICON_BYTES));
+    let decoder = png::Decoder::new(std::io::Cursor::new(icon_bytes));
     let mut reader = match decoder.read_info() {
         Ok(r) => r,
         Err(e) => {

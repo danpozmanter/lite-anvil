@@ -13,6 +13,13 @@ fn main() {
 fn run(args: &[String]) -> anyhow::Result<()> {
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
 
+    anvil_core::window::set_app_icon_bytes(include_bytes!(
+        "../../resources/icons/nano-anvil.png"
+    ));
+    // App id must match nano-anvil.desktop's StartupWMClass so the Linux
+    // taskbar picks the Nano-Anvil entry (with Icon=nano-anvil) instead of
+    // falling back to Lite-Anvil.
+    anvil_core::window::set_app_metadata("Nano-Anvil", "nano-anvil");
     anvil_core::window::init()?;
 
     let runtime = anvil_core::runtime::RuntimeContext::discover()?;

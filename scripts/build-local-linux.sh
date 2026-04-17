@@ -37,6 +37,7 @@ fi
 cp resources/linux/com.lite_anvil.LiteAnvil.desktop "$STAGE_DIR/"
 cp resources/linux/com.nano_anvil.NanoAnvil.desktop "$STAGE_DIR/"
 cp resources/icons/lite-anvil.png "$STAGE_DIR/"
+cp resources/icons/nano-anvil.png "$STAGE_DIR/"
 
 tar -C "$DIST_DIR" -czf "$ARCHIVE" "$ARCHIVE_BASE"
 

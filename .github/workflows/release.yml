@@ -73,6 +73,7 @@ jobs:
           cp resources/linux/com.lite_anvil.LiteAnvil.desktop "$ARCHIVE_BASE/"
           cp resources/linux/com.nano_anvil.NanoAnvil.desktop "$ARCHIVE_BASE/"
           cp resources/icons/lite-anvil.png "$ARCHIVE_BASE/"
+          cp resources/icons/nano-anvil.png "$ARCHIVE_BASE/"
           tar -czf "${ARCHIVE_BASE}.tar.gz" "$ARCHIVE_BASE"
 
       - name: Upload artifact
@@ -153,6 +154,24 @@ jobs:
           Copy-Item -Recurse data "$archiveBase\"
           Copy-Item -Recurse data-nano "$archiveBase\"
           Copy-Item resources\windows\*.ps1 "$archiveBase\"
+
+          # Bundle SDL3.dll next to the exe so it loads from the app folder on
+          # first run (Windows looks in the exe directory before PATH).
+          $sdlDll = Get-ChildItem -Recurse -File -Path C:\sdl3-nogl\bin\SDL3.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sdlDll) { $sdlDll = Get-ChildItem -Recurse -File -Path SDL\build\Release\SDL3.dll -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          if (-not $sdlDll) { throw "SDL3.dll not found" }
+          Copy-Item $sdlDll.FullName "$archiveBase\"
+
+          # Bundle vcpkg dynamic dependencies (freetype, pcre2-8, zlib, brotli,
+          # bzip2, ...) pulled in by dynamic linking. Without these the exe
+          # fails with 0xc000007b on systems that don't have them installed.
+          $vcpkgBin = "C:\vcpkg\installed\x64-windows\bin"
+          if (Test-Path $vcpkgBin) {
+              Get-ChildItem -Path $vcpkgBin -Filter *.dll | ForEach-Object {
+                  Copy-Item $_.FullName "$archiveBase\"
+              }
+          }
+
           Compress-Archive -Path $archiveBase -DestinationPath "$archiveBase.zip"
 
       - name: Upload artifact

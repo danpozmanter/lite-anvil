@@ -101,6 +101,9 @@ install_linux() {
         $sudo_cmd cp "$stage_dir/com.nano_anvil.NanoAnvil.desktop" "$app_dir/nano-anvil.desktop"
     fi
     $sudo_cmd cp "$stage_dir/lite-anvil.png" "$icon_dir/lite-anvil.png"
+    if [ -f "$stage_dir/nano-anvil.png" ]; then
+        $sudo_cmd cp "$stage_dir/nano-anvil.png" "$icon_dir/nano-anvil.png"
+    fi
 
     if command -v update-desktop-database >/dev/null 2>&1; then
         ${sudo_cmd:-} update-desktop-database "$app_dir" 2>/dev/null || true
