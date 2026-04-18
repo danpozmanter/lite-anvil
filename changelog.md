@@ -1,5 +1,12 @@
 # Change Log
 
+## [2.9.3] - 2026-04-17 -- macOS blank-window fix; Windows VCRUNTIME140.dll fix; macOS CLI symlink, Find fix.
+
+* Fixed blank window / nothing renders on macOS (Intel + ARM).  (Regression fix).
+* Fixed `VCRUNTIME140.dll was not found` on clean Windows installs. (Regression fix).
+* macOS installer (`install-mac.sh` shipped in the release zip) now creates `lite-anvil` / `nano-anvil` CLI symlinks in `/usr/local/bin` and `/opt/homebrew/bin` so `lite-anvil` resolves from zsh under both Intel and Apple Silicon Homebrew layouts.
+* Find: F3 / Enter now reliably centers on off-screen matches — previous scroll target used a hardcoded line height and ignored the find-bar overlay.
+
 ## [2.9.2] - 2026-04-17 -- Fix macOS / Windows launch; context-menu clipboard fix; install.sh fix. Find/cursor fixes.
 
 * Fixed `Fatal SDL3 init failed, x11,wayland not available` on launch for macOS (Intel + ARM) and Windows.

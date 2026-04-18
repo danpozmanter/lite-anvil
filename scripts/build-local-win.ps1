@@ -31,6 +31,7 @@ $DistDir = Join-Path $RootDir 'dist'
 $StageDir = Join-Path $DistDir $ArchiveBase
 $Archive = Join-Path $DistDir "$ArchiveBase.zip"
 
+$env:CMAKE_MSVC_RUNTIME_LIBRARY = 'MultiThreaded'
 cargo build --release --workspace
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

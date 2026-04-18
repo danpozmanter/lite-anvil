@@ -2669,7 +2669,7 @@ pub fn run(
                                         find_anchor.1,
                                     );
                                     if let Some(i) = find_current {
-                                        select_find_match(dv, find_matches[i]);
+                                        select_find_match(dv, find_matches[i], replace_active);
                                     }
                                 }
                                 redraw = true;
@@ -2703,7 +2703,7 @@ pub fn run(
                                                 .unwrap_or(0)
                                         };
                                         find_current = Some(idx);
-                                        select_find_match(dv, find_matches[idx]);
+                                        select_find_match(dv, find_matches[idx], replace_active);
                                     }
                                 }
                                 redraw = true;
@@ -2731,7 +2731,7 @@ pub fn run(
                                         let idx = find_match_at_or_after(&find_matches, cl, cc)
                                             .unwrap_or(0);
                                         find_current = Some(idx);
-                                        select_find_match(dv, find_matches[idx]);
+                                        select_find_match(dv, find_matches[idx], replace_active);
                                     } else {
                                         find_current = None;
                                     }
@@ -2754,7 +2754,7 @@ pub fn run(
                                                 .unwrap_or(0)
                                         };
                                         find_current = Some(idx);
-                                        select_find_match(dv, find_matches[idx]);
+                                        select_find_match(dv, find_matches[idx], replace_active);
                                     }
                                 }
                                 redraw = true;
@@ -2786,7 +2786,7 @@ pub fn run(
                                             find_anchor.1,
                                         );
                                         if let Some(i) = find_current {
-                                            select_find_match(dv, find_matches[i]);
+                                            select_find_match(dv, find_matches[i], replace_active);
                                         }
                                     }
                                 }
@@ -3033,7 +3033,7 @@ pub fn run(
                                     find_anchor.1,
                                 );
                                 if let Some(i) = find_current {
-                                    select_find_match(dv, find_matches[i]);
+                                    select_find_match(dv, find_matches[i], replace_active);
                                 }
                             }
                         }
@@ -7144,19 +7144,30 @@ fn find_match_before(matches: &[(usize, usize, usize)], line: usize, col: usize)
 }
 
 /// Move the caret to the given match and scroll the view so it is visible.
-fn select_find_match(dv: &mut DocView, m: (usize, usize, usize)) {
+fn select_find_match(dv: &mut DocView, m: (usize, usize, usize), replace_active: bool) {
     let (line, col, end_col) = m;
     let Some(buf_id) = dv.buffer_id else { return };
     let _ = buffer::with_buffer_mut(buf_id, |b| {
         b.selections = vec![line, col, line, end_col];
         Ok(())
     });
-    let line_h = 20.0;
+    // Use the real line height from the current style, not a hardcoded
+    // 20.0 — that was off by ~50% at typical fonts, so the computed
+    // scroll target landed nowhere near the match and F3 / Enter
+    // appeared to do nothing when the match was off-screen.
+    let style = crate::editor::style_ctx::current_style();
+    let line_h = style.code_font_height * 1.2;
+    // The find bar overlays the top of the doc view (2 rows normally,
+    // 3 with Replace open). Subtract its height so "centered" means
+    // centered in the *visible* area rather than under the bar.
+    let bar_row_h = style.font_height + style.padding_y * 2.0;
+    let bar_h = bar_row_h * if replace_active { 3.0 } else { 2.0 };
     let cursor_y = (line as f64 - 1.0) * line_h;
+    // Always center, unconditionally. The previous "only if off-screen"
+    // check used the wrong line_h so it misjudged visibility; forcing a
+    // center on every F3 / Enter is both simpler and what users expect.
     let view_h = dv.rect().h;
-    if cursor_y < dv.target_scroll_y || cursor_y + line_h > dv.target_scroll_y + view_h {
-        dv.target_scroll_y = (cursor_y - view_h / 2.0).max(0.0);
-    }
+    dv.target_scroll_y = (cursor_y - (view_h + bar_h) / 2.0).max(0.0);
 }
 
 /// Current caret as (line, col) using the "cursor end" of the selection.

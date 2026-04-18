@@ -120,6 +120,13 @@ jobs:
             ${{ runner.os }}-${{ github.job }}-
 
       - name: Build
+        env:
+          # Force the CMake-based SDL3 build (and any other cmake-rs
+          # consumer in the graph) to link against the static MSVC
+          # runtime so the final exe has no VCRUNTIME140.dll /
+          # MSVCP140.dll import. Rust is already +crt-static via
+          # `.cargo/config.toml`; this aligns the C half of the build.
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
         run: cargo build --release --workspace
 
       - name: Package
@@ -132,11 +139,34 @@ jobs:
           Copy-Item -Recurse data-nano "$archiveBase\"
           Copy-Item resources\windows\*.ps1 "$archiveBase\"
 
-          # SDL3, freetype, and pcre2 are all statically linked via their
-          # -sys crates; the Rust binary itself uses +crt-static. The C
-          # deps also pick up static CRT because the `cc` / `cmake`
-          # crates honor cargo's crt-static target feature. Result: the
-          # exe has zero extra DLL deps, so nothing else to bundle.
+          # SDL3, freetype, and pcre2 are all statically linked via
+          # their -sys crates; the Rust binary itself uses +crt-static
+          # and we pass CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded above
+          # so cmake-built deps link /MT too. Even so, we bundle the
+          # Microsoft VC++ redistributable alongside the exe as a
+          # safety net: any transitive dep that slips through with /MD
+          # would otherwise abort with "VCRUNTIME140.dll was not
+          # found" on clean Windows installs. Microsoft's license
+          # explicitly permits app-local CRT deployment.
+          $vcRedistPatterns = @(
+            'C:\Program Files\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT',
+            'C:\Program Files (x86)\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT'
+          )
+          $vcRedistDir = $null
+          foreach ($pattern in $vcRedistPatterns) {
+            $match = Get-ChildItem -Path $pattern -Directory -ErrorAction SilentlyContinue |
+                     Sort-Object -Property FullName -Descending |
+                     Select-Object -First 1
+            if ($match) { $vcRedistDir = $match.FullName; break }
+          }
+          if ($vcRedistDir) {
+            Write-Host "Bundling VC runtime from $vcRedistDir"
+            Get-ChildItem -Path "$vcRedistDir\*.dll" | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination "$archiveBase\"
+            }
+          } else {
+            Write-Warning 'VC++ redistributable directory not found; bundled DLLs may require VCRUNTIME140.dll at runtime.'
+          }
 
           Compress-Archive -Path $archiveBase -DestinationPath "$archiveBase.zip"
 

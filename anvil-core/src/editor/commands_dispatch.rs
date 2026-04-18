@@ -449,7 +449,7 @@ preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
             let idx = find_match_at_or_after(&find_matches, cl, cc)
                 .unwrap_or(0);
             find_current = Some(idx);
-            select_find_match(dv, find_matches[idx]);
+            select_find_match(dv, find_matches[idx], replace_active);
         }
     }
 }
@@ -467,7 +467,7 @@ preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
             let idx = find_match_before(&find_matches, al, ac)
                 .unwrap_or(find_matches.len() - 1);
             find_current = Some(idx);
-            select_find_match(dv, find_matches[idx]);
+            select_find_match(dv, find_matches[idx], replace_active);
         }
     }
 }
