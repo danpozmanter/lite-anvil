@@ -1,5 +1,13 @@
 # Change Log
 
+## [2.9.7] - 2026-04-18 -- Nano-Anvil font-loading fix; sidebar rescan on save-as.
+
+* Fixed `FT_New_Face failed (data/fonts/Lilex-Regular.ttf): error 1` on nano-anvil.
+  * Added `data-nano/fonts/` default code fornt `Lilex-Medium.ttf`.
+  * Fallback path in `main_loop::run` for fonts fix.
+* Added `Lilex-Medium.ttf` to `data-nano/fonts/`, and changed `FontsConfig::default()` to leave paths as `None` so the datadir-aware resolver always produces absolute `/usr/share/<app>/data/fonts/...` paths.
+* Sidebar: Save As now rescans the project tree after a successful write.
+
 ## [2.9.6] - 2026-04-18 -- Windows installer Start Menu fix; single combined Linux .deb / .rpm; Mac reverted to zip + install.sh.
 
 * Windows installer: Start Menu group is now "Lite-Anvil" instead of "Lite-Anvil contributors".

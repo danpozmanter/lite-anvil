@@ -586,7 +586,32 @@ impl FontsConfig {
 
 impl Default for FontsConfig {
     fn default() -> Self {
-        Self::with_datadir("data")
+        // Paths left as None so `resolve_font_paths(datadir)` fills them
+        // with an absolute `{datadir}/fonts/...` later. Pre-filling paths
+        // here (the old behaviour baked "data/fonts/..." relative strings
+        // in) defeats `resolve_font_paths`, which only overrides None.
+        Self {
+            ui: FontSpec::default(),
+            code: FontSpec::default(),
+            big: FontSpec {
+                size: 46,
+                ..Default::default()
+            },
+            icon: FontSpec {
+                size: 16,
+                options: FontOptions {
+                    antialiasing: Some("grayscale".into()),
+                    hinting: Some("full".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            icon_big: FontSpec {
+                size: 23,
+                ..Default::default()
+            },
+            syntax: HashMap::new(),
+        }
     }
 }
 

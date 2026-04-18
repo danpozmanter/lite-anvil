@@ -1933,6 +1933,27 @@ pub fn run(
                                                 }
                                             }
                                         }
+                                        // Save-as can create a new file or land an existing
+                                        // buffer at a fresh path — rescan so the sidebar
+                                        // picks it up. Gated on project_root prefix so
+                                        // saves outside the project don't trigger a scan.
+                                        if subsystems.has_sidebar()
+                                            && !project_root.is_empty()
+                                            && std::path::Path::new(&save_path)
+                                                .starts_with(std::path::Path::new(&project_root))
+                                        {
+                                            sidebar_entries = scan_directory(
+                                                &project_root,
+                                                0,
+                                                sidebar_show_hidden,
+                                            );
+                                            restore_expanded_folders(
+                                                &mut sidebar_entries,
+                                                userdir_path,
+                                                sidebar_show_hidden,
+                                                &project_session_key(&project_root),
+                                            );
+                                        }
                                         cmdview_active = false;
                                     }
                                 }
