@@ -906,8 +906,11 @@ pub fn run(
             cmds.retain(|c| c.0 != "core:check-for-updates");
         }
         if !subsystems.has_picker() {
+            // Nano-Anvil (single_file_mode) still supports core:open-recent
+            // as a files-only list, so only strip open-project-folder.
+            let keep_recent = single_file_mode;
             cmds.retain(|c| {
-                c.0 != "core:open-project-folder" && c.0 != "core:open-recent"
+                c.0 != "core:open-project-folder" && (keep_recent || c.0 != "core:open-recent")
             });
         }
         if !subsystems.has_bookmarks() {
@@ -1584,7 +1587,7 @@ pub fn run(
                     }
 
                     // Command view (file/folder open) intercepts keys.
-                    if cmdview_active && (subsystems.has_picker() || cmdview_mode == CmdViewMode::SaveAs || cmdview_mode == CmdViewMode::OpenFile) {
+                    if cmdview_active && (subsystems.has_picker() || cmdview_mode == CmdViewMode::SaveAs || cmdview_mode == CmdViewMode::OpenFile || cmdview_mode == CmdViewMode::OpenRecent) {
                         /// Expand ~ and resolve relative paths to absolute.
                         /// On Windows, treat both `/` and `\` as absolute-path
                         /// indicators (`C:\...`) and use `USERPROFILE` for `~`.
@@ -2930,7 +2933,7 @@ pub fn run(
                         redraw = true;
                         continue;
                     }
-                    if cmdview_active && (subsystems.has_picker() || cmdview_mode == CmdViewMode::SaveAs || cmdview_mode == CmdViewMode::OpenFile) {
+                    if cmdview_active && (subsystems.has_picker() || cmdview_mode == CmdViewMode::SaveAs || cmdview_mode == CmdViewMode::OpenFile || cmdview_mode == CmdViewMode::OpenRecent) {
                         let prev_text = cmdview_text.clone();
                         // Insert at the caret rather than appending so left/right/home/end
                         // editing is preserved while typing.
@@ -7016,11 +7019,24 @@ fn fuzzy_filter_commands(query: &str, all_commands: &[(String, String)]) -> Vec<
     if query.is_empty() {
         return all_commands.to_vec();
     }
-    let display_strings: Vec<String> = all_commands.iter().map(|(_, d)| d.clone()).collect();
-    let ranked = picker::rank_strings(display_strings, query, false, &[], None);
+    // Rank on the pretty name only (the part before the "  (ctrl+...)"
+    // keybinding tail). `fuzzy_match`'s score includes a -length
+    // penalty, so if we rank on the full display string an entry with
+    // a keybinding ("Open File  (ctrl+o)") gets pushed below one
+    // without a binding ("Open User Settings") on the query "open" —
+    // which is exactly backwards for users who are typing the name of
+    // a command they already know has a shortcut.
+    let strip = |d: &str| d.split("  (").next().unwrap_or(d).to_string();
+    let names: Vec<String> = all_commands.iter().map(|(_, d)| strip(d)).collect();
+    let ranked = picker::rank_strings(names.clone(), query, false, &[], None);
     ranked
         .into_iter()
-        .filter_map(|display| all_commands.iter().find(|(_, d)| *d == display).cloned())
+        .filter_map(|name| {
+            names
+                .iter()
+                .position(|n| n == &name)
+                .and_then(|i| all_commands.get(i).cloned())
+        })
         .collect()
 }
 

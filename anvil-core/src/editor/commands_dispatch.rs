@@ -345,7 +345,7 @@ preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
     }
 }
 "core:open-recent" => {
-    if subsystems.has_picker() {
+    if subsystems.has_picker() || single_file_mode {
         cmdview_active = true;
         cmdview_mode = CmdViewMode::OpenRecent;
         cmdview_text.clear();
@@ -357,9 +357,14 @@ preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
                 combined.push(p.clone());
             }
         }
-        for p in &recent_projects {
-            if !combined.contains(p) {
-                combined.push(p.clone());
+        // Nano-Anvil has no concept of a project folder, so skip the
+        // folder list entirely — it would only ever show blank or
+        // confuse the user with a directory path they can't open.
+        if !single_file_mode {
+            for p in &recent_projects {
+                if !combined.contains(p) {
+                    combined.push(p.clone());
+                }
             }
         }
         cmdview_suggestions = combined;

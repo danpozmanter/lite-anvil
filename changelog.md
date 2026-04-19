@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.9.9] - 2026-04-19 -- Nano-Anvil Open Recent; command palette "Open File" ranking.
+
+* Nano-Anvil: `core:open-recent` is now available (ctrl+shift+r / command palette), listing only recent **files**. The project-folder list is skipped in single-file mode since Nano-Anvil has no concept of a project folder.
+* Command palette: typing "open" now surfaces **Open File** before **Open User Settings**. `fuzzy_match` includes a `-length` term in its score; ranking on the full display string (`"Open File  (ctrl+o)"`, 19 chars) pushed it below the shorter suffix-free `"Open User Settings"` (18 chars). Palette ranking now strips the `  (ctrl+...)` keybinding tail before scoring, so "Open File" wins on the query "open" as users expect.
+
 ## [2.9.8] - 2026-04-18 -- Linux: SDL hints now respect env-var overrides (Wayland-only fix).
 
 * Linux: `window::init` defaults `SDL_VIDEO_DRIVER=x11,wayland`, `SDL_FRAMEBUFFER_ACCELERATION=0`, and `SDL_RENDER_DRIVER=software`, but now applies each hint *only* when the matching SDL environment variable is unset. Wayland-only hosts whose SDL3 was built without the X11 backend (previously stuck on `SDL3 init failed: x11 not available`) can override with `SDL_VIDEO_DRIVER=wayland`; users who prefer the OpenGL-backed renderer can set `SDL_FRAMEBUFFER_ACCELERATION=1`. CI-built binaries (SDL3 compiled with both backends) are unchanged. Documented the escape hatches in `BUILDING.md`.
