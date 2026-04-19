@@ -6,7 +6,9 @@
 
 A fast code editor built in Rust with SDL3.
 
-Lite Anvil also ships with Nano Anvil, a minimal single-file editor for lightweight editing. Nano Anvil uses software rendering (no GPU driver overhead), and strips away the sidebar, terminal, LSP, git integration, and other heavy features.
+Ships with Nano Anvil, a minimal single-file editor for lightweight editing.
+
+Ships with Note Anvil, a minimal markdown note taking and todo list app.
 
 Lite Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
 
@@ -44,13 +46,18 @@ I do not intend to maintain or support this in any way, but wanted to share the 
 
 A stripped-down single-file editor for minimal resource usage.
 
-- Software-rendered (no OpenGL/Vulkan/GPU drivers loaded)
-- ~28MB RAM on Linux (vs ~100MB for Lite Anvil on NVIDIA/X11)
 - Single file at a time, always starts with a blank document
-- Syntax highlighting for 20 languages
 - Find and replace within the current file
 - No sidebar, terminal, LSP, git, tabs, bookmarks, or code folding
-- 2 built-in themes (dark + light)
+
+## Note Anvil
+
+A stripped-down markdown note taker.
+
+- Auto-saving.
+- Live updating markdown.
+- Port of NoteSquirrel.
+- Alternative to Joplin for 100% local notes and todo lists.
 
 ## Shortcuts
 
