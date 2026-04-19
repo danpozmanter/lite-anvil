@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Nano-Anvil
+Name=Nano Anvil
 Comment=A minimal single-file editor built in Rust with SDL3
 Exec=nano-anvil %f
 Icon=nano-anvil

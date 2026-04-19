@@ -29,7 +29,7 @@ impl TitleView {
         Self {
             rect: Rect::default(),
             visible: true,
-            title: "Lite-Anvil".into(),
+            title: "Lite Anvil".into(),
             buttons: default_buttons(),
             hovered_index: -1,
             icon_items: default_icon_items(),

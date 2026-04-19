@@ -1,4 +1,4 @@
-site_name: Lite-Anvil
+site_name: Lite Anvil
 site_url: https://danpozmanter.github.io/lite-anvil/
 site_description: A code editor built in Rust with SDL3. Built-in LSP, terminal, Git integration, and 50+ syntax grammars.
 site_author: Dan Pozmanter

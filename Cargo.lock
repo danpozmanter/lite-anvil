@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-core"
-version = "2.9.10"
+version = "2.10.0"
 dependencies = [
  "anyhow",
  "bitflags 2.11.0",
@@ -407,7 +407,7 @@ checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
 
 [[package]]
 name = "lite-anvil"
-version = "2.9.10"
+version = "2.10.0"
 dependencies = [
  "anvil-core",
  "anyhow",
@@ -459,7 +459,16 @@ dependencies = [
 
 [[package]]
 name = "nano-anvil"
-version = "2.9.10"
+version = "2.10.0"
+dependencies = [
+ "anvil-core",
+ "anyhow",
+ "env_logger",
+]
+
+[[package]]
+name = "note-anvil"
+version = "2.10.0"
 dependencies = [
  "anvil-core",
  "anyhow",

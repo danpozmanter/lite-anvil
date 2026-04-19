@@ -23,5 +23,5 @@ error.txt
 # Local build output
 /dist/
 
-# Bundled no-GL SDL3 for Nano-Anvil (regenerate with scripts/build-sdl3-nogl.sh)
+# Bundled no-GL SDL3 for Nano Anvil (regenerate with scripts/build-sdl3-nogl.sh)
 /lib/sdl3-nogl/

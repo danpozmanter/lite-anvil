@@ -1,4 +1,4 @@
-# Removes Lite-Anvil file associations from Windows.
+# Removes Lite Anvil file associations from Windows.
 # Run as Administrator: powershell -ExecutionPolicy Bypass -File uninstall-file-associations.ps1
 
 $AppId = "LiteAnvil.Editor"
@@ -17,4 +17,4 @@ foreach ($ext in $extensions) {
     }
 }
 
-Write-Host "Lite-Anvil file associations removed."
+Write-Host "Lite Anvil file associations removed."

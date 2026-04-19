@@ -231,6 +231,8 @@ const DEFAULT_BINDINGS: &[(&str, &[&str])] = &[
     ),
     ("ctrl+l", &["doc:select-lines"]),
     ("ctrl+/", &["doc:toggle-line-comments"]),
+    ("ctrl+,", &["doc:insert-list-item"]),
+    ("ctrl+.", &["doc:insert-checkbox-item"]),
     ("ctrl+up", &["doc:move-lines-up"]),
     ("ctrl+down", &["doc:move-lines-down"]),
     ("ctrl+shift+d", &["doc:duplicate-lines"]),
@@ -357,6 +359,10 @@ pub fn prettify_name(name: &str) -> String {
     // "Git Pull" / "Git Commit" instead of bare verbs.
     if ns == "git" {
         return format!("Git {body}");
+    }
+    // Same for "Notes" so "Delete Current" reads "Notes Delete Current".
+    if ns == "notes" {
+        return format!("Notes {body}");
     }
     // The scale: commands operate on font size — bare "Increase" / "Decrease"
     // is too ambiguous in the palette.

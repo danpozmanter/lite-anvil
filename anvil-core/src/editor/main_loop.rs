@@ -125,6 +125,24 @@ pub(crate) fn normalize_path(p: &str) -> String {
     }
 }
 
+/// Wrapper around `scan_directory` that, in notes-mode, flattens to a
+/// `*.md`-only top-level list (no folders, no recursion).
+fn scan_for_sidebar(
+    notes_mode: bool,
+    dir: &str,
+    show_hidden: bool,
+) -> Vec<SidebarEntry> {
+    let entries = scan_directory(dir, 0, show_hidden);
+    if notes_mode {
+        entries
+            .into_iter()
+            .filter(|e| !e.is_dir && e.name.to_lowercase().ends_with(".md"))
+            .collect()
+    } else {
+        entries
+    }
+}
+
 /// Scan a directory non-recursively and return sorted sidebar entries at the given depth.
 fn scan_directory(dir: &str, depth: usize, show_hidden: bool) -> Vec<SidebarEntry> {
     let mut entries = Vec::new();
@@ -409,10 +427,12 @@ pub fn run(
 
     // Create window.
     if !crate::window::restore_window() {
-        let window_title = if subsystems.has_sidebar() {
-            "Lite-Anvil"
+        let window_title = if subsystems.has_notes_mode() {
+            "Note Anvil"
+        } else if subsystems.has_sidebar() {
+            "Lite Anvil"
         } else {
-            "Nano-Anvil"
+            "Nano Anvil"
         };
         if let Err(e) = crate::window::create_window(window_title) {
             log::error!("Window creation failed: {e}");
@@ -532,10 +552,12 @@ pub fn run(
     let mut empty_view = EmptyView::new();
     empty_view.version = format!(
         "{} v{}",
-        if subsystems.has_sidebar() {
-            "Lite-Anvil"
+        if subsystems.has_notes_mode() {
+            "Note Anvil"
+        } else if subsystems.has_sidebar() {
+            "Lite Anvil"
         } else {
-            "Nano-Anvil"
+            "Nano Anvil"
         },
         env!("CARGO_PKG_VERSION"),
     );
@@ -549,7 +571,13 @@ pub fn run(
 
     let mut status_view = StatusView::new();
     status_view.left_items.push(StatusItem {
-        text: if subsystems.has_sidebar() { "Lite-Anvil" } else { "Nano-Anvil" }.to_string(),
+        text: if subsystems.has_notes_mode() {
+            "Note Anvil"
+        } else if subsystems.has_sidebar() {
+            "Lite Anvil"
+        } else {
+            "Nano Anvil"
+        }.to_string(),
         color: None,
         command: None,
     });
@@ -707,9 +735,14 @@ pub fn run(
     let mut sidebar_scroll: f64 = 0.0;
 
     // Determine project root for sidebar.
-    // CLI folder overrides everything. Otherwise prefer restored project.
-    // If a file was passed via CLI (no folder), don't open a project.
-    let mut project_root: String = if let Some(root) = cli_project_root {
+    // Notes-mode forces the configured notes folder so the sidebar
+    // always reflects the user's notes dir even after the user changes
+    // NOTE_ANVIL_DIR. Otherwise CLI folder overrides everything, then
+    // restored project, then nothing. If a file was passed via CLI (no
+    // folder), don't open a project.
+    let mut project_root: String = if let Some(folder) = subsystems.notes_folder() {
+        folder.to_string()
+    } else if let Some(root) = cli_project_root {
         root
     } else if has_cli_files {
         // Files passed on CLI -- no project folder.
@@ -719,10 +752,11 @@ pub fn run(
     } else {
         String::new()
     };
+
     let mut sidebar_show_hidden = false;
     let file_icons = load_file_icons(datadir);
     sidebar_entries = if subsystems.has_sidebar() && !project_root.is_empty() {
-        scan_directory(&project_root, 0, sidebar_show_hidden)
+        scan_for_sidebar(subsystems.has_notes_mode(), &project_root, sidebar_show_hidden)
     } else {
         Vec::new()
     };
@@ -921,6 +955,7 @@ pub fn run(
             "root:close-or-quit",
             "doc:save-as",
             "core:toggle-markdown-preview",
+            "notes:delete-current",
         ];
         for cmd in palette_extras {
             if seen.insert((*cmd).to_string()) {
@@ -968,6 +1003,29 @@ pub fn run(
                     && c.0 != "root:close-all"
                     && c.0 != "root:close-all-others"
             });
+        }
+        // Notes-mode: drop project / folder / multi-tab / preview-toggle
+        // commands. Keep only what NoteSquirrel users would expect.
+        if subsystems.has_notes_mode() {
+            cmds.retain(|c| {
+                let n = c.0.as_str();
+                !n.contains("tab")
+                    && !n.contains("project")
+                    && !n.contains("folder")
+                    && n != "core:toggle-markdown-preview"
+                    && n != "core:toggle-hidden-files"
+                    && n != "doc:save"
+                    && n != "doc:save-as"
+                    && n != "doc:reload"
+                    && n != "core:open-file"
+                    && n != "core:find-file"
+                    && n != "root:close-all"
+                    && n != "root:close-all-others"
+            });
+        } else {
+            // Outside notes-mode the delete-current command is a no-op
+            // and would only confuse the palette.
+            cmds.retain(|c| c.0 != "notes:delete-current");
         }
         cmds
     };
@@ -1287,6 +1345,23 @@ pub fn run(
 
     // Autoreload: watch open files for external changes.
     let mut autoreload = AutoreloadState::new();
+
+    // Notes-mode: restore the per-notes-folder session (the previously
+    // open note) when no doc was opened from the CLI. Mirrors NoteSquirrel's
+    // "remember last open note" behavior so launching note-anvil drops
+    // the user back into whatever they were editing last.
+    if subsystems.has_notes_mode() && docs.is_empty() && !project_root.is_empty() {
+        if let Some(tab) = crate::editor::open_doc::restore_project_session(
+            userdir_path,
+            &project_root,
+            &mut docs,
+            &mut autoreload,
+            use_git(),
+        ) {
+            active_tab = tab;
+        }
+    }
+
     for doc in &docs {
         autoreload.watch(&doc.path);
     }
@@ -1823,9 +1898,9 @@ pub fn run(
                                                 cmdview_active = false;
                                                 project_root = path;
                                                 if subsystems.has_sidebar() {
-                                                    sidebar_entries = scan_directory(
+                                                    sidebar_entries = scan_for_sidebar(
+                                                        subsystems.has_notes_mode(),
                                                         &project_root,
-                                                        0,
                                                         sidebar_show_hidden,
                                                     );
                                                     restore_expanded_folders(
@@ -1890,9 +1965,9 @@ pub fn run(
                                                 active_tab = 0;
                                                 project_root = path;
                                                 if subsystems.has_sidebar() {
-                                                    sidebar_entries = scan_directory(
+                                                    sidebar_entries = scan_for_sidebar(
+                                                        subsystems.has_notes_mode(),
                                                         &project_root,
-                                                        0,
                                                         sidebar_show_hidden,
                                                     );
                                                     restore_expanded_folders(
@@ -1988,9 +2063,9 @@ pub fn run(
                                             && std::path::Path::new(&save_path)
                                                 .starts_with(std::path::Path::new(&project_root))
                                         {
-                                            sidebar_entries = scan_directory(
+                                            sidebar_entries = scan_for_sidebar(
+                                                subsystems.has_notes_mode(),
                                                 &project_root,
-                                                0,
                                                 sidebar_show_hidden,
                                             );
                                             restore_expanded_folders(
@@ -2819,6 +2894,80 @@ pub fn run(
                                 redraw = true;
                                 continue;
                             }
+                            "r" if mods.alt && replace_active => {
+                                // Alt+R: replace current match (NoteSquirrel parity).
+                                if let Some(doc) = docs.get_mut(active_tab) {
+                                    let dv = &mut doc.view;
+                                    replace_current_match(dv, &find_query, &replace_query);
+                                    let sel = if find_in_selection {
+                                        find_selection_range
+                                    } else {
+                                        None
+                                    };
+                                    find_matches = compute_find_matches_filtered(
+                                        dv,
+                                        &find_query,
+                                        find_use_regex,
+                                        find_whole_word,
+                                        find_case_insensitive,
+                                        sel,
+                                    );
+                                    if !find_matches.is_empty() {
+                                        let (cl, cc) = doc_cursor(dv);
+                                        let idx = find_match_at_or_after(&find_matches, cl, cc)
+                                            .unwrap_or(0);
+                                        find_current = Some(idx);
+                                        select_find_match(dv, find_matches[idx], replace_active);
+                                    } else {
+                                        find_current = None;
+                                    }
+                                }
+                                redraw = true;
+                                continue;
+                            }
+                            "a" if mods.alt && replace_active => {
+                                // Alt+A: replace all matches (NoteSquirrel parity).
+                                // Drives `replace_current_match` in a loop
+                                // since lite-anvil doesn't have a separate
+                                // bulk-replace primitive for the in-buffer
+                                // find bar.
+                                if let Some(doc) = docs.get_mut(active_tab) {
+                                    let dv = &mut doc.view;
+                                    let mut count = 0usize;
+                                    loop {
+                                        let sel = if find_in_selection {
+                                            find_selection_range
+                                        } else {
+                                            None
+                                        };
+                                        let matches = compute_find_matches_filtered(
+                                            dv,
+                                            &find_query,
+                                            find_use_regex,
+                                            find_whole_word,
+                                            find_case_insensitive,
+                                            sel,
+                                        );
+                                        if matches.is_empty() {
+                                            break;
+                                        }
+                                        select_find_match(dv, matches[0], replace_active);
+                                        replace_current_match(dv, &find_query, &replace_query);
+                                        count += 1;
+                                        if count > 100_000 {
+                                            break;
+                                        }
+                                    }
+                                    find_matches.clear();
+                                    find_current = None;
+                                    info_message = Some((
+                                        format!("Replaced {count} occurrence(s)"),
+                                        Instant::now(),
+                                    ));
+                                }
+                                redraw = true;
+                                continue;
+                            }
                             "return" | "keypad enter" => {
                                 // Shift+Enter = previous, Enter = next.
                                 if let Some(doc) = docs.get_mut(active_tab) {
@@ -3540,6 +3689,18 @@ pub fn run(
                                 if let Some(idx) = already {
                                     active_tab = idx;
                                 } else {
+                                    // Notes mode is single-note-at-a-time —
+                                    // close any other notes before opening
+                                    // the new one. Autosave will have
+                                    // persisted the outgoing buffer
+                                    // already, so just drop the tab.
+                                    if subsystems.has_notes_mode() {
+                                        for d in &docs {
+                                            autoreload.unwatch(&d.path);
+                                        }
+                                        docs.clear();
+                                        active_tab = 0;
+                                    }
                                     if open_file_into(&entry_path, &mut docs, use_git()) {
                                         autoreload.watch(&entry_path);
                                         active_tab = docs.len() - 1;
@@ -4604,6 +4765,13 @@ pub fn run(
                 h: height - tab_h - breadcrumb_h - terminal_h - status_h,
             };
             empty_view.set_rect(content_rect);
+            // Note-Anvil keeps the markdown preview pinned on for every
+            // doc — it's not toggleable in notes mode.
+            if subsystems.has_notes_mode() {
+                for d in docs.iter_mut() {
+                    d.preview.enabled = true;
+                }
+            }
             if let Some(doc) = docs.get_mut(active_tab) {
                 if doc.preview.enabled {
                     // Split the content area into a 50/50 editor | preview
@@ -4721,6 +4889,46 @@ pub fn run(
                 }
             }
 
+            // Notes-mode autosave: any dirty doc that has been idle (no
+            // edit) for at least the debounce window gets persisted.
+            // Keeps writes off the per-keystroke path while still
+            // flushing within ~250 ms of typing pause.
+            if subsystems.has_notes_mode() {
+                let idle_threshold_secs = 0.25;
+                let now = buffer::now_secs();
+                for doc in docs.iter_mut() {
+                    if doc.path.is_empty() {
+                        continue;
+                    }
+                    let Some(buf_id) = doc.view.buffer_id else {
+                        continue;
+                    };
+                    let needs_save = buffer::with_buffer(buf_id, |b| {
+                        let dirty = b.change_id != doc.saved_change_id;
+                        let idle = b
+                            .last_edit
+                            .map(|le| now - le.0 >= idle_threshold_secs)
+                            .unwrap_or(true);
+                        Ok(dirty && idle)
+                    })
+                    .unwrap_or(false);
+                    if !needs_save {
+                        continue;
+                    }
+                    let path = doc.path.clone();
+                    let saved = buffer::with_buffer_mut(buf_id, |b| {
+                        let crlf = b.crlf;
+                        buffer::save_file(b, &path, crlf, false)
+                            .map_err(|_| buffer::BufferError::UnknownBuffer)?;
+                        Ok((b.change_id, buffer::content_signature(&b.lines)))
+                    });
+                    if let Ok((cid, sig)) = saved {
+                        doc.saved_change_id = cid;
+                        doc.saved_signature = sig;
+                    }
+                }
+            }
+
             // Apply deferred render cache unconditionally so it never goes
             // stale. This MUST be outside the `if redraw` block -- otherwise
             // the cache sits unconsumed until the next event and forces an
@@ -4736,10 +4944,12 @@ pub fn run(
 
             if redraw {
                 // Update window title and status bar from active tab.
-                let app_name = if subsystems.has_sidebar() {
-                    "Lite-Anvil"
+                let app_name = if subsystems.has_notes_mode() {
+                    "Note Anvil"
+                } else if subsystems.has_sidebar() {
+                    "Lite Anvil"
                 } else {
-                    "Nano-Anvil"
+                    "Nano Anvil"
                 };
                 let title = docs
                     .get(active_tab)
@@ -4866,10 +5076,12 @@ pub fn run(
                     });
                 } else {
                     status_view.left_items.push(StatusItem {
-                        text: if subsystems.has_sidebar() {
-                            "Lite-Anvil"
+                        text: if subsystems.has_notes_mode() {
+                            "Note Anvil"
+                        } else if subsystems.has_sidebar() {
+                            "Lite Anvil"
                         } else {
-                            "Nano-Anvil"
+                            "Nano Anvil"
                         }
                         .to_string(),
                         color: None,
@@ -7043,6 +7255,14 @@ pub fn run(
             userdir_path,
             &project_session_key(&project_root),
         );
+    }
+
+    // Notes-mode: persist the per-folder session so the next launch
+    // reopens the same note. The global "session/files" path below is
+    // not used by note-anvil because notes-mode never keeps multiple
+    // tabs and a per-folder key keeps switching `NOTE_ANVIL_DIR` clean.
+    if subsystems.has_notes_mode() && !project_root.is_empty() {
+        save_project_session(userdir_path, &project_root, &docs, active_tab);
     }
 
     // Session save: persist open files, active tab, and project root via storage.

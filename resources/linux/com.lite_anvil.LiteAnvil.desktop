@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Lite-Anvil
+Name=Lite Anvil
 Comment=A code editor built in Rust with SDL3
 Exec=lite-anvil %F
 Icon=lite-anvil

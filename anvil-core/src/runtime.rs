@@ -32,7 +32,7 @@ impl RuntimeContext {
             .to_path_buf();
         let data_dir = find_data_dir(&exe_file, &exe_dir);
         let path_sep = std::path::MAIN_SEPARATOR;
-        let user_dir = find_user_dir(&exe_dir, path_sep);
+        let user_dir = find_user_dir(&exe_file, &exe_dir, path_sep);
         let scale = std::env::var("LITE_SCALE")
             .ok()
             .or_else(|| std::env::var("GDK_SCALE").ok())
@@ -92,6 +92,7 @@ fn find_data_dir(exe_file: &Path, exe_dir: &Path) -> PathBuf {
 
     let app_name = match exe_file.file_stem().and_then(OsStr::to_str) {
         Some("nano-anvil") => "nano-anvil",
+        Some("note-anvil") => "note-anvil",
         _ => "lite-anvil",
     };
 
@@ -139,7 +140,7 @@ fn find_data_dir(exe_file: &Path, exe_dir: &Path) -> PathBuf {
     exe_dir.join("data")
 }
 
-fn find_user_dir(exe_dir: &Path, _path_sep: char) -> PathBuf {
+fn find_user_dir(exe_file: &Path, exe_dir: &Path, _path_sep: char) -> PathBuf {
     let bundled = exe_dir.join("user");
     if bundled.exists() {
         return bundled;
@@ -149,28 +150,38 @@ fn find_user_dir(exe_dir: &Path, _path_sep: char) -> PathBuf {
         return PathBuf::from(user_dir);
     }
 
+    // Per-app subdirectory so nano-anvil and note-anvil keep their own
+    // session / recent-files / project state and don't pollute
+    // lite-anvil's. Lite-anvil keeps the historical "lite-anvil" name
+    // for backward compatibility with existing installs.
+    let app_dir = match exe_file.file_stem().and_then(OsStr::to_str) {
+        Some("nano-anvil") => "nano-anvil",
+        Some("note-anvil") => "note-anvil",
+        _ => "lite-anvil",
+    };
+
     // Windows: use %APPDATA% (`C:\Users\<user>\AppData\Roaming`) per
     // Microsoft's user-data guidance, rather than dropping a folder
     // directly under the user's profile root.
     #[cfg(target_os = "windows")]
     {
         if let Some(appdata) = std::env::var_os("APPDATA") {
-            return PathBuf::from(appdata).join("lite-anvil");
+            return PathBuf::from(appdata).join(app_dir);
         }
         if let Some(home) = std::env::var_os("USERPROFILE") {
             return PathBuf::from(home)
                 .join("AppData")
                 .join("Roaming")
-                .join("lite-anvil");
+                .join(app_dir);
         }
     }
 
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg).join("lite-anvil");
+        return PathBuf::from(xdg).join(app_dir);
     }
 
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".config").join("lite-anvil");
+        return PathBuf::from(home).join(".config").join(app_dir);
     }
 
     bundled

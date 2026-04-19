@@ -1,11 +1,11 @@
 ---
-title: Lite-Anvil - Code Editor Built in Rust
+title: Lite Anvil - Code Editor Built in Rust
 description: Fast code editor built in Rust with SDL3. Built-in LSP, embedded terminal, Git integration, and 50+ syntax grammars.
 ---
 
 <div class="hero" markdown>
 
-# Lite-Anvil
+# Lite Anvil
 
 <p class="tagline">A fast code editor built in Rust with SDL3.</p>
 
@@ -14,7 +14,7 @@ description: Fast code editor built in Rust with SDL3. Built-in LSP, embedded te
   <a href="https://github.com/danpozmanter/lite-anvil" class="secondary">View on GitHub</a>
 </div>
 
-<img src="assets/screenshot.png" alt="Lite-Anvil screenshot" class="screenshot">
+<img src="assets/screenshot.png" alt="Lite Anvil screenshot" class="screenshot">
 
 </div>
 
@@ -112,7 +112,7 @@ Find and Replace across files in a project folder.
 
 <div class="feature-card" markdown>
 
-### Nano-Anvil
+### Nano Anvil
 
 A minimal single-file editor with software rendering. No GPU driver overhead -- ~28MB RAM on Linux. No sidebar, terminal, LSP, git, or tabs.
 
@@ -120,9 +120,9 @@ A minimal single-file editor with software rendering. No GPU driver overhead -- 
 
 ## Overview
 
-Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
+Lite Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
 
-Lite-Anvil also ships Nano-Anvil, a minimal single-file editor that uses software rendering (no GPU drivers). See the [Installation](installation.md) page for details on both binaries.
+Lite Anvil also ships Nano Anvil, a minimal single-file editor that uses software rendering (no GPU drivers). See the [Installation](installation.md) page for details on both binaries.
 
 | | |
 |---|---|

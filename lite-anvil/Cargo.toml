@@ -8,34 +8,40 @@ description = "A code editor built in Rust with SDL3"
 
 [package.metadata.deb]
 name = "lite-anvil"
-maintainer = "Lite-Anvil contributors"
+maintainer = "Lite Anvil contributors"
 copyright = "MIT"
-extended-description = "Lite-Anvil code editor and Nano-Anvil minimal single-file editor, both built in Rust with SDL3."
+extended-description = "Lite Anvil code editor, Nano Anvil minimal single-file editor, and Note Anvil markdown note-taker — all built in Rust with SDL3."
 depends = "$auto"
 section = "editors"
 priority = "optional"
 assets = [
     ["target/release/lite-anvil",                            "usr/bin/",                                              "755"],
     ["target/release/nano-anvil",                            "usr/bin/",                                              "755"],
+    ["target/release/note-anvil",                            "usr/bin/",                                              "755"],
     ["../data/**/*",                                         "usr/share/lite-anvil/data/",                            "644"],
     ["../data-nano/**/*",                                    "usr/share/nano-anvil/data/",                            "644"],
     ["../resources/linux/com.lite_anvil.LiteAnvil.desktop",  "usr/share/applications/lite-anvil.desktop",             "644"],
     ["../resources/linux/com.nano_anvil.NanoAnvil.desktop",  "usr/share/applications/nano-anvil.desktop",             "644"],
+    ["../resources/linux/com.note_anvil.NoteAnvil.desktop",  "usr/share/applications/note-anvil.desktop",             "644"],
     ["../resources/icons/lite-anvil.png",                    "usr/share/icons/hicolor/256x256/apps/lite-anvil.png",   "644"],
     ["../resources/icons/nano-anvil.png",                    "usr/share/icons/hicolor/256x256/apps/nano-anvil.png",   "644"],
+    ["../resources/icons/note-anvil.png",                    "usr/share/icons/hicolor/256x256/apps/note-anvil.png",   "644"],
 ]
 
 [package.metadata.generate-rpm]
 name = "lite-anvil"
 license = "MIT"
-summary = "Lite-Anvil + Nano-Anvil code editors built in Rust with SDL3"
+summary = "Lite Anvil code editor, Nano Anvil single-file editor, and Note Anvil note-taker — all on Rust + SDL3"
 assets = [
     { source = "target/release/lite-anvil",                           dest = "/usr/bin/lite-anvil",                                  mode = "755" },
     { source = "target/release/nano-anvil",                           dest = "/usr/bin/nano-anvil",                                  mode = "755" },
+    { source = "target/release/note-anvil",                           dest = "/usr/bin/note-anvil",                                  mode = "755" },
     { source = "../resources/linux/com.lite_anvil.LiteAnvil.desktop", dest = "/usr/share/applications/lite-anvil.desktop",          mode = "644" },
     { source = "../resources/linux/com.nano_anvil.NanoAnvil.desktop", dest = "/usr/share/applications/nano-anvil.desktop",          mode = "644" },
+    { source = "../resources/linux/com.note_anvil.NoteAnvil.desktop", dest = "/usr/share/applications/note-anvil.desktop",          mode = "644" },
     { source = "../resources/icons/lite-anvil.png",                   dest = "/usr/share/icons/hicolor/256x256/apps/lite-anvil.png", mode = "644" },
     { source = "../resources/icons/nano-anvil.png",                   dest = "/usr/share/icons/hicolor/256x256/apps/nano-anvil.png", mode = "644" },
+    { source = "../resources/icons/note-anvil.png",                   dest = "/usr/share/icons/hicolor/256x256/apps/note-anvil.png", mode = "644" },
     { source = "../data/**/*",                                        dest = "/usr/share/lite-anvil/data/",                          mode = "644" },
     { source = "../data-nano/**/*",                                   dest = "/usr/share/nano-anvil/data/",                          mode = "644" },
 ]

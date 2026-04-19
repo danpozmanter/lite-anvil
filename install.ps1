@@ -62,4 +62,4 @@ if ($UserPath -notlike "*$InstallDir*") {
     Write-Host "Added $InstallDir to user PATH. Restart your terminal to use 'lite-anvil'."
 }
 
-Write-Host "Installed Lite-Anvil $Version to $InstallDir\lite-anvil.exe"
+Write-Host "Installed Lite Anvil $Version to $InstallDir\lite-anvil.exe"

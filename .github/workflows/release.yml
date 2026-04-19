@@ -62,14 +62,17 @@ jobs:
           mkdir "$ARCHIVE_BASE"
           cp target/release/lite-anvil "$ARCHIVE_BASE/"
           cp target/release/nano-anvil "$ARCHIVE_BASE/"
+          cp target/release/note-anvil "$ARCHIVE_BASE/"
           cp -r data "$ARCHIVE_BASE/"
           cp -r data-nano "$ARCHIVE_BASE/"
           # SDL3 is statically linked into the binaries — no libSDL3.so
           # to ship, no lib/ directory to create, no RPATH to manage.
           cp resources/linux/com.lite_anvil.LiteAnvil.desktop "$ARCHIVE_BASE/"
           cp resources/linux/com.nano_anvil.NanoAnvil.desktop "$ARCHIVE_BASE/"
+          cp resources/linux/com.note_anvil.NoteAnvil.desktop "$ARCHIVE_BASE/"
           cp resources/icons/lite-anvil.png "$ARCHIVE_BASE/"
           cp resources/icons/nano-anvil.png "$ARCHIVE_BASE/"
+          cp resources/icons/note-anvil.png "$ARCHIVE_BASE/"
           tar -czf "${ARCHIVE_BASE}.tar.gz" "$ARCHIVE_BASE"
 
       - name: Install packaging tools
@@ -120,6 +123,7 @@ jobs:
 
           build_appimage lite-anvil data Lite-Anvil
           build_appimage nano-anvil data-nano Nano-Anvil
+          build_appimage note-anvil data Note-Anvil
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6
@@ -188,6 +192,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item target\release\lite-anvil.exe "$stage\"
           Copy-Item target\release\nano-anvil.exe "$stage\"
+          Copy-Item target\release\note-anvil.exe "$stage\"
           Copy-Item -Recurse data "$stage\"
           Copy-Item -Recurse data-nano "$stage\"
           Copy-Item resources\windows\*.ps1 "$stage\"
@@ -453,8 +458,8 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>CFBundleName</key><string>Nano-Anvil</string>
-              <key>CFBundleDisplayName</key><string>Nano-Anvil</string>
+              <key>CFBundleName</key><string>Nano Anvil</string>
+              <key>CFBundleDisplayName</key><string>Nano Anvil</string>
               <key>CFBundleIdentifier</key><string>com.nano-anvil.NanoAnvil</string>
               <key>CFBundleVersion</key><string>VERSION_PLACEHOLDER</string>
               <key>CFBundleShortVersionString</key><string>VERSION_PLACEHOLDER</string>
@@ -471,8 +476,46 @@ jobs:
           codesign --force --deep --sign - --timestamp=none NanoAnvil.app
           otool -L NanoAnvil.app/Contents/MacOS/nano-anvil
 
+          # Create NoteAnvil.app bundle.
+          install_name_tool -add_rpath @executable_path/../Frameworks target/x86_64-apple-darwin/release/note-anvil 2>/dev/null || true
+          install_name_tool -add_rpath @executable_path target/x86_64-apple-darwin/release/note-anvil 2>/dev/null || true
+          rm -rf NoteAnvil.app
+          mkdir -p NoteAnvil.app/Contents/MacOS NoteAnvil.app/Contents/Frameworks
+          cp target/x86_64-apple-darwin/release/note-anvil NoteAnvil.app/Contents/MacOS/
+          cp -r data NoteAnvil.app/Contents/MacOS/
+          cp -R LiteAnvil.app/Contents/Frameworks/* NoteAnvil.app/Contents/Frameworks/ 2>/dev/null || true
+          for dep in $(otool -L NoteAnvil.app/Contents/MacOS/note-anvil | tail -n +2 | awk '{print $1}'); do
+              case "$dep" in
+                  /System/Library/*|/usr/lib/*|@executable_path/*|@loader_path/*) continue ;;
+              esac
+              dep_name="$(basename "$dep")"
+              if [ -f "NoteAnvil.app/Contents/Frameworks/$dep_name" ]; then
+                  install_name_tool -change "$dep" "@executable_path/../Frameworks/$dep_name" NoteAnvil.app/Contents/MacOS/note-anvil
+              fi
+          done
+          cat > NoteAnvil.app/Contents/Info.plist << 'NOTEEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>Note Anvil</string>
+              <key>CFBundleDisplayName</key><string>Note Anvil</string>
+              <key>CFBundleIdentifier</key><string>com.note-anvil.NoteAnvil</string>
+              <key>CFBundleVersion</key><string>VERSION_PLACEHOLDER</string>
+              <key>CFBundleShortVersionString</key><string>VERSION_PLACEHOLDER</string>
+              <key>CFBundleExecutable</key><string>note-anvil</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          NOTEEOF
+          sed -i '' "s/VERSION_PLACEHOLDER/${APP_VERSION}/g" NoteAnvil.app/Contents/Info.plist
+          xattr -cr NoteAnvil.app 2>/dev/null || true
+          codesign --force --deep --sign - --timestamp=none NoteAnvil.app
+
           cp scripts/install-mac.sh .
-          zip -r "lite-anvil-${APP_VERSION}-macos-x86_64.zip" LiteAnvil.app NanoAnvil.app install-mac.sh
+          zip -r "lite-anvil-${APP_VERSION}-macos-x86_64.zip" LiteAnvil.app NanoAnvil.app NoteAnvil.app install-mac.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -704,8 +747,8 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>CFBundleName</key><string>Nano-Anvil</string>
-              <key>CFBundleDisplayName</key><string>Nano-Anvil</string>
+              <key>CFBundleName</key><string>Nano Anvil</string>
+              <key>CFBundleDisplayName</key><string>Nano Anvil</string>
               <key>CFBundleIdentifier</key><string>com.nano-anvil.NanoAnvil</string>
               <key>CFBundleVersion</key><string>VERSION_PLACEHOLDER</string>
               <key>CFBundleShortVersionString</key><string>VERSION_PLACEHOLDER</string>
@@ -722,8 +765,46 @@ jobs:
           codesign --force --deep --sign - --timestamp=none NanoAnvil.app
           otool -L NanoAnvil.app/Contents/MacOS/nano-anvil
 
+          # Create NoteAnvil.app bundle.
+          install_name_tool -add_rpath @executable_path/../Frameworks target/aarch64-apple-darwin/release/note-anvil 2>/dev/null || true
+          install_name_tool -add_rpath @executable_path target/aarch64-apple-darwin/release/note-anvil 2>/dev/null || true
+          rm -rf NoteAnvil.app
+          mkdir -p NoteAnvil.app/Contents/MacOS NoteAnvil.app/Contents/Frameworks
+          cp target/aarch64-apple-darwin/release/note-anvil NoteAnvil.app/Contents/MacOS/
+          cp -r data NoteAnvil.app/Contents/MacOS/
+          cp -R LiteAnvil.app/Contents/Frameworks/* NoteAnvil.app/Contents/Frameworks/ 2>/dev/null || true
+          for dep in $(otool -L NoteAnvil.app/Contents/MacOS/note-anvil | tail -n +2 | awk '{print $1}'); do
+              case "$dep" in
+                  /System/Library/*|/usr/lib/*|@executable_path/*|@loader_path/*) continue ;;
+              esac
+              dep_name="$(basename "$dep")"
+              if [ -f "NoteAnvil.app/Contents/Frameworks/$dep_name" ]; then
+                  install_name_tool -change "$dep" "@executable_path/../Frameworks/$dep_name" NoteAnvil.app/Contents/MacOS/note-anvil
+              fi
+          done
+          cat > NoteAnvil.app/Contents/Info.plist << 'NOTEEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>Note Anvil</string>
+              <key>CFBundleDisplayName</key><string>Note Anvil</string>
+              <key>CFBundleIdentifier</key><string>com.note-anvil.NoteAnvil</string>
+              <key>CFBundleVersion</key><string>VERSION_PLACEHOLDER</string>
+              <key>CFBundleShortVersionString</key><string>VERSION_PLACEHOLDER</string>
+              <key>CFBundleExecutable</key><string>note-anvil</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          NOTEEOF
+          sed -i '' "s/VERSION_PLACEHOLDER/${APP_VERSION}/g" NoteAnvil.app/Contents/Info.plist
+          xattr -cr NoteAnvil.app 2>/dev/null || true
+          codesign --force --deep --sign - --timestamp=none NoteAnvil.app
+
           cp scripts/install-mac.sh .
-          zip -r "lite-anvil-${APP_VERSION}-macos-aarch64.zip" LiteAnvil.app NanoAnvil.app install-mac.sh
+          zip -r "lite-anvil-${APP_VERSION}-macos-aarch64.zip" LiteAnvil.app NanoAnvil.app NoteAnvil.app install-mac.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

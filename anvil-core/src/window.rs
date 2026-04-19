@@ -108,7 +108,7 @@ fn sdl_error() -> String {
 thread_local! {
     static APP_NAME: std::cell::RefCell<std::ffi::CString> =
         std::cell::RefCell::new(
-            std::ffi::CString::new("Lite-Anvil").expect("static app name"),
+            std::ffi::CString::new("Lite Anvil").expect("static app name"),
         );
     static APP_IDENTIFIER: std::cell::RefCell<std::ffi::CString> =
         std::cell::RefCell::new(

@@ -1,4 +1,4 @@
-# Building Lite-Anvil
+# Building Lite Anvil
 
 ## Requirements
 
@@ -106,7 +106,7 @@ cp -r data LiteAnvil.app/Contents/MacOS/
 cp resources/macos/Info.plist LiteAnvil.app/Contents/
 ```
 
-Move `LiteAnvil.app` to `/Applications`. The Info.plist registers Lite-Anvil
+Move `LiteAnvil.app` to `/Applications`. The Info.plist registers Lite Anvil
 for "Open With" on all supported file types.
 
 Sign the bundle so macOS doesn't block it:

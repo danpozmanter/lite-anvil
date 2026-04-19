@@ -353,7 +353,7 @@ impl NativeConfig {
     /// Serialize the config to TOML.
     pub fn to_toml(&self) -> String {
         let mut out = String::new();
-        out.push_str("# Lite-Anvil configuration\n\n");
+        out.push_str("# Lite Anvil configuration\n\n");
         out.push_str(&format!("fps = {}\n", self.fps));
         out.push_str(&format!("theme = \"{}\"\n", self.theme));
         out.push_str(&format!("indent_size = {}\n", self.indent_size));

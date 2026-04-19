@@ -50,4 +50,4 @@ echo ""
 echo "No-GL SDL3 installed to ${INSTALL_DIR}:"
 ls -la "${INSTALL_DIR}"/libSDL3*
 echo ""
-echo "Nano-Anvil will link against this automatically via nano-anvil/build.rs."
+echo "Nano Anvil will link against this automatically via nano-anvil/build.rs."

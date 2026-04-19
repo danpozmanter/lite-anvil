@@ -1,6 +1,6 @@
-#define MyAppName      "Lite-Anvil"
+#define MyAppName      "Lite Anvil"
 #define MyAppVersion   "@PROJECT_VERSION@"
-#define MyAppPublisher "Lite-Anvil contributors"
+#define MyAppPublisher "Lite Anvil contributors"
 #define MyAppURL       "https://github.com/lite-xl/lite-anvil"
 #define MyAppExeName   "lite-anvil.exe"
 #define BuildDir       "@PROJECT_BUILD_DIR@"
@@ -75,7 +75,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.2; Check: not IsAdminInstallMode
 Name: "portablemode"; Description: "Extract only, do not install"; Flags: unchecked
-Name: "envPath"; Description: "Add Lite-Anvil to PATH"; Flags: unchecked
+Name: "envPath"; Description: "Add Lite Anvil to PATH"; Flags: unchecked
 
 [Files]
 Source: "{#BuildDir}/lite-anvil/*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
@@ -84,7 +84,8 @@ Source: "{#BuildDir}/lite-anvil/*"; DestDir: "{app}"; Flags: ignoreversion recur
 [Icons]
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Check: not WizardIsTaskSelected('portablemode')
-Name: "{group}\Nano-Anvil"; Filename: "{app}\nano-anvil.exe"; Check: not WizardIsTaskSelected('portablemode')
+Name: "{group}\Nano Anvil"; Filename: "{app}\nano-anvil.exe"; Check: not WizardIsTaskSelected('portablemode')
+Name: "{group}\Note Anvil"; Filename: "{app}\note-anvil.exe"; Check: not WizardIsTaskSelected('portablemode')
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; Check: not WizardIsTaskSelected('portablemode')
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon; Check: not WizardIsTaskSelected('portablemode')
 ; Name: "{usersendto}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

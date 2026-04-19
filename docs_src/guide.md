@@ -1,6 +1,6 @@
 ---
-title: User Guide - Lite-Anvil
-description: Keyboard shortcuts, LSP language server setup, configuration, and syntax highlighting for Lite-Anvil.
+title: User Guide - Lite Anvil
+description: Keyboard shortcuts, LSP language server setup, configuration, and syntax highlighting for Lite Anvil.
 ---
 
 # User Guide
@@ -126,7 +126,7 @@ Right-click a file or folder in the sidebar:
 
 ## LSP Support
 
-Lite-Anvil includes built-in configurations for the following language servers. Install the binary and it works automatically -- no configuration needed.
+Lite Anvil includes built-in configurations for the following language servers. Install the binary and it works automatically -- no configuration needed.
 
 ### Recommended Language Servers
 
@@ -215,7 +215,7 @@ The test runner auto-detects your project's framework and runs tests in a termin
 
 ## Configuration
 
-Lite-Anvil is configured via a TOML file. Open it from the sidebar settings icon or via the command palette: **Open User Settings**.
+Lite Anvil is configured via a TOML file. Open it from the sidebar settings icon or via the command palette: **Open User Settings**.
 
 ### Config location
 
@@ -292,11 +292,11 @@ The `:N` line-number suffix also works in the file picker (`Ctrl+O`).
 
 Cycle themes with `Ctrl+Shift+P` or the command palette. JSON theme files are in `data/assets/themes/`.
 
-## Nano-Anvil
+## Nano Anvil
 
-Nano-Anvil is a minimal single-file editor included alongside Lite-Anvil.
+Nano Anvil is a minimal single-file editor included alongside Lite Anvil.
 
-### Running Nano-Anvil
+### Running Nano Anvil
 
 ```bash
 # From the release archive
@@ -306,22 +306,22 @@ Nano-Anvil is a minimal single-file editor included alongside Lite-Anvil.
 ./nano-anvil myfile.rs
 ```
 
-On Linux, Nano-Anvil is also available as a desktop application (Nano-Anvil in your application menu).
+On Linux, Nano Anvil is also available as a desktop application (Nano Anvil in your application menu).
 
-### Differences from Lite-Anvil
+### Differences from Lite Anvil
 
-Nano-Anvil is designed for lightweight, single-file editing:
+Nano Anvil is designed for lightweight, single-file editing:
 
 - Single file at a time (no tabs, no project)
 - No sidebar, terminal, LSP, git integration, bookmarks, or code folding
 - Software rendering (no GPU driver loaded)
-- ~28MB RAM on Linux vs ~100MB for Lite-Anvil (on NVIDIA/X11)
-- Syntax highlighting for 50+ languages (shared with Lite-Anvil)
+- ~28MB RAM on Linux vs ~100MB for Lite Anvil (on NVIDIA/X11)
+- Syntax highlighting for 50+ languages (shared with Lite Anvil)
 - Find and replace within the current file
 - Full undo/redo (capped at 100 entries)
 - 2 built-in themes (dark + light)
 
-### Keyboard Shortcuts (Nano-Anvil)
+### Keyboard Shortcuts (Nano Anvil)
 
 | Key | Action |
 |-----|--------|

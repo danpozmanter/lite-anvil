@@ -1,5 +1,18 @@
 # Change Log
 
+## [2.10.0] - 2026-04-19 -- Adding Note Anvil: a markdown note-taking app, new icons, app specific userdirs.
+
+* New `note-anvil` binary: sidebar list of `*.md` notes from `~/local-notes/` (override via `NOTE_ANVIL_DIR`), always-on markdown preview, autosave-on-edit (250 ms debounce), single-note-at-a-time switching, filtered command palette. (From NoteSquirrel).
+* Per-app userdir: nano-anvil and note-anvil now have their own session / recent-files / project state. Note-anvil never writes into lite-anvil's recent-projects, last-open-folder, or any other shared state. Lite-anvil's userdir is unchanged.
+* New icons.
+* `core:new-doc` (Ctrl+N) in notes-mode creates `Note N.md` on disk in the notes folder.
+* New `notes:delete-current` palette command deletes the current note's file.
+* `Alt+R` / `Alt+A` in the find bar → replace current / replace all (NoteSquirrel parity).
+* `Ctrl+,` → insert `- ` list item; `Ctrl+.` → insert `- [ ] ` checkbox item, both with indent inheritance from the previous bulleted line.
+* Packaging: combined `.deb` / `.rpm` / tarball / Windows installer / macOS zip ship `note-anvil`; Linux release adds a third AppImage; macOS install script also creates a `note-anvil` CLI symlink.
+* Display names dropped the hyphen everywhere (window title, status bar, About, splash, Inno Setup Start Menu group): "Lite Anvil", "Nano Anvil", "Note Anvil". Binaries / package names / `.desktop` `StartupWMClass` / Wayland app_id stay as `lite-anvil` / `nano-anvil` / `note-anvil`.
+* Note Anvil remembers the last open note: per-folder session is saved on exit and restored on next launch. Window title shows "Note Anvil" when nothing is open (was incorrectly inheriting "Lite Anvil" from the window default).
+
 ## [2.9.10] - 2026-04-19 -- Autoreload survives atomic saves; modal Reload-from-disk prompt; markdown preview strikes through checked tasks.
 
 * Fixed autoreload catching only the first external change. The file watcher was attached to the **file inode** (`notify::RecursiveMode::NonRecursive` on a file path). Editors that save via write-to-temp + atomic rename replace the file's inode on every save; the inotify watch stayed bound to the old, now-unlinked inode, so every save after the first went unnoticed. Watcher now binds to the file's **parent directory** and filters events by filename, with refcounting so multiple open files in the same directory share one watch and the last one tears it down.

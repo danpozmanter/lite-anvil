@@ -27,27 +27,86 @@ match cmd.as_str() {
     palette_results = all_commands.clone();
     palette_selected = 0;
 }
+"notes:delete-current" => {
+    if subsystems.has_notes_mode()
+        && let Some(doc) = docs.get(active_tab)
+        && !doc.path.is_empty()
+    {
+        let path = doc.path.clone();
+        if std::fs::remove_file(&path).is_ok() {
+            autoreload.unwatch(&path);
+            docs.remove(active_tab);
+            if docs.is_empty() {
+                active_tab = 0;
+            } else if active_tab >= docs.len() {
+                active_tab = docs.len() - 1;
+            }
+            if subsystems.has_sidebar() && !project_root.is_empty() {
+                sidebar_entries =
+                    scan_for_sidebar(true, &project_root, sidebar_show_hidden);
+            }
+        }
+    }
+}
 "core:new-doc" => {
-    let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
-    let mut dv = DocView::new();
-    dv.buffer_id = Some(buf_id);
-    docs.push(OpenDoc {
-        view: dv,
-        path: String::new(),
-        name: "untitled".to_string(),
-        saved_change_id: 1,
-        saved_signature: buffer::content_signature(&["\n".to_string()]),
-        indent_type: "soft".to_string(),
-        indent_size: 2,
-        git_changes: std::collections::HashMap::new(),
-        cached_render: Vec::new(),
-        cached_change_id: -1,
-        cached_scroll_y: -1.0,
-        cached_hint_count: 0,
-        dirty_cache: std::cell::Cell::new(None),
-preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
-    });
-    active_tab = docs.len() - 1;
+    if subsystems.has_notes_mode() && !project_root.is_empty() {
+        // Notes mode: create a new "Note N.md" on disk and open it,
+        // matching NoteSquirrel's lifecycle. The number is the smallest
+        // integer >= existing-note-count + 1 that doesn't collide.
+        let dir = std::path::PathBuf::from(&project_root);
+        let mut count = std::fs::read_dir(&dir)
+            .map(|it| {
+                it.flatten()
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .and_then(|x| x.to_str())
+                            .map(|x| x.eq_ignore_ascii_case("md"))
+                            .unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+            + 1;
+        let new_path = loop {
+            let candidate = dir.join(format!("Note {count}.md"));
+            if !candidate.exists() {
+                break candidate;
+            }
+            count += 1;
+        };
+        if std::fs::write(&new_path, "").is_ok() {
+            let path_str = new_path.to_string_lossy().to_string();
+            if open_file_into(&path_str, &mut docs, use_git()) {
+                active_tab = docs.len() - 1;
+                autoreload.watch(&path_str);
+                if subsystems.has_sidebar() {
+                    sidebar_entries = scan_for_sidebar(true, &project_root, sidebar_show_hidden);
+                }
+            }
+        }
+    } else {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        let mut dv = DocView::new();
+        dv.buffer_id = Some(buf_id);
+        docs.push(OpenDoc {
+            view: dv,
+            path: String::new(),
+            name: "untitled".to_string(),
+            saved_change_id: 1,
+            saved_signature: buffer::content_signature(&["\n".to_string()]),
+            indent_type: "soft".to_string(),
+            indent_size: 2,
+            git_changes: std::collections::HashMap::new(),
+            cached_render: Vec::new(),
+            cached_change_id: -1,
+            cached_scroll_y: -1.0,
+            cached_hint_count: 0,
+            dirty_cache: std::cell::Cell::new(None),
+            preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
+        });
+        active_tab = docs.len() - 1;
+    }
 }
 "root:close" => {
     if !docs.is_empty() {
@@ -221,7 +280,7 @@ preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
 "core:toggle-hidden-files" => {
     if subsystems.has_sidebar() {
         sidebar_show_hidden = !sidebar_show_hidden;
-        sidebar_entries = scan_directory(&project_root, 0, sidebar_show_hidden);
+        sidebar_entries = scan_for_sidebar(subsystems.has_notes_mode(), &project_root, sidebar_show_hidden);
         restore_expanded_folders(
             &mut sidebar_entries,
             userdir_path,
@@ -291,8 +350,15 @@ preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
     }
 }
 "about:version" => {
+    let app = if subsystems.has_notes_mode() {
+        "Note Anvil"
+    } else if subsystems.has_sidebar() {
+        "Lite Anvil"
+    } else {
+        "Nano Anvil"
+    };
     info_message = Some((
-        format!("{} v{}", if subsystems.has_sidebar() { "Lite-Anvil" } else { "Nano-Anvil" }, env!("CARGO_PKG_VERSION")),
+        format!("{} v{}", app, env!("CARGO_PKG_VERSION")),
         Instant::now(),
     ));
 }
@@ -699,6 +765,78 @@ preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
                 Ok(())
             });
         }
+    }
+}
+"doc:insert-list-item" | "doc:insert-checkbox-item" => {
+    // NoteSquirrel-style markdown helpers: insert a "- " or "- [ ] "
+    // line, inheriting the indent of the previous line if it was
+    // already a bulleted/checkbox item. If the cursor's line is blank,
+    // the marker is inserted on that line; otherwise a newline is
+    // pushed first.
+    let marker = if cmd == "doc:insert-checkbox-item" {
+        "- [ ] "
+    } else {
+        "- "
+    };
+    if let Some(doc) = docs.get_mut(active_tab)
+        && let Some(buf_id) = doc.view.buffer_id
+    {
+        let _ = buffer::with_buffer_mut(buf_id, |b| {
+            let line_idx = b.selections.get(2).copied().unwrap_or(1).saturating_sub(1);
+            let col = b.selections.get(3).copied().unwrap_or(1).saturating_sub(1);
+            if line_idx >= b.lines.len() {
+                return Ok(());
+            }
+            let prev_indent: String = if line_idx > 0 {
+                let prev = &b.lines[line_idx - 1];
+                let trimmed = prev.trim_start();
+                if trimmed.starts_with("- ")
+                    || trimmed.starts_with("* ")
+                    || trimmed.starts_with("+ ")
+                    || trimmed.starts_with("- [")
+                {
+                    prev.chars().take_while(|c| c.is_whitespace() && *c != '\n').collect()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            let current_line_blank = b.lines[line_idx].trim().is_empty();
+            buffer::push_undo(b);
+            let insert = if current_line_blank && col == 0 {
+                format!("{prev_indent}{marker}")
+            } else {
+                format!("\n{prev_indent}{marker}")
+            };
+            // Insert at cursor.
+            let line = &mut b.lines[line_idx];
+            // Find a UTF-8 boundary for the column position (chars).
+            let byte_pos = line
+                .char_indices()
+                .nth(col)
+                .map(|(i, _)| i)
+                .unwrap_or(line.len());
+            line.insert_str(byte_pos, &insert);
+            // Move cursor to end of inserted marker.
+            let new_col = col + insert.chars().count();
+            let new_line = line_idx + insert.matches('\n').count() + 1;
+            // For multi-line insertion (newline included), the cursor lands
+            // on the new last line at the marker end.
+            let final_line = if insert.starts_with('\n') {
+                new_line
+            } else {
+                line_idx + 1
+            };
+            let final_col = if insert.starts_with('\n') {
+                prev_indent.chars().count() + marker.chars().count() + 1
+            } else {
+                new_col + 1
+            };
+            b.selections = vec![final_line, final_col, final_line, final_col];
+            b.change_id += 1;
+            Ok(())
+        });
     }
 }
 "doc:reload" => {

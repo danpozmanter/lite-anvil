@@ -1,7 +1,7 @@
-# Lite-Anvil file association installer for Windows.
+# Lite Anvil file association installer for Windows.
 # Run as Administrator: powershell -ExecutionPolicy Bypass -File install-file-associations.ps1
 #
-# Registers Lite-Anvil as an "Open With" option for supported file types.
+# Registers Lite Anvil as an "Open With" option for supported file types.
 # Does NOT change default associations — only adds to the Open With list.
 
 param(
@@ -11,13 +11,13 @@ param(
 $ExePath = (Resolve-Path $ExePath -ErrorAction Stop).Path
 $AppId = "LiteAnvil.Editor"
 
-Write-Host "Registering Lite-Anvil file associations..."
+Write-Host "Registering Lite Anvil file associations..."
 Write-Host "Executable: $ExePath"
 
 # Register the application class
 $classKey = "HKCU:\Software\Classes\$AppId"
 New-Item -Path $classKey -Force | Out-Null
-Set-ItemProperty -Path $classKey -Name "(Default)" -Value "Lite-Anvil"
+Set-ItemProperty -Path $classKey -Name "(Default)" -Value "Lite Anvil"
 New-Item -Path "$classKey\DefaultIcon" -Force | Out-Null
 Set-ItemProperty -Path "$classKey\DefaultIcon" -Name "(Default)" -Value "$ExePath,0"
 New-Item -Path "$classKey\shell\open\command" -Force | Out-Null
@@ -28,7 +28,7 @@ $appsKey = "HKCU:\Software\Classes\Applications\lite-anvil.exe"
 New-Item -Path "$appsKey\shell\open\command" -Force | Out-Null
 Set-ItemProperty -Path "$appsKey\shell\open\command" -Name "(Default)" -Value "`"$ExePath`" `"%1`""
 
-# Supported extensions — adds Lite-Anvil to "Open With" for each.
+# Supported extensions — adds Lite Anvil to "Open With" for each.
 $extensions = @(
     # Plain text
     ".txt", ".text", ".log", ".conf", ".cfg", ".ini", ".env",
@@ -76,4 +76,4 @@ foreach ($ext in $extensions) {
 }
 
 Write-Host "Registered $($extensions.Count) file extensions."
-Write-Host "Done. Lite-Anvil will appear in 'Open With' for supported files."
+Write-Host "Done. Lite Anvil will appear in 'Open With' for supported files."

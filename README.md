@@ -1,4 +1,4 @@
-# Lite-Anvil
+# Lite Anvil
 
 [![Build](https://github.com/danpozmanter/lite-anvil/actions/workflows/release.yml/badge.svg)](https://github.com/danpozmanter/lite-anvil/actions/workflows/release.yml)
 
@@ -6,9 +6,9 @@
 
 A fast code editor built in Rust with SDL3.
 
-Lite-Anvil also ships with Nano-Anvil, a minimal single-file editor for lightweight editing. Nano-Anvil uses software rendering (no GPU driver overhead), and strips away the sidebar, terminal, LSP, git integration, and other heavy features.
+Lite Anvil also ships with Nano Anvil, a minimal single-file editor for lightweight editing. Nano Anvil uses software rendering (no GPU driver overhead), and strips away the sidebar, terminal, LSP, git integration, and other heavy features.
 
-Lite-Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
+Lite Anvil is a fork of [Lite XL](https://github.com/lite-xl/lite-xl), rewritten from the ground up in Rust.
 
 ## Purpose & Forking
 
@@ -40,12 +40,12 @@ I do not intend to maintain or support this in any way, but wanted to share the 
 - **Check for Updates** from the command palette
 - **Graceful font fallback** -- falls back to built-in fonts with a warning if custom fonts fail
 
-## Nano-Anvil
+## Nano Anvil
 
 A stripped-down single-file editor for minimal resource usage.
 
 - Software-rendered (no OpenGL/Vulkan/GPU drivers loaded)
-- ~28MB RAM on Linux (vs ~100MB for Lite-Anvil on NVIDIA/X11)
+- ~28MB RAM on Linux (vs ~100MB for Lite Anvil on NVIDIA/X11)
 - Single file at a time, always starts with a blank document
 - Syntax highlighting for 20 languages
 - Find and replace within the current file

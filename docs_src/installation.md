@@ -1,6 +1,6 @@
 ---
-title: Installation - Lite-Anvil
-description: Install Lite-Anvil from prebuilt binaries or build from source on Linux, macOS, and Windows. Requires Rust 1.85+, SDL3, FreeType2, PCRE2.
+title: Installation - Lite Anvil
+description: Install Lite Anvil from prebuilt binaries or build from source on Linux, macOS, and Windows. Requires Rust 1.85+, SDL3, FreeType2, PCRE2.
 ---
 
 # Installation
@@ -9,7 +9,7 @@ description: Install Lite-Anvil from prebuilt binaries or build from source on L
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/danpozmanter/lite-anvil/releases).
 
-Release archives contain both the `lite-anvil` (full editor) and `nano-anvil` (minimal single-file editor) binaries. Install whichever you need, or both.
+Release archives contain three binaries: `lite-anvil` (full editor), `nano-anvil` (minimal single-file editor), and `note-anvil` (markdown note-taking app). Install whichever you need, or all three.
 
 ### Linux
 

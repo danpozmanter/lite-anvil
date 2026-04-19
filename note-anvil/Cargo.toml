@@ -1,0 +1,16 @@
+[package]
+name = "note-anvil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A markdown note-taking app built on the anvil-core editor (sister to lite-anvil and nano-anvil)"
+
+[[bin]]
+name = "note-anvil"
+path = "src/main.rs"
+
+[dependencies]
+anvil-core = { path = "../anvil-core" }
+anyhow = "1.0.102"
+env_logger = "0.11.9"

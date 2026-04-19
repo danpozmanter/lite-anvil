@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Lite-Anvil and Nano-Anvil to /Applications.
+# Install Lite Anvil and Nano Anvil to /Applications.
 #
 # Usage: bash install-mac.sh
 #
@@ -37,6 +37,10 @@ if [ -d "$SCRIPT_DIR/NanoAnvil.app" ]; then
     install_app "$SCRIPT_DIR/NanoAnvil.app"
 fi
 
+if [ -d "$SCRIPT_DIR/NoteAnvil.app" ]; then
+    install_app "$SCRIPT_DIR/NoteAnvil.app"
+fi
+
 install_cli_symlink() {
     local binary="$1"
     local linkname="$2"
@@ -58,6 +62,7 @@ echo "Installing CLI symlinks (may prompt for sudo)..."
 for bin_dir in /usr/local/bin /opt/homebrew/bin; do
     install_cli_symlink "/Applications/LiteAnvil.app/Contents/MacOS/lite-anvil" lite-anvil "$bin_dir"
     install_cli_symlink "/Applications/NanoAnvil.app/Contents/MacOS/nano-anvil" nano-anvil "$bin_dir"
+    install_cli_symlink "/Applications/NoteAnvil.app/Contents/MacOS/note-anvil" note-anvil "$bin_dir"
 done
 
 echo ""

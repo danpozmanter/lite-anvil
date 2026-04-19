@@ -226,6 +226,10 @@ sign_macos_app() {
         codesign --force --sign - --timestamp=none "$app/Contents/MacOS/nano-anvil"
     fi
 
+    if [ -f "$app/Contents/MacOS/note-anvil" ]; then
+        codesign --force --sign - --timestamp=none "$app/Contents/MacOS/note-anvil"
+    fi
+
     if [ -d "$app/Contents/Frameworks" ]; then
         local item
         while IFS= read -r item; do
@@ -247,7 +251,7 @@ BINARY="target/$RUST_TARGET/release/lite-anvil"
 # Ensure binaries have @executable_path RPATHs for .app bundle layout.
 # This is necessary because cargo's build.rs RPATH may not survive
 # across cached builds.
-for bin in "$BINARY" "target/$RUST_TARGET/release/nano-anvil"; do
+for bin in "$BINARY" "target/$RUST_TARGET/release/nano-anvil" "target/$RUST_TARGET/release/note-anvil"; do
     [ -f "$bin" ] || continue
     install_name_tool -add_rpath @executable_path/../Frameworks "$bin" 2>/dev/null || true
     install_name_tool -add_rpath @executable_path "$bin" 2>/dev/null || true
@@ -312,9 +316,9 @@ if [ -f "$NANO_BINARY" ]; then
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Nano-Anvil</string>
+    <string>Nano Anvil</string>
     <key>CFBundleDisplayName</key>
-    <string>Nano-Anvil</string>
+    <string>Nano Anvil</string>
     <key>CFBundleIdentifier</key>
     <string>com.nano-anvil.NanoAnvil</string>
     <key>CFBundleVersion</key>
@@ -336,10 +340,78 @@ PLISTEOF
     sign_macos_app "$NANO_APP"
 fi
 
+# Build NoteAnvil.app as a separate bundle.
+NOTE_BINARY="target/$RUST_TARGET/release/note-anvil"
+NOTE_APP="$DIST_DIR/NoteAnvil.app"
+if [ -f "$NOTE_BINARY" ]; then
+    rm -rf "$NOTE_APP"
+    mkdir -p "$NOTE_APP/Contents/MacOS" "$NOTE_APP/Contents/Frameworks"
+    cp "$NOTE_BINARY" "$NOTE_APP/Contents/MacOS/note-anvil"
+    chmod 755 "$NOTE_APP/Contents/MacOS/note-anvil"
+    cp -r data "$NOTE_APP/Contents/MacOS/data"
+
+    bundle_macos_dylibs_note() {
+        local app="$1"
+        local binary="$app/Contents/MacOS/note-anvil"
+        local frameworks_dir="$app/Contents/Frameworks"
+        local processed_list="$frameworks_dir/.bundled-dylibs"
+        local queued_list="$frameworks_dir/.bundled-queue"
+
+        mkdir -p "$frameworks_dir"
+        : > "$processed_list"
+        : > "$queued_list"
+
+        bundle_macos_binary_deps "$binary"
+
+        local queue_index=1
+        local queued_dep
+        while queued_dep="$(sed -n "${queue_index}p" "$queued_list")" && [ -n "$queued_dep" ]; do
+            local nested_dep
+            while IFS= read -r nested_dep; do
+                macos_should_bundle_dep "$nested_dep" || continue
+                bundle_macos_dep "$queued_dep" "$nested_dep"
+            done < <(macos_list_deps "$queued_dep")
+            queue_index=$((queue_index + 1))
+        done
+
+        rm -f "$processed_list" "$queued_list"
+    }
+    bundle_macos_dylibs_note "$NOTE_APP"
+
+    cat > "$NOTE_APP/Contents/Info.plist" << PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Note Anvil</string>
+    <key>CFBundleDisplayName</key>
+    <string>Note Anvil</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.note-anvil.NoteAnvil</string>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundleExecutable</key>
+    <string>note-anvil</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+PLISTEOF
+
+    sign_macos_app "$NOTE_APP"
+fi
+
 sign_macos_app "$APP"
 
 cp "$ROOT_DIR/scripts/install-mac.sh" "$DIST_DIR/install-mac.sh"
-(cd "$DIST_DIR" && zip -qry "$(basename "$ARCHIVE")" LiteAnvil.app NanoAnvil.app install-mac.sh)
+(cd "$DIST_DIR" && zip -qry "$(basename "$ARCHIVE")" LiteAnvil.app NanoAnvil.app NoteAnvil.app install-mac.sh)
 
 echo "Built archive: $ARCHIVE"
-echo "App bundles:   $APP, $NANO_APP"
+echo "App bundles:   $APP, $NANO_APP, $NOTE_APP"

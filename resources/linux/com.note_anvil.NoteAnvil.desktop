@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Note Anvil
+Comment=Markdown note-taking app built on the Anvil editor
+Exec=note-anvil %F
+Icon=note-anvil
+Terminal=false
+StartupWMClass=note-anvil
+Categories=Office;TextEditor;Utility;
+MimeType=text/markdown;text/x-markdown;

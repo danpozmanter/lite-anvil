@@ -76,7 +76,7 @@ impl EmptyView {
         }
 
         // Title
-        let title = "Lite-Anvil";
+        let title = &self.version[..self.version.find(" v").unwrap_or(self.version.len())];
         let big_h = ctx.font_height(style.big_font);
         let big_w = ctx.font_width(style.big_font, title);
         let logo_y = y - big_h + big_h / 4.0;
