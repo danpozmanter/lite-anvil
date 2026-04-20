@@ -250,7 +250,13 @@ mod tests {
             fake_file.to_string_lossy().as_ref(),
             "",
         );
-        assert_eq!(got, doc_parent.to_string_lossy());
+        // Compare by components so trailing-separator differences
+        // between platforms (Windows and macOS return `env::temp_dir()`
+        // with one, Linux without) don't break the equality check.
+        assert_eq!(
+            std::path::Path::new(&got).components().collect::<Vec<_>>(),
+            doc_parent.components().collect::<Vec<_>>(),
+        );
     }
 
     #[test]

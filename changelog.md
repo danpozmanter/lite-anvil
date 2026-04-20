@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.10.3] - 2026-04-19 -- Terminal CWD test fix (Windows/macOS).
+
+* Fixed `resolve_cwd_falls_back_to_doc_dir_when_no_project` failing on Windows and macOS: `env::temp_dir()` returns a trailing-separator form there but not on Linux, so string equality broke. Compare by `Path::components()` instead.
+
 ## [2.10.2] - 2026-04-19 -- Windows build fix.
 
 * Fixed Windows build: `TerminalPanel::set_palette` and the `pending_palette` / `pending_default_fg` fields were only added to the Unix impl.
