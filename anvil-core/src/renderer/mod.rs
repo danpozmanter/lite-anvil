@@ -98,12 +98,39 @@ pub fn native_end_frame() {
 /// Drop per-window caches that are cheap to rebuild on next draw.
 /// Called when the window is occluded/hidden so we don't hold onto
 /// megabytes of glyph bitmaps and render-cache command buffers while
-/// the compositor isn't showing our frames.
+/// the compositor isn't showing our frames. On macOS we additionally
+/// ask the default malloc zone to release pages back to the kernel,
+/// because the system allocator otherwise keeps free-listed arenas
+/// mapped and RSS never drops even after Rust `drop`s the caches.
 pub fn drop_caches() {
     CACHE.with(|c| {
         *c.borrow_mut() = None;
     });
     font::clear_glyph_caches();
+    #[cfg(target_os = "macos")]
+    macos_release_free_pages();
+}
+
+/// Ask libmalloc to return pooled-but-free pages to the kernel.
+/// `malloc_zone_pressure_relief(NULL, 0)` walks every registered zone
+/// and runs its "under pressure" cleanup; this is what Foundation
+/// calls from its own `-[NSAutoreleasePool emptyPool]` pressure handler.
+/// No-op if the symbol is missing (very old SDKs).
+#[cfg(target_os = "macos")]
+fn macos_release_free_pages() {
+    extern "C" {
+        fn malloc_zone_pressure_relief(
+            zone: *mut libc::c_void,
+            goal: libc::size_t,
+        ) -> libc::size_t;
+    }
+    // SAFETY: the C signature matches libmalloc's definition; passing
+    // NULL for `zone` means "every zone", and `goal == 0` means "take
+    // whatever you can." The call is defined to be safe to make from
+    // any thread.
+    unsafe {
+        let _ = malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+    }
 }
 
 /// macOS memory-pressure level.  `Some(0)` normal, `Some(1)` warn,

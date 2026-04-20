@@ -1606,27 +1606,44 @@ pub fn run(
 
         // Idle-drop: after N seconds with no events, release cached
         // glyph bitmaps and command buffers. Next interactive frame
-        // rebuilds them lazily. This is most of the benefit of the
-        // macOS memory-pressure hook without needing platform FFI.
+        // rebuilds them lazily. Also prune the LSP state's per-file
+        // HashMaps and the per-doc tokenize cache - those are the
+        // actual steady-state growth on macOS, not the glyph cache.
         if !dropped_caches_for_idle
             && last_activity.elapsed().as_secs() >= IDLE_DROP_SECS
         {
             crate::renderer::drop_caches();
+            let open_paths: Vec<String> =
+                docs.iter().map(|d| d.path.clone()).collect();
+            lsp_state.prune_to_open_files(open_paths.iter().map(|s| s.as_str()));
+            for d in docs.iter() {
+                let mut cache = d.token_cache.borrow_mut();
+                cache.lines.clear();
+                cache.change_id = -1;
+            }
             dropped_caches_for_idle = true;
         }
 
         // macOS memory-pressure probe. `None` on other platforms.
         if last_mem_pressure_check.elapsed().as_secs() >= MEM_PRESSURE_CHECK_SECS {
             last_mem_pressure_check = Instant::now();
-            if let Some(level) = crate::renderer::macos_memory_pressure_level() {
-                if level >= 1 {
-                    // WARN or CRITICAL -- release everything reclaimable.
-                    crate::renderer::drop_caches();
-                    compiled_syntax_cache.retain(|k, _| {
-                        docs.iter()
-                            .any(|d| d.path.rsplit('.').next().unwrap_or("") == k)
-                    });
-                    compiled_syntax_mru.retain(|k| compiled_syntax_cache.contains_key(k));
+            if let Some(level) = crate::renderer::macos_memory_pressure_level()
+                && level >= 1
+            {
+                // WARN or CRITICAL -- release everything reclaimable.
+                crate::renderer::drop_caches();
+                let open_paths: Vec<String> =
+                    docs.iter().map(|d| d.path.clone()).collect();
+                lsp_state.prune_to_open_files(open_paths.iter().map(|s| s.as_str()));
+                compiled_syntax_cache.retain(|k, _| {
+                    docs.iter()
+                        .any(|d| d.path.rsplit('.').next().unwrap_or("") == k)
+                });
+                compiled_syntax_mru.retain(|k| compiled_syntax_cache.contains_key(k));
+                for d in docs.iter() {
+                    let mut cache = d.token_cache.borrow_mut();
+                    cache.lines.clear();
+                    cache.change_id = -1;
                 }
             }
         }

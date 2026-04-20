@@ -844,12 +844,20 @@ pub(crate) fn build_render_lines(
         // Bulk-invalidate the per-line tokenize cache if the buffer has
         // changed since we last populated it. This keeps the happy-path
         // (pure scrolling) effectively free while still picking up real
-        // edits on the next frame.
+        // edits on the next frame. Also cap entries so a user who scrolls
+        // through a multi-megabyte file can't balloon the cache without
+        // bound - drop entries outside a viewport-centred window.
+        const TOKEN_CACHE_WINDOW: usize = 4096;
         if let Some(cache_cell) = token_cache {
             let mut cache = cache_cell.borrow_mut();
             if cache.change_id != b.change_id {
                 cache.lines.clear();
                 cache.change_id = b.change_id;
+            }
+            if cache.lines.len() > TOKEN_CACHE_WINDOW {
+                let lo = first.saturating_sub(TOKEN_CACHE_WINDOW / 2);
+                let hi = last + TOKEN_CACHE_WINDOW / 2;
+                cache.lines.retain(|&line_idx, _| line_idx >= lo && line_idx <= hi);
             }
         }
         while i <= last && i <= b.lines.len() {

@@ -1,5 +1,11 @@
 # Change Log
 
+## [2.11.1] - 2026-04-20 -- macOS memory: diagnostic-map prune + libmalloc pressure-relief.
+
+* macOS memory: `drop_caches()` now calls `malloc_zone_pressure_relief(NULL, 0)` so the system allocator actually returns free-listed arenas to the kernel instead of keeping them mapped. Previous `Drop`-based cleanup never touched pages at the malloc-zone layer, so RSS stayed high.
+* LSP state is pruned to the set of currently-open files on idle-drop and memory-pressure ticks: `diagnostics`, `pending_requests`, `pending_request_uris`, and stale `inlay_hints` for files no longer open. Servers that stream `publishDiagnostics` for every touched file were leaving a HashMap entry behind per file visited in the session.
+* Per-doc tokenize cache cleared on the same ticks, and bounded in steady state to a ~4k-line window around the viewport so scrolling through a multi-megabyte file can't accumulate tokens for lines far outside view.
+
 ## [2.11.0] - 2026-04-19 -- Notes sidebar search/sort; checkbox polish; Mac memory; test runner restored, uninstall script.
 
 * Note Anvil sidebar: NoteSquirrel-style A-Z / Recent sort (each with asc/desc toggle) and case-insensitive substring search.

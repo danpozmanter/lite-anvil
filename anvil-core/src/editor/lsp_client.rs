@@ -70,6 +70,44 @@ impl LspState {
         self.next_request_id += 1;
         id
     }
+
+    /// Release every cached per-file entry that doesn't match an
+    /// open-document path. `open_paths` is the set of paths the main
+    /// loop currently has open. Without this, servers that stream
+    /// `publishDiagnostics` for every touched file leave a HashMap
+    /// entry behind for every file ever visited in the session - the
+    /// single largest source of steady-state memory growth on macOS.
+    pub fn prune_to_open_files<I, S>(&mut self, open_paths: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let keep: std::collections::HashSet<String> = open_paths
+            .into_iter()
+            .map(|p| p.as_ref().to_string())
+            .collect();
+        self.diagnostics.retain(|k, _| keep.contains(k));
+        // `pending_requests` / `pending_request_uris` keys are per-request
+        // ids; drop entries whose URI points at a file we no longer hold.
+        self.pending_requests
+            .retain(|_, uri| uri_matches_any(uri, &keep));
+        self.pending_request_uris
+            .retain(|_, uri| uri_matches_any(uri, &keep));
+        if !uri_matches_any(&self.inlay_hints_uri, &keep) {
+            self.inlay_hints.clear();
+            self.inlay_hints_uri.clear();
+        }
+    }
+}
+
+fn uri_matches_any(uri: &str, keep: &std::collections::HashSet<String>) -> bool {
+    if keep.contains(uri) {
+        return true;
+    }
+    if let Some(path) = uri.strip_prefix("file://") {
+        return keep.contains(path);
+    }
+    false
 }
 
 /// Autocomplete popup state for LSP completions.
