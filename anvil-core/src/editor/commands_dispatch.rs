@@ -21,6 +21,38 @@ match cmd.as_str() {
 "core:force-quit" => {
     quit = true;
 }
+"core:new-window" => {
+    if let Ok(exe) = std::env::current_exe() {
+        let mut cmd = std::process::Command::new(exe);
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        // Detach from the parent so the new window survives this process
+        // and doesn't inherit the controlling terminal / session.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // SAFETY: setsid has no preconditions beyond "called in the
+            // child after fork"; the closure runs there.
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const DETACHED_PROCESS: u32 = 0x0000_0008;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        }
+        if let Err(e) = cmd.spawn() {
+            log_to_file(userdir, &format!("core:new-window spawn failed: {e}"));
+        }
+    }
+}
 "core:find-command" => {
     palette_active = true;
     palette_query.clear();
