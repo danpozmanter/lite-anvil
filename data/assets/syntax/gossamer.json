@@ -1,0 +1,252 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "//",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Gossamer",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["b?\"", "\"", "\\"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "b?'\\?.'",
+  "type": "string"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*!",
+  "type": "keyword"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "0b[01_]+",
+  "type": "number"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "0o[0-7_]+",
+  "type": "number"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[eE]?[%d_]*",
+  "type": "number"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "%|>",
+  "type": "keyword"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.]",
+  "type": "operator"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "Arc": "keyword2",
+  "Array": "keyword2",
+  "BTreeMap": "keyword2",
+  "BTreeSet": "keyword2",
+  "Box": "keyword2",
+  "Err": "literal",
+  "HashMap": "keyword2",
+  "HashSet": "keyword2",
+  "Mutex": "keyword2",
+  "None": "literal",
+  "Ok": "literal",
+  "Option": "keyword2",
+  "Receiver": "keyword2",
+  "Result": "keyword2",
+  "Self": "keyword",
+  "Sender": "keyword2",
+  "Some": "literal",
+  "String": "keyword2",
+  "Vec": "keyword2",
+  "as": "keyword",
+  "async": "keyword",
+  "await": "keyword",
+  "bool": "keyword2",
+  "break": "keyword",
+  "char": "keyword2",
+  "const": "keyword",
+  "continue": "keyword",
+  "crate": "keyword",
+  "defer": "keyword",
+  "dyn": "keyword",
+  "else": "keyword",
+  "enum": "keyword",
+  "extern": "keyword",
+  "f32": "keyword2",
+  "f64": "keyword2",
+  "false": "literal",
+  "fn": "keyword",
+  "for": "keyword",
+  "go": "keyword",
+  "i128": "keyword2",
+  "i16": "keyword2",
+  "i32": "keyword2",
+  "i64": "keyword2",
+  "i8": "keyword2",
+  "if": "keyword",
+  "impl": "keyword",
+  "in": "keyword",
+  "isize": "keyword2",
+  "let": "keyword",
+  "loop": "keyword",
+  "match": "keyword",
+  "mod": "keyword",
+  "mut": "keyword",
+  "pub": "keyword",
+  "ref": "keyword",
+  "return": "keyword",
+  "select": "keyword",
+  "self": "keyword",
+  "static": "keyword",
+  "str": "keyword2",
+  "struct": "keyword",
+  "super": "keyword",
+  "trait": "keyword",
+  "true": "literal",
+  "type": "keyword",
+  "u128": "keyword2",
+  "u16": "keyword2",
+  "u32": "keyword2",
+  "u64": "keyword2",
+  "u8": "keyword2",
+  "unsafe": "keyword",
+  "use": "keyword",
+  "usize": "keyword2",
+  "where": "keyword",
+  "while": "keyword",
+  "yield": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["/*", "*/"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.gos$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "//.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["/%*", "%*/"]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

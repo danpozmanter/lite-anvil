@@ -35,6 +35,7 @@
   "fsi":      { "codepoint": 57390, "color": "#519aba" },
   "fsx":      { "codepoint": 57390, "color": "#519aba" },
   "go":       { "codepoint": 57402, "color": "#519aba" },
+  "gos":      { "codepoint": 71,    "color": "#f5f5f5" },
   "java":     { "codepoint": 57424, "color": "#cc3e44" },
   "kt":       { "codepoint": 57432, "color": "#e37933" },
   "kts":      { "codepoint": 57432, "color": "#e37933" },

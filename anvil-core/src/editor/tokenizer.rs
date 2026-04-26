@@ -408,17 +408,75 @@ pub fn regex_find(
 
 /// Tokenize a single line using a compiled syntax, returning a flat list of tokens.
 pub fn tokenize_line(syntax: &CompiledSyntax, line: &str) -> Vec<Token> {
+    tokenize_line_with_state(syntax, line, None).0
+}
+
+/// Tokenize one line carrying multi-line state across calls. `in_state` is
+/// the index of a Pair pattern that was opened on a previous line and is
+/// still unclosed (e.g. `/* … `). The returned state is the same shape:
+/// `Some(idx)` when this line ended inside an open Pair, `None` otherwise.
+/// Callers thread the returned state into the next line so block comments
+/// and other paired constructs span line boundaries.
+pub fn tokenize_line_with_state(
+    syntax: &CompiledSyntax,
+    line: &str,
+    in_state: Option<usize>,
+) -> (Vec<Token>, Option<usize>) {
     let mut tokens = Vec::new();
     let line_len = char_len(line);
-    if line_len == 0 {
-        return tokens;
-    }
     let mut pos: usize = 1;
+    let mut state = in_state;
+
+    // Continuation: line starts inside a still-open Pair from a previous
+    // line. Look for that pattern's close on this line; if absent, the
+    // whole line is part of the pair.
+    if let Some(idx) = state {
+        if let Some(pat) = syntax.patterns.get(idx) {
+            if let PatternMatcher::Pair { close, .. } = &pat.matcher {
+                let token_type = pat
+                    .token_types
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("normal");
+                if line_len == 0 {
+                    return (tokens, state);
+                }
+                match regex_find(close, line, pos, false) {
+                    Ok(close_res) if close_res.len() >= 2 && close_res[0] >= pos => {
+                        let matched = usub(line, pos, close_res[1]);
+                        push_token(&mut tokens, token_type, matched);
+                        pos = close_res[1] + 1;
+                        state = None;
+                    }
+                    _ => {
+                        let matched = usub(line, pos, line_len);
+                        push_token(&mut tokens, token_type, matched);
+                        return (tokens, state);
+                    }
+                }
+            } else {
+                // State references a non-Pair pattern (shouldn't happen);
+                // drop it and tokenize normally.
+                state = None;
+            }
+        } else {
+            state = None;
+        }
+    }
+
+    if line_len == 0 {
+        return (tokens, state);
+    }
+
     while pos <= line_len {
         let mut best_start = usize::MAX;
         let mut best_end: usize = 0;
         let mut best_types: Option<&[String]> = None;
-        for pattern in &syntax.patterns {
+        // Tracks an unclosed Pair candidate: (start, idx). Used as a
+        // fallback when no other pattern matches earlier — it eats the
+        // rest of the line and sets state for the next line.
+        let mut unclosed_pair: Option<(usize, usize)> = None;
+        for (idx, pattern) in syntax.patterns.iter().enumerate() {
             if pattern.disabled {
                 continue;
             }
@@ -434,19 +492,52 @@ pub fn tokenize_line(syntax: &CompiledSyntax, line: &str) -> Vec<Token> {
                 }
                 PatternMatcher::Pair { open, close, .. } => {
                     if let Ok(open_res) = regex_find(open, line, pos, false) {
-                        if open_res.len() >= 2 && open_res[0] >= pos && open_res[0] < best_start {
-                            // Search for the close pattern after the open match.
+                        if open_res.len() >= 2 && open_res[0] >= pos {
                             let close_start = open_res[1] + 1;
-                            if let Ok(close_res) = regex_find(close, line, close_start, false) {
-                                if close_res.len() >= 2 {
-                                    best_start = open_res[0];
-                                    best_end = close_res[1];
-                                    best_types = Some(&pattern.token_types);
+                            let close_match = regex_find(close, line, close_start, false);
+                            match close_match {
+                                Ok(close_res) if close_res.len() >= 2 => {
+                                    if open_res[0] < best_start {
+                                        best_start = open_res[0];
+                                        best_end = close_res[1];
+                                        best_types = Some(&pattern.token_types);
+                                    }
+                                }
+                                _ => {
+                                    // Open with no close on this line; remember
+                                    // as a fallback. Earliest open wins ties.
+                                    if unclosed_pair
+                                        .is_none_or(|(s, _)| open_res[0] < s)
+                                    {
+                                        unclosed_pair = Some((open_res[0], idx));
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+        // If the earliest unclosed Pair starts no later than any other
+        // match, commit to it: emit it as the pair's token type up to end
+        // of line and carry the state forward. Ties go to the pair because
+        // its match covers the rest of the line, where the competing
+        // single-char match (e.g. `/` operator vs `/*` open) only covers
+        // one character — pair always reads farther on a tie.
+        if let Some((start, idx)) = unclosed_pair {
+            if start <= best_start {
+                if start > pos {
+                    push_token(&mut tokens, "normal", usub(line, pos, start - 1));
+                }
+                let token_type = syntax
+                    .patterns
+                    .get(idx)
+                    .and_then(|p| p.token_types.first())
+                    .map(String::as_str)
+                    .unwrap_or("normal");
+                push_token(&mut tokens, token_type, usub(line, start, line_len));
+                state = Some(idx);
+                return (tokens, state);
             }
         }
         if let Some(types) = best_types {
@@ -467,7 +558,7 @@ pub fn tokenize_line(syntax: &CompiledSyntax, line: &str) -> Vec<Token> {
             break;
         }
     }
-    tokens
+    (tokens, state)
 }
 
 /// Compile a `SyntaxDefinition` (from `native::syntax`) into a `CompiledSyntax`.

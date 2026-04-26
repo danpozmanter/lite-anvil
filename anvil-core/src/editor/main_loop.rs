@@ -470,6 +470,7 @@ fn truncate_tab_name(name: &str, max_chars: usize) -> String {
 fn markdown_lang_to_ext(lang: &str) -> &str {
     match lang.to_ascii_lowercase().as_str() {
         "rust" => "rs",
+        "gossamer" => "gos",
         "python" | "python3" => "py",
         "javascript" | "node" => "js",
         "typescript" => "ts",
@@ -5528,6 +5529,52 @@ pub fn run(
                 EditorEvent::MouseMoved { x, y, .. } => {
                     mouse_x = *x;
                     mouse_y = *y;
+                    // Hover highlight for the context menu (right-click on a
+                    // tab, sidebar entry, doc area, or the tab-overflow
+                    // dropdown). Without this `selected` only changes via
+                    // keyboard up/down, so a freshly-opened menu had no
+                    // active-row indicator.
+                    if context_menu.visible {
+                        use crate::editor::view::DrawContext as _;
+                        let item_h = style.font_height + style.padding_y;
+                        let menu_x = context_menu.position.x;
+                        let menu_y = context_menu.position.y;
+                        let mut menu_w = 0.0_f64;
+                        for it in &context_menu.items {
+                            let w = draw_ctx.font_width(style.font, &it.text);
+                            let total_w = if let Some(ref info) = it.info {
+                                w + draw_ctx.font_width(style.font, info)
+                                    + style.padding_x * 3.0
+                            } else {
+                                w + style.padding_x * 2.0
+                            };
+                            menu_w = menu_w.max(total_w);
+                        }
+                        menu_w = menu_w.max(120.0);
+                        let menu_h = item_h * context_menu.items.len() as f64
+                            + style.padding_y;
+                        let new_sel = if *x >= menu_x
+                            && *x <= menu_x + menu_w
+                            && *y >= menu_y
+                            && *y <= menu_y + menu_h
+                        {
+                            let rel = (*y - menu_y - style.padding_y / 2.0) / item_h;
+                            let idx = rel.floor().max(0.0) as usize;
+                            if idx < context_menu.items.len()
+                                && !context_menu.items[idx].separator
+                            {
+                                Some(idx)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        if context_menu.selected != new_sel {
+                            context_menu.selected = new_sel;
+                            redraw = true;
+                        }
+                    }
                     // Tab drag reorder.
                     if let Some(drag_idx) = tab_dragging {
                         let tab_h = style.font_height + style.padding_y * 3.0;
@@ -7556,10 +7603,18 @@ pub fn run(
                             if entry.is_dir {
                                 let icon = if entry.expanded { "D" } else { "d" };
                                 let icon_y = ey + (entry_h - icon_font_h) / 2.0;
+                                // Centre the folder glyph's advance in the
+                                // icon column the same way file icons are
+                                // centred — otherwise folder rows looked
+                                // outdented next to the now-centred file
+                                // rows.
+                                let folder_w =
+                                    draw_ctx.font_width(style.icon_font, icon);
+                                let folder_x = x + (icon_w - folder_w) / 2.0;
                                 draw_ctx.draw_text(
                                     style.icon_font,
                                     icon,
-                                    x,
+                                    folder_x,
                                     icon_y,
                                     style.accent.to_array(),
                                 );
@@ -7574,12 +7629,45 @@ pub fn run(
                                     let glyph = char::from_u32(fi.codepoint)
                                         .map(|c| c.to_string())
                                         .unwrap_or_default();
+                                    // Codepoints below seti.ttf's private-use
+                                    // range (U+E000+) aren't in that font; use
+                                    // the body font so `file_icons.json` can
+                                    // map an extension to a plain ASCII letter
+                                    // (e.g. `G` for Gossamer). Body letters
+                                    // render smaller than the surrounding
+                                    // seti glyphs — the centring math below
+                                    // still places them on-axis, just at the
+                                    // body font's natural visual weight.
+                                    let icon_font = if fi.codepoint < 0xE000 {
+                                        style.font
+                                    } else {
+                                        style.seti_font
+                                    };
+                                    // Vertical: centre against seti's line
+                                    // height regardless of which font drew it,
+                                    // so a body-font letter sits on the same
+                                    // baseline as the seti icons in adjacent
+                                    // rows.
                                     let seti_h = draw_ctx.font_height(style.seti_font);
                                     let icon_y = ey + (entry_h - seti_h) / 2.0;
+                                    // Horizontal: centre each glyph's advance
+                                    // box in the icon column. The default
+                                    // plaintext seti glyph has an advance
+                                    // wider than `icon_w` and so produces a
+                                    // negative offset — that's intentional, a
+                                    // small leftward bleed into the indent
+                                    // gutter is invisible and pulls the
+                                    // glyph's visual centre back over the
+                                    // column centre. Without it, plaintext
+                                    // (and any other wide-advance icon) read
+                                    // as lopsided to the right.
+                                    let glyph_w =
+                                        draw_ctx.font_width(icon_font, &glyph);
+                                    let icon_x = x + (icon_w - glyph_w) / 2.0;
                                     draw_ctx.draw_text(
-                                        style.seti_font,
+                                        icon_font,
                                         &glyph,
-                                        x,
+                                        icon_x,
                                         icon_y,
                                         fi.color,
                                     );

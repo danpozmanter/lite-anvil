@@ -1,5 +1,14 @@
 # Change Log
 
+## [2.11.8] - 2026-04-25 -- Gossamer language support, icon alignment, context menu highlighting.
+
+* New syntax definition for `.gos` files (Gossamer)
+* Sidebar file icon for `.gos`
+* `|>` Pipe syntax fix.
+* File type icon alignment fix.
+* Tokenizer now threads multi-line state across lines: `/* … */` block comments (and any other paired construct) span line boundaries instead of breaking at the first newline.
+* Right-click context menus (tab, sidebar, doc area, tab-overflow dropdown) highlight the row under the cursor.
+
 ## [2.11.7] - 2026-04-24 -- Markdown preview styling + code-block syntax, Save As overwrite guard, faster path suggestions, highlighting fixes.
 
 * Markdown preview: `**bold**` renders via synthetic double-strike (we don't ship a bold font slot); `*italic*` renders in the accent colour so it's visibly distinct from body text.

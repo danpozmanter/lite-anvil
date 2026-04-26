@@ -25,11 +25,21 @@ use crate::editor::view::View;
 pub(crate) struct TokenCache {
     pub change_id: i64,
     pub lines: HashMap<usize, std::sync::Arc<Vec<Token>>>,
+    /// Tokenizer state at the END of each line. `None` means the line
+    /// finished outside any multi-line construct; `Some(idx)` means it
+    /// finished inside the pair pattern at that index in the compiled
+    /// syntax (e.g. an unterminated `/* … `). Threaded into the next
+    /// line so block comments and pair-strings span line boundaries.
+    pub line_end_states: HashMap<usize, Option<usize>>,
 }
 
 impl Default for TokenCache {
     fn default() -> Self {
-        Self { change_id: -1, lines: HashMap::new() }
+        Self {
+            change_id: -1,
+            lines: HashMap::new(),
+            line_end_states: HashMap::new(),
+        }
     }
 }
 

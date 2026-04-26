@@ -552,6 +552,7 @@ pub(crate) fn fallback_tokenize_supports(ext: &str) -> bool {
             | "sh"
             | "yml"
             | "yaml"
+            | "gos"
     )
 }
 
@@ -568,6 +569,18 @@ pub(crate) fn classify_word(word: &str, ext: &str) -> &'static str {
             | "Vec" | "Box" | "Arc" | "Mutex" | "HashMap" | "Ok" | "Err" | "Some" | "None" => {
                 "keyword2"
             }
+            _ => "normal",
+        },
+        "gos" => match word {
+            "fn" | "let" | "mut" | "pub" | "use" | "mod" | "struct" | "enum" | "impl" | "trait"
+            | "for" | "while" | "loop" | "if" | "else" | "match" | "return" | "break"
+            | "continue" | "where" | "type" | "const" | "static" | "ref" | "self" | "Self"
+            | "super" | "crate" | "as" | "in" | "async" | "await" | "unsafe" | "extern"
+            | "dyn" | "true" | "false" | "go" | "defer" | "select" | "yield" => "keyword",
+            "bool" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
+            | "i64" | "i128" | "isize" | "f32" | "f64" | "str" | "String" | "Option" | "Result"
+            | "Vec" | "Box" | "Arc" | "Mutex" | "HashMap" | "HashSet" | "BTreeMap" | "BTreeSet"
+            | "Array" | "Sender" | "Receiver" | "Ok" | "Err" | "Some" | "None" => "keyword2",
             _ => "normal",
         },
         "lua" => match word {
@@ -874,7 +887,35 @@ pub(crate) fn build_render_lines(
             let mut cache = cache_cell.borrow_mut();
             if cache.change_id != b.change_id {
                 cache.lines.clear();
+                cache.line_end_states.clear();
                 cache.change_id = b.change_id;
+            }
+        }
+        // Walk every line from 1 up to `first` to compute the multi-line
+        // tokenizer state that line `first` should start with — needed for
+        // block comments / pair-strings that begin above the viewport.
+        // Cached states make this O(1) on the happy path (pure scroll).
+        let mut state: Option<usize> = None;
+        if let Some(syntax) = compiled {
+            for ln in 1..first.min(b.lines.len() + 1) {
+                let cached = if let Some(cache_cell) = token_cache {
+                    cache_cell.borrow().line_end_states.get(&ln).copied()
+                } else {
+                    None
+                };
+                state = if let Some(end) = cached {
+                    end
+                } else {
+                    let line_text =
+                        b.lines.get(ln - 1).map(|s| s.as_str()).unwrap_or("");
+                    let (_, end) = tokenizer::tokenize_line_with_state(
+                        syntax, line_text, state,
+                    );
+                    if let Some(cache_cell) = token_cache {
+                        cache_cell.borrow_mut().line_end_states.insert(ln, end);
+                    }
+                    end
+                };
             }
         }
         while i <= last && i <= b.lines.len() {
@@ -896,15 +937,29 @@ pub(crate) fn build_render_lines(
                 let toks_arc: std::sync::Arc<Vec<tokenizer::Token>> = if let Some(cache_cell) = token_cache {
                     let mut cache = cache_cell.borrow_mut();
                     if let Some(existing) = cache.lines.get(&i) {
+                        // Cache hit: advance state from the matching cached
+                        // end-state so the next line still sees the right
+                        // open-pair carryover.
+                        if let Some(end) = cache.line_end_states.get(&i).copied() {
+                            state = end;
+                        }
                         existing.clone()
                     } else {
-                        let computed =
-                            std::sync::Arc::new(tokenizer::tokenize_line(syntax, raw_line));
-                        cache.lines.insert(i, computed.clone());
-                        computed
+                        let (computed, end) = tokenizer::tokenize_line_with_state(
+                            syntax, raw_line, state,
+                        );
+                        let arc = std::sync::Arc::new(computed);
+                        cache.lines.insert(i, arc.clone());
+                        cache.line_end_states.insert(i, end);
+                        state = end;
+                        arc
                     }
                 } else {
-                    std::sync::Arc::new(tokenizer::tokenize_line(syntax, raw_line))
+                    let (computed, end) = tokenizer::tokenize_line_with_state(
+                        syntax, raw_line, state,
+                    );
+                    state = end;
+                    std::sync::Arc::new(computed)
                 };
                 toks_arc
                     .iter()
