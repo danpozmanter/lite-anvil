@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.11.10] - 2026-04-28 -- Dirty-state indicator in window title.
+
+* Window title now shows a leading `*` marker when the active document has unsaved changes, in both Lite-Anvil and Nano-Anvil. Nano-Anvil previously had no dirty indicator at all (no tab bar); the OS title bar / taskbar now surface unsaved state.
+
 ## [2.11.9] - 2026-04-27 -- Gossamer LSP wiring.
 
 * Builtin LSP spec for Gossamer: editor now auto-launches `gos lsp` for `.gos` buffers when a `project.toml` (or `.git`) root is found, enabling diagnostics, semantic tokens, hover, and inlay hints from the Gossamer language server.

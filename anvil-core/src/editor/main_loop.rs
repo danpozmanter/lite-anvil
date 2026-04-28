@@ -6892,14 +6892,21 @@ pub fn run(
                 } else {
                     "Nano Anvil"
                 };
-                let title = docs
-                    .get(active_tab)
+                let active_doc_for_title = docs.get(active_tab);
+                let title = active_doc_for_title
                     .map(|d| d.name.as_str())
                     .unwrap_or(app_name);
-                if window_title != title {
-                    let display = crate::editor::doc_view::format_window_title(title, app_name);
+                let title_dirty = active_doc_for_title.is_some_and(doc_is_modified);
+                let title_key = if title_dirty {
+                    format!("*{title}")
+                } else {
+                    title.to_string()
+                };
+                if window_title != title_key {
+                    let display =
+                        crate::editor::doc_view::format_window_title(title, app_name, title_dirty);
                     crate::window::set_window_title(&display);
-                    window_title = title.to_string();
+                    window_title = title_key;
                 }
                 status_view.left_items.clear();
                 status_view.right_items.clear();

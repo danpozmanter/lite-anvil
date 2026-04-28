@@ -1250,9 +1250,13 @@ pub(crate) fn draw_breadcrumb(
 
 /// Format the window title from the active document's `name`. Empty name
 /// collapses to just `app_name`; anything else becomes `"name - app_name"`.
-pub(crate) fn format_window_title(doc_name: &str, app_name: &str) -> String {
+/// A dirty (unsaved) document gets a leading `*` marker so the OS window
+/// title and taskbar both surface unsaved state at a glance.
+pub(crate) fn format_window_title(doc_name: &str, app_name: &str, dirty: bool) -> String {
     if doc_name.is_empty() {
         app_name.to_string()
+    } else if dirty {
+        format!("* {doc_name} - {app_name}")
     } else {
         format!("{doc_name} - {app_name}")
     }
