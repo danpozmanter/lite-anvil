@@ -7072,33 +7072,20 @@ pub fn run(
                     }
                 }
 
-                // Smooth scroll interpolation. Snap target and current to integer
-                // pixels so the lerp can never have a sub-pixel residual that
-                // would cause repeated tiny snaps on every redraw — which the
-                // user perceives as scroll drifting when they only move the
-                // mouse or tap a modifier.
-                #[allow(unused_assignments)]
+                // Track the target instantly. A previous smooth-scroll lerp
+                // here was event-driven, not time-driven: it advanced one
+                // step per redraw, so any mouse motion (which redraws for
+                // hover/cursor updates) would tick the animation forward,
+                // making the view appear to scroll on bare mouse movement.
+                // Snapping to the target eliminates that class of bug — all
+                // legitimate scroll triggers (cursor, find, scrollbar,
+                // wheel) write to `target_scroll_y` and now show up the same
+                // frame.
                 if let Some(doc) = docs.get_mut(active_tab) {
                     let dv = &mut doc.view;
                     let target = dv.target_scroll_y.round();
                     dv.target_scroll_y = target;
-                    let current = dv.scroll_y;
-                    let diff = target - current;
-                    if diff.abs() >= 1.0 {
-                        // Lerp toward target with ease-out, snap to integer pixels.
-                        let new_scroll = (current + diff * 0.45).round();
-                        if new_scroll != current {
-                            dv.scroll_y = new_scroll;
-                            redraw = true;
-                        } else if current != target {
-                            // The lerp step rounded to the same pixel; finish
-                            // the convergence in one final hop.
-                            dv.scroll_y = target;
-                            redraw = true;
-                        }
-                    } else if current != target {
-                        // Within one pixel: finalize at the exact target so
-                        // subsequent frames see diff == 0 and do nothing.
+                    if dv.scroll_y != target {
                         dv.scroll_y = target;
                     }
                 }
