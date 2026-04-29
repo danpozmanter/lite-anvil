@@ -75,10 +75,57 @@ pub struct RenderLine {
 }
 
 /// A token within a rendered line.
+///
+/// `is_inlay` marks LSP inlay-hint tokens injected into the token stream for
+/// display. Inlay tokens take pixel space but contribute no buffer columns —
+/// cursor/selection/click math walks tokens and treats inlay characters as
+/// pure overlay so cursor positions stay aligned with the underlying buffer.
 #[derive(Debug, Clone)]
 pub struct RenderToken {
     pub text: String,
     pub color: [u8; 4],
+    pub is_inlay: bool,
+}
+
+/// Build the rendered prefix string corresponding to the first `buffer_col`
+/// buffer characters in a row's token stream. Inlay tokens whose anchor
+/// falls strictly before the cursor are included in full (so their pixel
+/// width pushes the cursor to the right of the overlay); inlays whose
+/// anchor coincides with the cursor are skipped (cursor sits before them).
+/// Used by cursor/selection/click math so coordinates stay aligned with
+/// the underlying buffer instead of with the rendered inlay overlay.
+pub(crate) fn rendered_prefix_to_buffer_col(
+    tokens: &[RenderToken],
+    buffer_col: usize,
+) -> String {
+    let mut out = String::new();
+    let mut col_consumed = 0usize;
+    for tok in tokens {
+        if col_consumed >= buffer_col {
+            break;
+        }
+        if tok.is_inlay {
+            out.push_str(&tok.text);
+        } else {
+            for ch in tok.text.chars() {
+                if col_consumed >= buffer_col {
+                    break;
+                }
+                out.push(ch);
+                col_consumed += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Count of buffer (non-inlay) characters across the row's tokens.
+pub(crate) fn row_buffer_char_count(tokens: &[RenderToken]) -> usize {
+    tokens
+        .iter()
+        .filter(|t| !t.is_inlay)
+        .map(|t| t.text.chars().count())
+        .sum()
 }
 
 /// A selection range for rendering.
@@ -219,9 +266,9 @@ impl DocView {
             let text_y = y + (line_h - style.code_font_height) / 2.0;
 
             let full_text: String = line.tokens.iter().map(|t| t.text.as_str()).collect();
-            let row_char_count = full_text.chars().count();
+            let row_char_count = row_buffer_char_count(&line.tokens);
             let row_start = line.wrap_start_col; // 0-based char offset in logical line
-            let row_end = row_start + row_char_count; // exclusive
+            let row_end = row_start + row_char_count; // exclusive (buffer chars only)
 
             // Indent guides: only on the first visual row of a line (leading
             // whitespace only appears there).
@@ -270,18 +317,18 @@ impl DocView {
                 if clipped_start >= clipped_end {
                     continue;
                 }
-                // Convert to 0-based offsets within the row's text.
+                // Convert to 0-based buffer-char offsets within the row.
                 let start_in_row = clipped_start - row_start_col;
                 let end_in_row = clipped_end - row_start_col;
                 let sel_x = text_x + style.padding_x - self.scroll_x
                     + ctx.font_width(
                         style.code_font,
-                        &full_text.chars().take(start_in_row).collect::<String>(),
+                        &rendered_prefix_to_buffer_col(&line.tokens, start_in_row),
                     );
                 let sel_end_x = text_x + style.padding_x - self.scroll_x
                     + ctx.font_width(
                         style.code_font,
-                        &full_text.chars().take(end_in_row).collect::<String>(),
+                        &rendered_prefix_to_buffer_col(&line.tokens, end_in_row),
                     );
                 let sel_w = (sel_end_x - sel_x).max(0.0);
                 ctx.draw_rect(sel_x, y, sel_w, line_h, style.selection.to_array());
@@ -299,28 +346,40 @@ impl DocView {
                 let ws_color = style.guide_color();
                 let space_w = ctx.font_width(style.code_font, " ");
                 let mut wx = text_x + style.padding_x - self.scroll_x;
-                for ch in full_text.chars() {
-                    match ch {
-                        ' ' => {
-                            let dot_y = text_y + style.code_font_height / 2.0 - 1.0;
-                            ctx.draw_rect(wx + space_w / 2.0 - 1.0, dot_y, 2.0, 2.0, ws_color);
-                            wx += space_w;
-                        }
-                        '\t' => {
-                            let tab_w = space_w * self.indent_size as f64;
-                            ctx.draw_text(style.code_font, ">", wx, text_y, ws_color);
-                            wx += tab_w;
-                        }
-                        '\r' => {
-                            ctx.draw_text(style.code_font, "\\r", wx, text_y, ws_color);
-                            wx += ctx.font_width(style.code_font, "\\r");
-                        }
-                        '\n' => {
-                            ctx.draw_text(style.code_font, "\\n", wx, text_y, ws_color);
-                        }
-                        _ => {
-                            let cw = ctx.font_width(style.code_font, &ch.to_string());
-                            wx += cw;
+                for tok in &line.tokens {
+                    if tok.is_inlay {
+                        wx += ctx.font_width(style.code_font, &tok.text);
+                        continue;
+                    }
+                    for ch in tok.text.chars() {
+                        match ch {
+                            ' ' => {
+                                let dot_y = text_y + style.code_font_height / 2.0 - 1.0;
+                                ctx.draw_rect(
+                                    wx + space_w / 2.0 - 1.0,
+                                    dot_y,
+                                    2.0,
+                                    2.0,
+                                    ws_color,
+                                );
+                                wx += space_w;
+                            }
+                            '\t' => {
+                                let tab_w = space_w * self.indent_size as f64;
+                                ctx.draw_text(style.code_font, ">", wx, text_y, ws_color);
+                                wx += tab_w;
+                            }
+                            '\r' => {
+                                ctx.draw_text(style.code_font, "\\r", wx, text_y, ws_color);
+                                wx += ctx.font_width(style.code_font, "\\r");
+                            }
+                            '\n' => {
+                                ctx.draw_text(style.code_font, "\\n", wx, text_y, ws_color);
+                            }
+                            _ => {
+                                let cw = ctx.font_width(style.code_font, &ch.to_string());
+                                wx += cw;
+                            }
                         }
                     }
                 }
@@ -363,8 +422,7 @@ impl DocView {
                     if line.line_number != cl {
                         continue;
                     }
-                    let row_chars: usize =
-                        line.tokens.iter().map(|t| t.text.chars().count()).sum();
+                    let row_chars: usize = row_buffer_char_count(&line.tokens);
                     let row_start_col = line.wrap_start_col + 1;
                     let row_end_col = line.wrap_start_col + row_chars + 1;
                     // Next row for the same logical line, if any, starts at
@@ -387,9 +445,7 @@ impl DocView {
                 }
                 if let Some((i, line, within_col)) = target {
                     let y = self.rect.y + first_visual_row + (i as f64 * line_h) - self.scroll_y;
-                    let full_text: String =
-                        line.tokens.iter().map(|t| t.text.as_str()).collect();
-                    let before: String = full_text.chars().take(within_col).collect();
+                    let before = rendered_prefix_to_buffer_col(&line.tokens, within_col);
                     let cx = text_x + style.padding_x - self.scroll_x
                         + ctx.font_width(style.code_font, &before);
                     ctx.draw_rect(cx, y, style.caret_width, line_h, style.caret.to_array());
@@ -644,6 +700,7 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
                 tokens.push(RenderToken {
                     text: current.clone(),
                     color: syntax_color("string", style),
+                    is_inlay: false,
                 });
                 current.clear();
                 in_string = None;
@@ -661,6 +718,7 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
                     tokens.push(RenderToken {
                         text: current.clone(),
                         color: syntax_color(tt, style),
+                        is_inlay: false,
                     });
                     current.clear();
                 }
@@ -678,6 +736,7 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
                 tokens.push(RenderToken {
                     text: current.clone(),
                     color: syntax_color(tt, style),
+                    is_inlay: false,
                 });
                 current.clear();
             }
@@ -695,6 +754,7 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
                     tokens.push(RenderToken {
                         text: current.clone(),
                         color: syntax_color(tt, style),
+                        is_inlay: false,
                     });
                     current.clear();
                 }
@@ -712,6 +772,7 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
                 tokens.push(RenderToken {
                     text: current.clone(),
                     color: syntax_color(tt, style),
+                    is_inlay: false,
                 });
                 current.clear();
             }
@@ -735,6 +796,7 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
             tokens.push(RenderToken {
                 text: num,
                 color: syntax_color("number", style),
+                is_inlay: false,
             });
             continue;
         }
@@ -749,12 +811,14 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
                 tokens.push(RenderToken {
                     text: current.clone(),
                     color: syntax_color(tt, style),
+                    is_inlay: false,
                 });
                 current.clear();
             }
             tokens.push(RenderToken {
                 text: ch.to_string(),
                 color: syntax_color("symbol", style),
+                is_inlay: false,
             });
             chars.next();
         }
@@ -773,6 +837,7 @@ pub(crate) fn simple_tokenize(line: &str, ext: &str, style: &StyleContext) -> Ve
         tokens.push(RenderToken {
             text: current,
             color,
+            is_inlay: false,
         });
     }
 
@@ -808,16 +873,31 @@ pub(crate) fn click_to_doc_pos(
         let line_idx = line.line_number;
         let wrap_offset = line.wrap_start_col;
         let col_within_row = if x > text_x_start {
-            let full_text: String = line.tokens.iter().map(|t| t.text.as_str()).collect();
+            // Walk tokens: inlay tokens take pixel space but no buffer
+            // columns, so a click that lands on an inlay snaps to the
+            // anchor column (cursor sits before the overlay) and a click
+            // past the inlay continues counting buffer chars on the other
+            // side. This keeps cursor placement aligned with real text
+            // even when type-hint overlays are visible.
             let mut col = 0usize;
             let mut cx = text_x_start;
-            for ch in full_text.chars() {
-                let cw = draw_ctx.font_width(style.code_font, &ch.to_string());
-                if cx + cw / 2.0 > x {
-                    break;
+            'walk: for tok in &line.tokens {
+                if tok.is_inlay {
+                    let w = draw_ctx.font_width(style.code_font, &tok.text);
+                    if x < cx + w {
+                        break 'walk;
+                    }
+                    cx += w;
+                    continue;
                 }
-                cx += cw;
-                col += 1;
+                for ch in tok.text.chars() {
+                    let cw = draw_ctx.font_width(style.code_font, &ch.to_string());
+                    if cx + cw / 2.0 > x {
+                        break 'walk;
+                    }
+                    cx += cw;
+                    col += 1;
+                }
             }
             col
         } else {
@@ -974,6 +1054,7 @@ pub(crate) fn build_render_lines(
                         RenderToken {
                             text: trimmed,
                             color: syntax_color(tt, style),
+                            is_inlay: false,
                         }
                     })
                     .collect()
@@ -988,6 +1069,7 @@ pub(crate) fn build_render_lines(
                 vec![RenderToken {
                     text: text.to_string(),
                     color: style.text.to_array(),
+                    is_inlay: false,
                 }]
             };
 
@@ -1027,6 +1109,7 @@ pub(crate) fn build_render_lines(
                                 new_tokens.push(RenderToken {
                                     text: before.to_string(),
                                     color: tok.color,
+                                    is_inlay: false,
                                 });
                                 cur_col += split_at;
                                 remaining = after;
@@ -1034,6 +1117,7 @@ pub(crate) fn build_render_lines(
                             new_tokens.push(RenderToken {
                                 text: display.to_string(),
                                 color: hint_color,
+                                is_inlay: true,
                             });
                             hint_idx += 1;
                         }
@@ -1041,6 +1125,7 @@ pub(crate) fn build_render_lines(
                             new_tokens.push(RenderToken {
                                 text: remaining.to_string(),
                                 color: tok.color,
+                                is_inlay: false,
                             });
                         }
                     } else {
@@ -1052,6 +1137,7 @@ pub(crate) fn build_render_lines(
                     new_tokens.push(RenderToken {
                         text: line_hints[hint_idx].1.to_string(),
                         color: hint_color,
+                        is_inlay: true,
                     });
                     hint_idx += 1;
                 }
@@ -1129,6 +1215,7 @@ pub(crate) fn build_render_lines(
                                 row_tokens.push(RenderToken {
                                     text: chunk,
                                     color: tok.color,
+                                    is_inlay: tok.is_inlay,
                                 });
                             }
                         }

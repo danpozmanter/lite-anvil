@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.11.12] - 2026-04-29 -- Cursor treats LSP inlay hints as an overlay.
+
+* Cursor, click-to-place, and selection rendering now treat LSP inlay hints (e.g. type annotations) as a non-interactive visual overlay rather than buffer text. Pressing left/right or clicking near an inlay no longer lands the cursor visually inside the hint while editing the real character to its right; the inlay's pixel width is included in cursor x-positioning so cursor placement stays aligned with the underlying buffer column.
+* Whitespace markers (when enabled) skip inlay text so spaces inside a `: i32` overlay aren't dotted.
+
 ## [2.11.11] - 2026-04-28 -- Lock down editor scrolling.
 
 * Editor view no longer drifts when only the mouse is moved.
