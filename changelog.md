@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.11.14] - 2026-05-01 -- Fix stale LSP inlay hint positions.
+
+* LSP inlay hints no longer render at their previous positions after an edit. The render cache was keyed on the *count* of inlay hints, but rust-analyzer typically returns the same number of hints with shifted character offsets after small edits. The cache now invalidates whenever any hint's line, column, or label differs from the previously held set, so type annotations track the underlying buffer in real time.
+* The cached hint count now records the URI-filtered set of hints actually folded into the render rather than the global LSP state. A response that arrives for a non-active file no longer poisons the active doc's cache key.
+
 ## [2.11.13] - 2026-05-01 -- Mouse-hover tooltips and tighter LSP autocomplete.
 
 * Hovering the mouse over an LSP-underlined diagnostic now shows the diagnostic message as a tooltip — no more reaching for `Ctrl+K` just to see why something is squiggled. Fault was on the editor side; the LSP server was already publishing `message` text.

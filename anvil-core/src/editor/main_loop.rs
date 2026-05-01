@@ -960,8 +960,12 @@ pub fn run(
     // `tab_idx` aliases once the docs list is swapped (e.g. Open Recent
     // replaces the project), so the consumer uses `buffer_id` to skip
     // applying a render captured against a now-defunct doc.
+    // The trailing `usize` is the number of LSP inlay hints actually folded
+    // into the render. Recording the count used (after URI filtering) rather
+    // than the global `lsp_state.inlay_hints.len()` keeps the cache key honest
+    // when the active doc's URI doesn't match the held hints.
     type PendingRenderCache =
-        Option<(usize, u64, std::sync::Arc<Vec<RenderLine>>, i64, f64)>;
+        Option<(usize, u64, std::sync::Arc<Vec<RenderLine>>, i64, f64, usize)>;
     let mut pending_render_cache: PendingRenderCache = None;
 
     // Background file load job. When a large file is being loaded on a
@@ -6358,8 +6362,6 @@ pub fn run(
                                             label: display,
                                         });
                                     }
-                                    let old_count = lsp_state.inlay_hints.len();
-                                    let new_count = new_hints.len();
                                     if new_hints.is_empty() {
                                         if lsp_state.inlay_retry_count < 20 {
                                             lsp_state.inlay_retry_at = Some(
@@ -6369,15 +6371,35 @@ pub fn run(
                                             lsp_state.inlay_retry_count += 1;
                                         }
                                     } else {
+                                        // Detect any difference in positions or
+                                        // labels — count alone is not enough.
+                                        // After a small edit the number of
+                                        // hints often stays identical while
+                                        // every hint's `col` shifts; comparing
+                                        // only `len()` would let stale render
+                                        // tokens leak through and the inlays
+                                        // would render at their previous
+                                        // positions until the next structural
+                                        // change.
                                         let uri_changed =
                                             lsp_state.inlay_hints_uri != req_uri;
-                                        let changed =
-                                            uri_changed || old_count != new_count;
+                                        let content_changed = uri_changed
+                                            || lsp_state.inlay_hints.len()
+                                                != new_hints.len()
+                                            || lsp_state
+                                                .inlay_hints
+                                                .iter()
+                                                .zip(new_hints.iter())
+                                                .any(|(a, b)| {
+                                                    a.line != b.line
+                                                        || a.col != b.col
+                                                        || a.label != b.label
+                                                });
                                         lsp_state.inlay_hints = new_hints;
                                         lsp_state.inlay_hints_uri = req_uri.clone();
                                         lsp_state.inlay_retry_count = 0;
                                         lsp_state.inlay_retry_at = None;
-                                        if changed {
+                                        if content_changed {
                                             pending_render_cache = None;
                                             for d in &mut docs {
                                                 d.cached_change_id = -1;
@@ -7047,7 +7069,7 @@ pub fn run(
             // stale. This MUST be outside the `if redraw` block -- otherwise
             // the cache sits unconsumed until the next event and forces an
             // infinite render loop if we try to force redraw when pending.
-            if let Some((tab_idx, rendered_buf_id, lines, cid, sy)) =
+            if let Some((tab_idx, rendered_buf_id, lines, cid, sy, hint_count)) =
                 pending_render_cache.take()
             {
                 if let Some(doc_mut) = docs.get_mut(tab_idx) {
@@ -7061,7 +7083,7 @@ pub fn run(
                         doc_mut.cached_render = lines;
                         doc_mut.cached_change_id = cid;
                         doc_mut.cached_scroll_y = sy;
-                        doc_mut.cached_hint_count = lsp_state.inlay_hints.len();
+                        doc_mut.cached_hint_count = hint_count;
                     }
                 }
             }
@@ -8013,6 +8035,7 @@ pub fn run(
                         let current_change_id =
                             buffer::with_buffer(buf_id, |b| Ok(b.change_id)).unwrap_or(0);
                         let scroll_y_now = dv.scroll_y;
+                        let hint_count_now = hints.len();
                         // `cached_render` is Arc-shared so the cache-hit
                         // path is a refcount bump rather than a full
                         // `Vec<RenderLine>` clone per redraw.
@@ -8020,7 +8043,7 @@ pub fn run(
                             if let Some(doc) = docs.get(active_tab) {
                                 if doc.cached_change_id == current_change_id
                                     && (doc.cached_scroll_y - scroll_y_now).abs() < 0.5
-                                    && doc.cached_hint_count == hints.len()
+                                    && doc.cached_hint_count == hint_count_now
                                     && !doc.cached_render.is_empty()
                                 {
                                     std::sync::Arc::clone(&doc.cached_render)
@@ -8183,6 +8206,7 @@ pub fn run(
                             render_lines,
                             current_change_id,
                             scroll_y_now,
+                            hint_count_now,
                         ));
                         // Draw bracket match underlines at cursor position.
                         if let Some(buf_id) = dv.buffer_id {
