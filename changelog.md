@@ -1,5 +1,13 @@
 # Change Log
 
+## [2.11.13] - 2026-05-01 -- Mouse-hover tooltips and tighter LSP autocomplete.
+
+* Hovering the mouse over an LSP-underlined diagnostic now shows the diagnostic message as a tooltip — no more reaching for `Ctrl+K` just to see why something is squiggled. Fault was on the editor side; the LSP server was already publishing `message` text.
+* Hovering the mouse over any code for ~600 ms now fires a `textDocument/hover` request and surfaces the LSP's type / doc info in the same tooltip surface. `Ctrl+K` continues to work as the explicit trigger.
+* Diagnostic hits show immediately; LSP hover info debounces so the server isn't spammed while the cursor is moving.
+* Autocomplete popup now auto-sizes its width to fit the widest item rather than always claiming 350 px. Short suggestions render as a tight box instead of a wide rectangle of empty space.
+* Autocomplete now ignores stale `textDocument/completion` responses (only the most-recently-sent request id can populate the popup) and re-filters incoming items against the prefix at the cursor at response time. A slow LSP reply with a shorter prefix can no longer overwrite the popup with items that don't match what's currently typed.
+
 ## [2.11.12] - 2026-04-29 -- Cursor treats LSP inlay hints as an overlay.
 
 * Cursor, click-to-place, and selection rendering now treat LSP inlay hints (e.g. type annotations) as a non-interactive visual overlay rather than buffer text. Pressing left/right or clicking near an inlay no longer lands the cursor visually inside the hint while editing the real character to its right; the inlay's pixel width is included in cursor x-positioning so cursor placement stays aligned with the underlying buffer column.

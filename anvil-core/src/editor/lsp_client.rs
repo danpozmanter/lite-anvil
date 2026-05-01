@@ -15,9 +15,12 @@ pub(crate) struct InlayHint {
 pub(crate) struct Diagnostic {
     pub start_line: usize,
     pub start_col: usize,
+    pub end_line: usize,
     pub end_col: usize,
     /// 1=error, 2=warning, 3=info, 4=hint
     pub severity: u8,
+    /// Diagnostic message body shown as the mouse-hover tooltip.
+    pub message: String,
 }
 
 /// LSP connection state tracked in the main loop.
@@ -79,6 +82,11 @@ pub(crate) struct CompletionState {
     pub selected: usize,
     pub line: usize,
     pub col: usize,
+    /// `id` of the most recently-sent `textDocument/completion`
+    /// request. Earlier responses are ignored so a slow earlier
+    /// reply can't clobber a fresher one (LSP responses are not
+    /// ordered against the request stream).
+    pub latest_request_id: i64,
 }
 
 impl CompletionState {
@@ -89,6 +97,7 @@ impl CompletionState {
             selected: 0,
             line: 0,
             col: 0,
+            latest_request_id: 0,
         }
     }
 
@@ -429,8 +438,10 @@ mod tests {
             vec![Diagnostic {
                 start_line: 1,
                 start_col: 1,
+                end_line: 1,
                 end_col: 5,
                 severity: 1,
+                message: String::new(),
             }],
         );
         // New publishDiagnostics for the same URI replaces (HashMap insert overwrites).
@@ -439,8 +450,10 @@ mod tests {
             vec![Diagnostic {
                 start_line: 2,
                 start_col: 1,
+                end_line: 2,
                 end_col: 5,
                 severity: 2,
+                message: String::new(),
             }],
         );
         let v = &s.diagnostics[&uri];
@@ -457,8 +470,10 @@ mod tests {
             vec![Diagnostic {
                 start_line: 1,
                 start_col: 1,
+                end_line: 1,
                 end_col: 1,
                 severity: 1,
+                message: String::new(),
             }],
         );
         s.diagnostics.insert(
@@ -466,8 +481,10 @@ mod tests {
             vec![Diagnostic {
                 start_line: 5,
                 start_col: 1,
+                end_line: 5,
                 end_col: 1,
                 severity: 2,
+                message: String::new(),
             }],
         );
         assert_eq!(s.diagnostics.len(), 2);

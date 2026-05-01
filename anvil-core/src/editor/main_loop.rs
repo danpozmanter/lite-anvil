@@ -1511,6 +1511,16 @@ pub fn run(
     // LSP completion, hover, and go-to-definition state.
     let mut completion = CompletionState::new();
     let mut hover = HoverState::new();
+    // Mouse-tracked hover state: `mouse_doc_pos` is the (1-based line,
+    // 1-based col) under the cursor when over the active doc, or None
+    // otherwise. `mouse_idle_since` records when the cursor settled at
+    // that position so we can debounce the `textDocument/hover` LSP
+    // request — diagnostic tooltips fire immediately, type-info tooltips
+    // wait for the cursor to stop moving for ~600ms. `last_lsp_hover_pos`
+    // dedupes repeat requests for the same position.
+    let mut mouse_doc_pos: Option<(usize, usize)> = None;
+    let mut mouse_idle_since: Option<Instant> = None;
+    let mut last_lsp_hover_pos: Option<(usize, usize)> = None;
 
     // Terminal emulator panel (multi-terminal).
     let mut terminal = TerminalPanel::new();
@@ -4139,6 +4149,7 @@ pub fn run(
                                             );
                                             completion.line = cl;
                                             completion.col = cc;
+                                            completion.latest_request_id = req_id;
                                         }
                                     }
                                 }
@@ -5873,6 +5884,91 @@ pub fn run(
                     } else if editor_mouse_down {
                         crate::window::set_cursor("ibeam");
                     }
+
+                    // Hover tooltip tracking: map the cursor to a
+                    // (line, col) over the active doc. If a diagnostic
+                    // is under the cursor, surface its message
+                    // immediately. Otherwise note the position + time
+                    // so the debounce loop below can fire a deferred
+                    // `textDocument/hover` request.
+                    let new_doc_pos: Option<(usize, usize)> = (|| {
+                        if editor_mouse_down || sidebar_dragging {
+                            return None;
+                        }
+                        let doc = docs.get(active_tab)?;
+                        let buf_id = doc.view.buffer_id?;
+                        let dv = &doc.view;
+                        let dvr = dv.rect();
+                        if *x < dvr.x
+                            || *x >= dvr.x + dvr.w
+                            || *y < dvr.y
+                            || *y >= dvr.y + dvr.h
+                        {
+                            return None;
+                        }
+                        let line_h = style.code_font_height * 1.2;
+                        let gutter_w = dv.gutter_width;
+                        let text_x_start =
+                            dv.rect().x + gutter_w + style.padding_x - dv.scroll_x;
+                        if *x < text_x_start - style.padding_x {
+                            return None;
+                        }
+                        let (line, col) = click_to_doc_pos(
+                            dv,
+                            buf_id,
+                            &doc.cached_render,
+                            *x,
+                            *y,
+                            text_x_start,
+                            line_h,
+                            &style,
+                            &mut draw_ctx,
+                        );
+                        Some((line, col))
+                    })();
+                    if new_doc_pos != mouse_doc_pos {
+                        mouse_doc_pos = new_doc_pos;
+                        mouse_idle_since = Some(Instant::now());
+                        if hover.visible {
+                            hover.hide();
+                            redraw = true;
+                        }
+                        // Immediate diagnostic tooltip.
+                        if let Some((line, col)) = new_doc_pos
+                            && subsystems.has_lsp()
+                            && let Some(doc) = docs.get(active_tab)
+                            && let Some(diags) = lsp_state.diagnostics.get(&doc.path)
+                        {
+                            let l0 = line.saturating_sub(1);
+                            let c0 = col.saturating_sub(1);
+                            for d in diags {
+                                let in_line =
+                                    d.start_line <= l0 && l0 <= d.end_line.max(d.start_line);
+                                let span_end = d.end_col.max(d.start_col + 1);
+                                let in_col = if d.start_line == d.end_line && d.start_line == l0 {
+                                    c0 >= d.start_col && c0 < span_end
+                                } else if l0 == d.start_line {
+                                    c0 >= d.start_col
+                                } else if l0 == d.end_line {
+                                    c0 < d.end_col
+                                } else {
+                                    true
+                                };
+                                if in_line && in_col && !d.message.is_empty() {
+                                    hover.text = d.message.clone();
+                                    hover.line = line;
+                                    hover.col = col;
+                                    hover.visible = true;
+                                    // Don't also fire LSP hover for this position —
+                                    // dedupe by recording it.
+                                    last_lsp_hover_pos = Some((line, col));
+                                    mouse_idle_since = None;
+                                    redraw = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     continue;
                 }
                 EditorEvent::MouseReleased { .. } => {
@@ -6298,7 +6394,51 @@ pub fn run(
                                 == Some("textDocument/completion")
                             {
                                 lsp_state.pending_requests.remove(&id);
-                                let mut items = Vec::new();
+                                // Drop responses for any request older than the
+                                // latest one we sent — LSP servers may answer
+                                // out of order, and a slow stale reply (with a
+                                // shorter prefix) would otherwise clobber a
+                                // fresher list. Mirrors the inlay-hint
+                                // late-response gate.
+                                if id != completion.latest_request_id {
+                                    continue;
+                                }
+                                // Re-derive the word-prefix at the cursor RIGHT
+                                // NOW (the user may have typed more characters
+                                // between the request being sent and this
+                                // reply). The LSP server already filters by
+                                // its own prefix-snapshot; we re-filter
+                                // client-side so the popup never shows an
+                                // item that doesn't match the current word.
+                                let prefix_now: String = docs
+                                    .get(active_tab)
+                                    .and_then(|d| d.view.buffer_id)
+                                    .and_then(|bid| {
+                                        buffer::with_buffer(bid, |b| {
+                                            let l = *b.selections.get(2).unwrap_or(&1);
+                                            let c = *b.selections.get(3).unwrap_or(&1);
+                                            let line = b
+                                                .lines
+                                                .get(l - 1)
+                                                .map(String::as_str)
+                                                .unwrap_or("");
+                                            let chars: Vec<char> = line.chars().collect();
+                                            let col = (c - 1).min(chars.len());
+                                            let mut start = col;
+                                            while start > 0 {
+                                                let ch = chars[start - 1];
+                                                if ch.is_alphanumeric() || ch == '_' {
+                                                    start -= 1;
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                            Ok(chars[start..col].iter().collect::<String>())
+                                        })
+                                        .ok()
+                                    })
+                                    .unwrap_or_default();
+                                let mut items: Vec<(String, String, String)> = Vec::new();
                                 let result = msg.get("result");
                                 // result can be an array or {items: [...]}.
                                 let item_arr = result
@@ -6308,12 +6448,15 @@ pub fn run(
                                         })
                                     })
                                     .unwrap_or_default();
-                                for item in item_arr.iter().take(20) {
+                                for item in item_arr.iter() {
                                     let label = item
                                         .get("label")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string();
+                                    if !prefix_now.is_empty() && !label.starts_with(&prefix_now) {
+                                        continue;
+                                    }
                                     let detail = item
                                         .get("detail")
                                         .and_then(|v| v.as_str())
@@ -6330,6 +6473,9 @@ pub fn run(
                                         .unwrap_or(&label)
                                         .to_string();
                                     items.push((label, detail, insert_text));
+                                    if items.len() >= 20 {
+                                        break;
+                                    }
                                 }
                                 if !items.is_empty() && !cmdview_active && !palette_active {
                                     completion.items = items;
@@ -6537,6 +6683,11 @@ pub fn run(
                                                             .and_then(|v| v.as_u64())
                                                             .unwrap_or(0)
                                                             as usize,
+                                                        end_line: end
+                                                            .and_then(|s| s.get("line"))
+                                                            .and_then(|v| v.as_u64())
+                                                            .unwrap_or(0)
+                                                            as usize,
                                                         end_col: end
                                                             .and_then(|s| s.get("character"))
                                                             .and_then(|v| v.as_u64())
@@ -6547,6 +6698,11 @@ pub fn run(
                                                             .and_then(|v| v.as_u64())
                                                             .unwrap_or(1)
                                                             as u8,
+                                                        message: d
+                                                            .get("message")
+                                                            .and_then(|v| v.as_str())
+                                                            .unwrap_or("")
+                                                            .to_string(),
                                                     }
                                                 })
                                                 .collect()
@@ -6616,6 +6772,40 @@ pub fn run(
                     }
                     lsp_state.last_change = None;
                 }
+            }
+        }
+
+        // LSP: fire a deferred `textDocument/hover` after the mouse
+        // has been still for ~600ms over a code position with no
+        // diagnostic under it. Keeps the LSP unspammed while the
+        // cursor moves; surfaces type / doc info as a tooltip once
+        // the user pauses.
+        if subsystems.has_lsp()
+            && !hover.visible
+            && let Some(idle_since) = mouse_idle_since
+            && let Some((line, col)) = mouse_doc_pos
+            && idle_since.elapsed() >= std::time::Duration::from_millis(600)
+            && last_lsp_hover_pos != Some((line, col))
+        {
+            mouse_idle_since = None;
+            last_lsp_hover_pos = Some((line, col));
+            if let Some(doc) = docs.get(active_tab)
+                && let Some(tid) = lsp_state.transport_id
+                && lsp_state.initialized
+                && !doc.path.is_empty()
+                && doc.view.buffer_id.is_some()
+            {
+                let uri = path_to_uri(&doc.path);
+                let req_id = lsp_state.next_id();
+                lsp_state
+                    .pending_requests
+                    .insert(req_id, "textDocument/hover".to_string());
+                let _ = lsp::send_message(
+                    tid,
+                    &lsp_hover_request(req_id, &uri, line - 1, col - 1),
+                );
+                hover.line = line;
+                hover.col = col;
             }
         }
 
@@ -9767,7 +9957,28 @@ pub fn run(
                             dv.rect().y + completion.line as f64 * line_h_comp - dv.scroll_y;
                         let item_h = style.font_height + style.padding_y;
                         let popup_h = item_h * completion.items.len() as f64 + style.padding_y;
-                        let popup_w = 350.0_f64.min(width - popup_x - 10.0);
+                        // Auto-size the popup to the widest item rather
+                        // than a fixed 350px box. Width = max(label +
+                        // " " + detail) over visible items, plus padding.
+                        // Clamped to the screen edge and to a sensible
+                        // minimum so a one-character item doesn't render
+                        // as a sliver.
+                        let content_w = completion
+                            .items
+                            .iter()
+                            .map(|(label, detail, _)| {
+                                let lw = draw_ctx.font_width(style.font, label);
+                                if detail.is_empty() {
+                                    lw
+                                } else {
+                                    lw + draw_ctx.font_width(style.font, detail)
+                                        + style.padding_x
+                                }
+                            })
+                            .fold(0.0_f64, f64::max);
+                        let popup_w = (content_w + style.padding_x * 2.0)
+                            .max(120.0)
+                            .min(width - popup_x - 10.0);
                         // Background.
                         draw_ctx.draw_rect(
                             popup_x,
