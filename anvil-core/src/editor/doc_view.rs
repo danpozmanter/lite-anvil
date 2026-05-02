@@ -94,10 +94,7 @@ pub struct RenderToken {
 /// anchor coincides with the cursor are skipped (cursor sits before them).
 /// Used by cursor/selection/click math so coordinates stay aligned with
 /// the underlying buffer instead of with the rendered inlay overlay.
-pub(crate) fn rendered_prefix_to_buffer_col(
-    tokens: &[RenderToken],
-    buffer_col: usize,
-) -> String {
+pub(crate) fn rendered_prefix_to_buffer_col(tokens: &[RenderToken], buffer_col: usize) -> String {
     let mut out = String::new();
     let mut col_consumed = 0usize;
     for tok in tokens {
@@ -355,13 +352,7 @@ impl DocView {
                         match ch {
                             ' ' => {
                                 let dot_y = text_y + style.code_font_height / 2.0 - 1.0;
-                                ctx.draw_rect(
-                                    wx + space_w / 2.0 - 1.0,
-                                    dot_y,
-                                    2.0,
-                                    2.0,
-                                    ws_color,
-                                );
+                                ctx.draw_rect(wx + space_w / 2.0 - 1.0, dot_y, 2.0, 2.0, ws_color);
                                 wx += space_w;
                             }
                             '\t' => {
@@ -429,9 +420,7 @@ impl DocView {
                     // row_end_col. A cursor sitting exactly at row_end_col
                     // belongs to the start of the next wrap row rather than
                     // the end of this one.
-                    let is_last_row_for_line = lines
-                        .get(i + 1)
-                        .is_none_or(|n| n.line_number != cl);
+                    let is_last_row_for_line = lines.get(i + 1).is_none_or(|n| n.line_number != cl);
                     let within = if is_last_row_for_line {
                         cc >= row_start_col
                     } else {
@@ -631,8 +620,8 @@ pub(crate) fn classify_word(word: &str, ext: &str) -> &'static str {
             "fn" | "let" | "mut" | "pub" | "use" | "mod" | "struct" | "enum" | "impl" | "trait"
             | "for" | "while" | "loop" | "if" | "else" | "match" | "return" | "break"
             | "continue" | "where" | "type" | "const" | "static" | "ref" | "self" | "Self"
-            | "super" | "crate" | "as" | "in" | "async" | "await" | "unsafe" | "extern"
-            | "dyn" | "true" | "false" | "go" | "defer" | "select" | "yield" => "keyword",
+            | "super" | "crate" | "as" | "in" | "async" | "await" | "unsafe" | "extern" | "dyn"
+            | "true" | "false" | "go" | "defer" | "select" | "yield" => "keyword",
             "bool" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
             | "i64" | "i128" | "isize" | "f32" | "f64" | "str" | "String" | "Option" | "Result"
             | "Vec" | "Box" | "Arc" | "Mutex" | "HashMap" | "HashSet" | "BTreeMap" | "BTreeSet"
@@ -860,13 +849,14 @@ pub(crate) fn click_to_doc_pos(
     use crate::editor::view::DrawContext as _;
     let rect = dv.rect();
     // Clicked visual row relative to the first rendered row.
-    let first_logical = cached
-        .first()
-        .map(|l| l.line_number as f64)
-        .unwrap_or(1.0);
+    let first_logical = cached.first().map(|l| l.line_number as f64).unwrap_or(1.0);
     let first_row_y = rect.y + (first_logical - 1.0) * line_h - dv.scroll_y;
     let row_f = (y - first_row_y) / line_h;
-    let clicked_idx = if row_f < 0.0 { 0 } else { row_f.floor() as usize };
+    let clicked_idx = if row_f < 0.0 {
+        0
+    } else {
+        row_f.floor() as usize
+    };
 
     // Resolve the logical line + wrap offset from the cached render lines.
     if let Some(line) = cached.get(clicked_idx) {
@@ -986,11 +976,8 @@ pub(crate) fn build_render_lines(
                 state = if let Some(end) = cached {
                     end
                 } else {
-                    let line_text =
-                        b.lines.get(ln - 1).map(|s| s.as_str()).unwrap_or("");
-                    let (_, end) = tokenizer::tokenize_line_with_state(
-                        syntax, line_text, state,
-                    );
+                    let line_text = b.lines.get(ln - 1).map(|s| s.as_str()).unwrap_or("");
+                    let (_, end) = tokenizer::tokenize_line_with_state(syntax, line_text, state);
                     if let Some(cache_cell) = token_cache {
                         cache_cell.borrow_mut().line_end_states.insert(ln, end);
                     }
@@ -1014,33 +1001,32 @@ pub(crate) fn build_render_lines(
             let raw_line = &b.lines[i - 1];
             let text = raw_line.trim_end_matches('\n');
             let mut tokens: Vec<RenderToken> = if let Some(syntax) = compiled {
-                let toks_arc: std::sync::Arc<Vec<tokenizer::Token>> = if let Some(cache_cell) = token_cache {
-                    let mut cache = cache_cell.borrow_mut();
-                    if let Some(existing) = cache.lines.get(&i) {
-                        // Cache hit: advance state from the matching cached
-                        // end-state so the next line still sees the right
-                        // open-pair carryover.
-                        if let Some(end) = cache.line_end_states.get(&i).copied() {
+                let toks_arc: std::sync::Arc<Vec<tokenizer::Token>> =
+                    if let Some(cache_cell) = token_cache {
+                        let mut cache = cache_cell.borrow_mut();
+                        if let Some(existing) = cache.lines.get(&i) {
+                            // Cache hit: advance state from the matching cached
+                            // end-state so the next line still sees the right
+                            // open-pair carryover.
+                            if let Some(end) = cache.line_end_states.get(&i).copied() {
+                                state = end;
+                            }
+                            existing.clone()
+                        } else {
+                            let (computed, end) =
+                                tokenizer::tokenize_line_with_state(syntax, raw_line, state);
+                            let arc = std::sync::Arc::new(computed);
+                            cache.lines.insert(i, arc.clone());
+                            cache.line_end_states.insert(i, end);
                             state = end;
+                            arc
                         }
-                        existing.clone()
                     } else {
-                        let (computed, end) = tokenizer::tokenize_line_with_state(
-                            syntax, raw_line, state,
-                        );
-                        let arc = std::sync::Arc::new(computed);
-                        cache.lines.insert(i, arc.clone());
-                        cache.line_end_states.insert(i, end);
+                        let (computed, end) =
+                            tokenizer::tokenize_line_with_state(syntax, raw_line, state);
                         state = end;
-                        arc
-                    }
-                } else {
-                    let (computed, end) = tokenizer::tokenize_line_with_state(
-                        syntax, raw_line, state,
-                    );
-                    state = end;
-                    std::sync::Arc::new(computed)
-                };
+                        std::sync::Arc::new(computed)
+                    };
                 toks_arc
                     .iter()
                     .map(|t| {
@@ -1197,8 +1183,7 @@ pub(crate) fn build_render_lines(
                         }
                         // Slice each original token that overlaps [offset,
                         // end) into the row's token list, preserving colors.
-                        let mut row_tokens: Vec<RenderToken> =
-                            Vec::with_capacity(tokens.len());
+                        let mut row_tokens: Vec<RenderToken> = Vec::with_capacity(tokens.len());
                         for (tidx, tok) in tokens.iter().enumerate() {
                             let tok_start = token_offsets[tidx];
                             let tok_end = token_offsets[tidx + 1];
@@ -1265,10 +1250,7 @@ pub(crate) fn draw_breadcrumb(
 
     ctx.draw_rect(bar_x, bar_y, bar_w, bar_h, style.background3.to_array());
 
-    let segments: Vec<&str> = path
-        .split(['/', '\\'])
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segments: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
         return;
     }
@@ -1290,10 +1272,7 @@ pub(crate) fn draw_breadcrumb(
     } else {
         (
             vec![crate::editor::cmdview::truncate_left_to_width(
-                last,
-                available,
-                style.font,
-                ctx,
+                last, available, style.font, ctx,
             )],
             false,
         )
@@ -1303,8 +1282,7 @@ pub(crate) fn draw_breadcrumb(
     for i in (0..segments.len() - 1).rev() {
         let seg = segments[i];
         let seg_w = ctx.font_width(style.font, seg);
-        let budget =
-            available - used_w - arrow_w - if i == 0 { 0.0 } else { ellipsis_prefix_w };
+        let budget = available - used_w - arrow_w - if i == 0 { 0.0 } else { ellipsis_prefix_w };
         if seg_w > budget {
             truncated_first = true;
             break;

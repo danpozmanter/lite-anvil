@@ -506,9 +506,7 @@ pub fn tokenize_line_with_state(
                                 _ => {
                                     // Open with no close on this line; remember
                                     // as a fallback. Earliest open wins ties.
-                                    if unclosed_pair
-                                        .is_none_or(|(s, _)| open_res[0] < s)
-                                    {
+                                    if unclosed_pair.is_none_or(|(s, _)| open_res[0] < s) {
                                         unclosed_pair = Some((open_res[0], idx));
                                     }
                                 }

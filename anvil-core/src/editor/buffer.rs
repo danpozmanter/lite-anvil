@@ -916,11 +916,7 @@ fn save_file_inplace(
     Ok(())
 }
 
-fn save_file_atomic(
-    state: &BufferState,
-    filename: &str,
-    crlf: bool,
-) -> Result<(), std::io::Error> {
+fn save_file_atomic(state: &BufferState, filename: &str, crlf: bool) -> Result<(), std::io::Error> {
     let path = std::path::Path::new(filename);
     let orig_meta = fs::metadata(path).ok();
 
@@ -1013,9 +1009,8 @@ fn copy_xattrs(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<
         };
         // SAFETY: src_c and name_c are valid C strings; NULL buffer
         // requests the value size.
-        let vsz = unsafe {
-            libc::getxattr(src_c.as_ptr(), name_c.as_ptr(), std::ptr::null_mut(), 0)
-        };
+        let vsz =
+            unsafe { libc::getxattr(src_c.as_ptr(), name_c.as_ptr(), std::ptr::null_mut(), 0) };
         if vsz < 0 {
             continue;
         }
@@ -1546,8 +1541,7 @@ mod tests {
     #[test]
     fn inplace_save_preserves_executable_bit() {
         use std::os::unix::fs::PermissionsExt;
-        let path =
-            std::env::temp_dir().join("liteanvil_test_inplace_exec.sh");
+        let path = std::env::temp_dir().join("liteanvil_test_inplace_exec.sh");
         fs::write(&path, "#!/bin/sh\necho old\n").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -1565,8 +1559,7 @@ mod tests {
     #[test]
     fn atomic_save_preserves_executable_bit() {
         use std::os::unix::fs::PermissionsExt;
-        let path =
-            std::env::temp_dir().join("liteanvil_test_atomic_exec.sh");
+        let path = std::env::temp_dir().join("liteanvil_test_atomic_exec.sh");
         fs::write(&path, "#!/bin/sh\necho old\n").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -1584,8 +1577,7 @@ mod tests {
     #[test]
     fn inplace_save_preserves_inode() {
         use std::os::unix::fs::MetadataExt;
-        let path =
-            std::env::temp_dir().join("liteanvil_test_inplace_inode.txt");
+        let path = std::env::temp_dir().join("liteanvil_test_inplace_inode.txt");
         fs::write(&path, "hello\n").unwrap();
         let ino_before = fs::metadata(&path).unwrap().ino();
 
@@ -1595,7 +1587,10 @@ mod tests {
         save_file(&state, path.to_str().unwrap(), false, false).unwrap();
 
         let ino_after = fs::metadata(&path).unwrap().ino();
-        assert_eq!(ino_before, ino_after, "in-place save must not replace inode");
+        assert_eq!(
+            ino_before, ino_after,
+            "in-place save must not replace inode"
+        );
         let _ = fs::remove_file(&path);
     }
 

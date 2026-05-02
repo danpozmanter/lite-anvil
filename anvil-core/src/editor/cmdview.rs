@@ -286,10 +286,7 @@ mod tests {
     #[test]
     fn refresh_open_recent_filters_by_substring() {
         let mut out = Vec::new();
-        let recent_files = vec![
-            "/home/x/foo.rs".to_string(),
-            "/home/x/bar.rs".to_string(),
-        ];
+        let recent_files = vec!["/home/x/foo.rs".to_string(), "/home/x/bar.rs".to_string()];
         let recent_projects = vec!["/home/x/proj".to_string()];
         refresh_cmdview_suggestions(
             CmdViewMode::OpenRecent,

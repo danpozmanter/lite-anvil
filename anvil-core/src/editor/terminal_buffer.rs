@@ -622,38 +622,36 @@ impl TerminalBufferInner {
                 let bottom = if p2 <= 0 { self.rows } else { p2 as usize };
                 self.set_scroll_region(top, bottom);
             }
-            'h'
-                if prefix == '?' => {
-                    for param in params.iter().copied() {
-                        match param {
-                            25 => self.cursor_visible = true,
-                            47 | 1047 | 1049 => {
-                                let save_cursor = param == 1049;
-                                if save_cursor {
-                                    self.save_cursor();
-                                }
-                                self.switch_alt_screen(true, true);
+            'h' if prefix == '?' => {
+                for param in params.iter().copied() {
+                    match param {
+                        25 => self.cursor_visible = true,
+                        47 | 1047 | 1049 => {
+                            let save_cursor = param == 1049;
+                            if save_cursor {
+                                self.save_cursor();
                             }
-                            _ => {}
+                            self.switch_alt_screen(true, true);
                         }
+                        _ => {}
                     }
                 }
-            'l'
-                if prefix == '?' => {
-                    for param in params.iter().copied() {
-                        match param {
-                            25 => self.cursor_visible = false,
-                            47 | 1047 | 1049 => {
-                                let restore_cursor = param == 1049;
-                                self.switch_alt_screen(false, false);
-                                if restore_cursor {
-                                    self.restore_cursor();
-                                }
+            }
+            'l' if prefix == '?' => {
+                for param in params.iter().copied() {
+                    match param {
+                        25 => self.cursor_visible = false,
+                        47 | 1047 | 1049 => {
+                            let restore_cursor = param == 1049;
+                            self.switch_alt_screen(false, false);
+                            if restore_cursor {
+                                self.restore_cursor();
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
+            }
             'm' => self.apply_sgr(&params),
             _ => {}
         }
@@ -864,7 +862,6 @@ impl TerminalBufferInner {
     pub fn process_output(&mut self, bytes: &[u8]) {
         let _ = self.process_output_and_collect_replies(bytes);
     }
-
 }
 
 #[cfg(test)]
@@ -905,11 +902,7 @@ mod tests {
             .collect()
     }
 
-    fn visible_row_text(
-        b: &TerminalBufferInner,
-        rows: usize,
-        scrollback: usize,
-    ) -> Vec<String> {
+    fn visible_row_text(b: &TerminalBufferInner, rows: usize, scrollback: usize) -> Vec<String> {
         b.visible_rows(rows, scrollback)
             .iter()
             .map(|row| {

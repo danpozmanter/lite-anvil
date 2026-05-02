@@ -237,7 +237,9 @@ pub(crate) fn extract_selection_text(
 ) -> String {
     let mut out = String::new();
     for row in a.0..=b.0 {
-        let Some(cells) = visible_rows.get(row) else { continue };
+        let Some(cells) = visible_rows.get(row) else {
+            continue;
+        };
         let start_col = if row == a.0 { a.1 } else { 0 };
         let end_col = if row == b.0 { b.1 } else { cells.len() };
         let slice_end = end_col.min(cells.len());
@@ -284,10 +286,7 @@ mod tests {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| tmp.clone());
         let fake_file = doc_parent.join("some_file.rs");
-        let got = resolve_terminal_cwd(
-            fake_file.to_string_lossy().as_ref(),
-            &project,
-        );
+        let got = resolve_terminal_cwd(fake_file.to_string_lossy().as_ref(), &project);
         assert_eq!(got, project);
     }
 
@@ -295,10 +294,7 @@ mod tests {
     fn resolve_cwd_falls_back_to_doc_dir_when_no_project() {
         let doc_parent = std::env::temp_dir();
         let fake_file = doc_parent.join("some_file.rs");
-        let got = resolve_terminal_cwd(
-            fake_file.to_string_lossy().as_ref(),
-            "",
-        );
+        let got = resolve_terminal_cwd(fake_file.to_string_lossy().as_ref(), "");
         // Compare by components so trailing-separator differences
         // between platforms (Windows and macOS return `env::temp_dir()`
         // with one, Linux without) don't break the equality check.
@@ -316,7 +312,10 @@ mod tests {
 
     #[test]
     fn terminal_title_uses_cwd_basename() {
-        assert_eq!(terminal_title(1, "/home/user/myproject"), "Terminal 1: myproject");
+        assert_eq!(
+            terminal_title(1, "/home/user/myproject"),
+            "Terminal 1: myproject"
+        );
         assert_eq!(terminal_title(3, ""), "Terminal 3");
     }
 
@@ -373,28 +372,24 @@ mod tests {
     #[test]
     fn normalized_selection_orders_reading_order() {
         assert_eq!(normalized_selection((0, 0), (0, 0)), None);
-        assert_eq!(
-            normalized_selection((2, 1), (0, 5)),
-            Some(((0, 5), (2, 1)))
-        );
-        assert_eq!(
-            normalized_selection((1, 3), (1, 1)),
-            Some(((1, 1), (1, 3)))
-        );
+        assert_eq!(normalized_selection((2, 1), (0, 5)), Some(((0, 5), (2, 1))));
+        assert_eq!(normalized_selection((1, 3), (1, 1)), Some(((1, 1), (1, 3))));
     }
 
     #[test]
     fn extract_selection_text_single_row_partial() {
         use crate::editor::terminal_buffer::Cell;
         let default_fg = [0, 0, 0, 255];
-        let row: Vec<Cell> = "hello world".chars().map(|c| Cell {
-            ch: c as u32,
-            fg: 0,
-            bg: 0,
-        }).collect();
+        let row: Vec<Cell> = "hello world"
+            .chars()
+            .map(|c| Cell {
+                ch: c as u32,
+                fg: 0,
+                bg: 0,
+            })
+            .collect();
         let _ = default_fg;
-        let rows: Vec<std::borrow::Cow<'_, [Cell]>> =
-            vec![std::borrow::Cow::Owned(row)];
+        let rows: Vec<std::borrow::Cow<'_, [Cell]>> = vec![std::borrow::Cow::Owned(row)];
         let got = extract_selection_text(&rows, (0, 6), (0, 11));
         assert_eq!(got, "world");
     }
@@ -407,11 +402,14 @@ mod tests {
             while padded.len() < 10 {
                 padded.push(' ');
             }
-            padded.chars().map(|c| Cell {
-                ch: c as u32,
-                fg: 0,
-                bg: 0,
-            }).collect()
+            padded
+                .chars()
+                .map(|c| Cell {
+                    ch: c as u32,
+                    fg: 0,
+                    bg: 0,
+                })
+                .collect()
         };
         let rows: Vec<std::borrow::Cow<'_, [Cell]>> = vec![
             std::borrow::Cow::Owned(mk("foo")),
@@ -513,11 +511,7 @@ mod unix_impl {
 
         /// Apply an ANSI palette to every terminal instance and store it
         /// as the default for future spawns.
-        pub(crate) fn set_palette(
-            &mut self,
-            palette: [[u8; 4]; 16],
-            default_fg: [u8; 4],
-        ) {
+        pub(crate) fn set_palette(&mut self, palette: [[u8; 4]; 16], default_fg: [u8; 4]) {
             for inst in self.terminals.iter_mut() {
                 inst.tbuf.set_palette(palette, default_fg);
             }
@@ -547,8 +541,7 @@ mod unix_impl {
                     let palette = self
                         .pending_palette
                         .unwrap_or_else(default_16_color_palette);
-                    let default_fg =
-                        self.pending_default_fg.unwrap_or([200, 200, 200, 255]);
+                    let default_fg = self.pending_default_fg.unwrap_or([200, 200, 200, 255]);
                     let tbuf =
                         TerminalBufferInner::new(80, 24, DEFAULT_SCROLLBACK, palette, default_fg);
                     let inst = TerminalInstance {
@@ -695,11 +688,7 @@ mod windows_impl {
 
         /// Apply an ANSI palette to every terminal instance and store it
         /// as the default for future spawns.
-        pub(crate) fn set_palette(
-            &mut self,
-            palette: [[u8; 4]; 16],
-            default_fg: [u8; 4],
-        ) {
+        pub(crate) fn set_palette(&mut self, palette: [[u8; 4]; 16], default_fg: [u8; 4]) {
             for inst in self.terminals.iter_mut() {
                 inst.tbuf.set_palette(palette, default_fg);
             }
@@ -727,8 +716,7 @@ mod windows_impl {
                     let palette = self
                         .pending_palette
                         .unwrap_or_else(default_16_color_palette);
-                    let default_fg =
-                        self.pending_default_fg.unwrap_or([200, 200, 200, 255]);
+                    let default_fg = self.pending_default_fg.unwrap_or([200, 200, 200, 255]);
                     let tbuf =
                         TerminalBufferInner::new(80, 24, DEFAULT_SCROLLBACK, palette, default_fg);
                     let inst = TerminalInstance {

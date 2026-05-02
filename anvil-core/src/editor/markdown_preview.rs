@@ -63,8 +63,7 @@ pub struct MarkdownPreviewState {
     /// line) when the block's fence lang resolves to a bundled syntax; None
     /// otherwise. Populated by the main loop after each reparse so draws
     /// don't pay the tokenize cost every frame.
-    pub code_tokens:
-        Vec<Option<Vec<Vec<crate::editor::tokenizer::Token>>>>,
+    pub code_tokens: Vec<Option<Vec<Vec<crate::editor::tokenizer::Token>>>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -548,20 +547,12 @@ fn draw_block(
                     if let Some(tokens) = lines.get(line_idx) {
                         let mut tx = text_x;
                         for tok in tokens {
-                            let color = crate::editor::doc_view::syntax_color(
-                                &tok.token_type,
-                                style,
-                            );
+                            let color =
+                                crate::editor::doc_view::syntax_color(&tok.token_type, style);
                             tx = ctx.draw_text(style.code_font, &tok.text, tx, cy, color);
                         }
                     } else {
-                        ctx.draw_text(
-                            style.code_font,
-                            line,
-                            text_x,
-                            cy,
-                            style.text.to_array(),
-                        );
+                        ctx.draw_text(style.code_font, line, text_x, cy, style.text.to_array());
                     }
                     cy += clh;
                 }
@@ -636,7 +627,17 @@ fn draw_block(
             alignments,
             head,
             rows,
-        } => draw_table(ctx, alignments, head, rows, x, y, max_x, style, link_regions),
+        } => draw_table(
+            ctx,
+            alignments,
+            head,
+            rows,
+            x,
+            y,
+            max_x,
+            style,
+            link_regions,
+        ),
     }
 }
 
@@ -682,7 +683,13 @@ fn draw_list(
             let box_x = x + LIST_MARKER_INSET;
             // Interior fill: slightly lighter than the page background so
             // the box reads as a distinct surface even when empty.
-            ctx.draw_rect(box_x, box_y, box_size, box_size, style.background3.to_array());
+            ctx.draw_rect(
+                box_x,
+                box_y,
+                box_size,
+                box_size,
+                style.background3.to_array(),
+            );
             // Outline.
             ctx.draw_rect(box_x, box_y, box_size, 1.0, text_color);
             ctx.draw_rect(box_x, box_y + box_size - 1.0, box_size, 1.0, text_color);
@@ -692,13 +699,7 @@ fn draw_list(
                 // Filled inner square in accent.
                 let inset = (box_size * 0.25).floor().max(2.0);
                 let fill = (box_size - inset * 2.0).max(1.0);
-                ctx.draw_rect(
-                    box_x + inset,
-                    box_y + inset,
-                    fill,
-                    fill,
-                    accent_color,
-                );
+                ctx.draw_rect(box_x + inset, box_y + inset, fill, fill, accent_color);
             }
             if let Some(src) = item.source_start {
                 checkbox_regions.push(CheckboxRegion {
@@ -722,11 +723,7 @@ fn draw_list(
         // strikethrough through each word, matching the visual TODO
         // convention ("[x] done" = crossed out).
         let item_checked = item.task == Some(true);
-        let item_color = if item_checked {
-            Some(dim_color)
-        } else {
-            None
-        };
+        let item_color = if item_checked { Some(dim_color) } else { None };
         draw_inlines(
             ctx,
             &item.spans,
@@ -1039,7 +1036,8 @@ fn byte_to_line_col(source: &str, byte_offset: usize) -> (usize, usize) {
             line_start = i + 1;
         }
     }
-    let col = source.get(line_start..byte_offset)
+    let col = source
+        .get(line_start..byte_offset)
         .map(|s| s.chars().count() + 1)
         .unwrap_or(1);
     (line, col)

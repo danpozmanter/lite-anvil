@@ -31,7 +31,8 @@ impl NativeDrawContext {
     /// Register a font group in a slot, returning the slot index.
     pub fn add_font(&mut self, font_refs: Vec<FontRef>) -> u64 {
         let id = self.fonts.len() as u64;
-        self.fonts.push(std::sync::Arc::<[FontRef]>::from(font_refs));
+        self.fonts
+            .push(std::sync::Arc::<[FontRef]>::from(font_refs));
         id
     }
 

@@ -154,9 +154,7 @@ struct TableState {
 
 /// Parse `text` as CommonMark-with-extensions and return the block tree.
 pub fn parse(text: &str) -> Vec<Block> {
-    let opts = Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS;
+    let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(text, opts).into_offset_iter();
 
     let mut stack: Vec<Frame> = vec![Frame::Root { blocks: vec![] }];
@@ -171,11 +169,19 @@ pub fn parse(text: &str) -> Vec<Block> {
             Event::End(tag) => handle_end(tag, &mut stack, &mut style_stack, &mut table),
             Event::Text(text) => {
                 let style = style_stack.last().unwrap();
-                push_span(&mut stack, &mut table, Span::from_text(text.as_ref(), style));
+                push_span(
+                    &mut stack,
+                    &mut table,
+                    Span::from_text(text.as_ref(), style),
+                );
             }
             Event::Code(text) => {
                 let style = style_stack.last().unwrap();
-                push_span(&mut stack, &mut table, Span::inline_code(text.as_ref(), style));
+                push_span(
+                    &mut stack,
+                    &mut table,
+                    Span::inline_code(text.as_ref(), style),
+                );
             }
             Event::SoftBreak => {
                 let style = style_stack.last().unwrap();
@@ -221,10 +227,9 @@ fn handle_start(
                 spans: vec![],
             });
         }
-        Tag::Paragraph
-            if !in_item(stack) => {
-                stack.push(Frame::Paragraph { spans: vec![] });
-            }
+        Tag::Paragraph if !in_item(stack) => {
+            stack.push(Frame::Paragraph { spans: vec![] });
+        }
         Tag::CodeBlock(kind) => {
             let lang = match kind {
                 CodeBlockKind::Fenced(info) => {
@@ -313,12 +318,11 @@ fn handle_end(
                 );
             }
         }
-        TagEnd::Paragraph
-            if !in_item(stack) => {
-                if let Some(Frame::Paragraph { spans }) = stack.pop() {
-                    push_block(stack, Block::Paragraph { inlines: spans });
-                }
+        TagEnd::Paragraph if !in_item(stack) => {
+            if let Some(Frame::Paragraph { spans }) = stack.pop() {
+                push_block(stack, Block::Paragraph { inlines: spans });
             }
+        }
         TagEnd::CodeBlock => {
             if let Some(Frame::CodeBlock { lang, text }) = stack.pop() {
                 let text = text.strip_suffix('\n').unwrap_or(&text).to_string();
@@ -405,9 +409,10 @@ fn handle_end(
         | TagEnd::Strikethrough
         | TagEnd::Link
         | TagEnd::Image
-            if style_stack.len() > 1 => {
-                style_stack.pop();
-            }
+            if style_stack.len() > 1 =>
+        {
+            style_stack.pop();
+        }
         _ => {}
     }
 }

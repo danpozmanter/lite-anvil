@@ -215,7 +215,6 @@ pub fn shutdown() {
     unsafe { SDL_Quit() };
 }
 
-
 // Bytes of the application icon used by `set_window_icon`. Defaults to
 // the Lite-Anvil icon; Nano-Anvil overrides it at startup via
 // `set_app_icon_bytes` before `new_window` is called.

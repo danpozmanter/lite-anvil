@@ -725,13 +725,19 @@ mod tests {
     fn match_syntax_entry_finds_gossamer() {
         let entries = load_syntax_index(&data_dir());
         let matched = match_syntax_entry("hello.gos", &entries);
-        assert!(matched.is_some(), "gossamer.json must register `.gos` files");
+        assert!(
+            matched.is_some(),
+            "gossamer.json must register `.gos` files"
+        );
         let entry = matched.unwrap();
         assert_eq!(entry.name, "Gossamer");
         let def = entry.load_full().expect("gossamer.json must load_full");
         assert_eq!(def.symbols.get("go").map(String::as_str), Some("keyword"));
         assert_eq!(def.symbols.get("fn").map(String::as_str), Some("keyword"));
-        assert_eq!(def.symbols.get("Sender").map(String::as_str), Some("keyword2"));
+        assert_eq!(
+            def.symbols.get("Sender").map(String::as_str),
+            Some("keyword2")
+        );
     }
 
     #[test]
@@ -747,12 +753,18 @@ mod tests {
             .expect("compile gossamer syntax");
         let (l1_toks, l1_state) =
             crate::editor::tokenizer::tokenize_line_with_state(&compiled, "/* hello", None);
-        assert!(l1_state.is_some(), "line 1 should end inside the open block comment");
+        assert!(
+            l1_state.is_some(),
+            "line 1 should end inside the open block comment"
+        );
         // First line tokens should include the `/* hello` body as a comment.
         let joined: String = l1_toks.iter().map(|t| t.text.as_str()).collect();
         assert_eq!(joined, "/* hello");
         let comment_count = l1_toks.iter().filter(|t| t.token_type == "comment").count();
-        assert!(comment_count >= 1, "line 1 should emit a comment token, got {l1_toks:?}");
+        assert!(
+            comment_count >= 1,
+            "line 1 should emit a comment token, got {l1_toks:?}"
+        );
         let (l2_toks, l2_state) =
             crate::editor::tokenizer::tokenize_line_with_state(&compiled, " world */ x", l1_state);
         assert!(l2_state.is_none(), "line 2 should close the block comment");
@@ -761,7 +773,10 @@ mod tests {
         // The leading ` world */` portion should be a single comment run.
         let first_tok = &l2_toks[0];
         assert_eq!(first_tok.token_type, "comment");
-        assert!(first_tok.text.contains("*/"), "first token should reach `*/`, got {first_tok:?}");
+        assert!(
+            first_tok.text.contains("*/"),
+            "first token should reach `*/`, got {first_tok:?}"
+        );
     }
 
     #[test]

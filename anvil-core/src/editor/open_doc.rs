@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::editor::buffer;
 use crate::editor::doc_view::{DocView, RenderLine};
 use crate::editor::git::LineChange;
-use crate::editor::main_loop::{normalize_path, AutoreloadState};
+use crate::editor::main_loop::{AutoreloadState, normalize_path};
 use crate::editor::markdown_preview::MarkdownPreviewState;
 use crate::editor::picker;
 use crate::editor::storage;
@@ -66,6 +66,10 @@ pub(crate) struct OpenDoc {
     pub cached_scroll_y: f64,
     /// Number of inlay hints when cached_render was last built.
     pub cached_hint_count: usize,
+    /// View width when cached_render was last built (rebuild on resize).
+    pub cached_rect_w: f64,
+    /// View height when cached_render was last built (rebuild on resize).
+    pub cached_rect_h: f64,
     /// Memoized dirty-check. `(change_id, is_modified)` — valid as long
     /// as the buffer's current change_id matches. Avoids rehashing the
     /// whole buffer 4+ times per render frame for tab labels and status.
@@ -222,6 +226,8 @@ pub(crate) fn open_file_into(path: &str, docs: &mut Vec<OpenDoc>, use_git: bool)
         cached_change_id: -1,
         cached_scroll_y: -1.0,
         cached_hint_count: 0,
+        cached_rect_w: -1.0,
+        cached_rect_h: -1.0,
         dirty_cache: std::cell::Cell::new(None),
         token_cache: std::cell::RefCell::new(TokenCache::default()),
         preview: MarkdownPreviewState::default(),
@@ -326,6 +332,8 @@ pub(crate) fn restore_project_session(
                 cached_change_id: -1,
                 cached_scroll_y: -1.0,
                 cached_hint_count: 0,
+                cached_rect_w: -1.0,
+                cached_rect_h: -1.0,
                 dirty_cache: std::cell::Cell::new(None),
                 token_cache: std::cell::RefCell::new(TokenCache::default()),
                 preview: MarkdownPreviewState::default(),

@@ -792,7 +792,10 @@ fn discover_fsharp(lines: &[String]) -> Vec<DiscoveredTest> {
 
 fn parse_fsharp_let_name(trimmed: &str) -> Option<String> {
     let rest = trimmed.strip_prefix("let ")?;
-    let rest = rest.strip_prefix("``").map(|r| ("``", r)).unwrap_or(("", rest));
+    let rest = rest
+        .strip_prefix("``")
+        .map(|r| ("``", r))
+        .unwrap_or(("", rest));
     let (wrapper, body) = rest;
     if wrapper == "``" {
         let end = body.find("``")?;
@@ -807,7 +810,12 @@ fn parse_fsharp_let_name(trimmed: &str) -> Option<String> {
 
 /// Java (JUnit 4 / 5, TestNG). Recognises `@Test` + method signature.
 fn discover_java(lines: &[String]) -> Vec<DiscoveredTest> {
-    let attrs = ["@Test", "@ParameterizedTest", "@RepeatedTest", "@TestFactory"];
+    let attrs = [
+        "@Test",
+        "@ParameterizedTest",
+        "@RepeatedTest",
+        "@TestFactory",
+    ];
     discover_attr_prefixed(lines, &attrs, parse_java_method_name)
 }
 
@@ -870,7 +878,14 @@ fn discover_kotlin(lines: &[String]) -> Vec<DiscoveredTest> {
 
 fn parse_kotlin_fun_name(trimmed: &str) -> Option<String> {
     let mut rest = trimmed;
-    for prefix in ["public ", "private ", "internal ", "protected ", "open ", "override "] {
+    for prefix in [
+        "public ",
+        "private ",
+        "internal ",
+        "protected ",
+        "open ",
+        "override ",
+    ] {
         if let Some(s) = rest.strip_prefix(prefix) {
             rest = s;
         }
@@ -978,7 +993,16 @@ fn discover_ruby(lines: &[String]) -> Vec<DiscoveredTest> {
                 continue;
             }
         }
-        for prefix in ["it ", "it(", "specify ", "specify(", "describe ", "describe(", "context ", "context("] {
+        for prefix in [
+            "it ",
+            "it(",
+            "specify ",
+            "specify(",
+            "describe ",
+            "describe(",
+            "context ",
+            "context(",
+        ] {
             if let Some(rest) = trimmed.strip_prefix(prefix) {
                 let stripped = rest.trim_start();
                 let stripped = stripped.strip_prefix(')').unwrap_or(stripped);
@@ -1005,7 +1029,9 @@ fn discover_clojure(lines: &[String]) -> Vec<DiscoveredTest> {
         if let Some(rest) = trimmed.strip_prefix("(deftest ") {
             let name: String = rest
                 .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || matches!(*c, '_' | '-' | '!' | '?' | '*'))
+                .take_while(|c| {
+                    c.is_ascii_alphanumeric() || matches!(*c, '_' | '-' | '!' | '?' | '*')
+                })
                 .collect();
             if !name.is_empty() {
                 out.push(DiscoveredTest {
@@ -1089,7 +1115,13 @@ fn discover_c_cpp(lines: &[String]) -> Vec<DiscoveredTest> {
             continue;
         }
         // Google Test: TEST(Suite, Name) or TEST_F / TEST_P / TYPED_TEST.
-        for prefix in ["TEST(", "TEST_F(", "TEST_P(", "TYPED_TEST(", "TYPED_TEST_P("] {
+        for prefix in [
+            "TEST(",
+            "TEST_F(",
+            "TEST_P(",
+            "TYPED_TEST(",
+            "TYPED_TEST_P(",
+        ] {
             if let Some(rest) = trimmed.strip_prefix(prefix)
                 && let Some(name) = parse_gtest_suite_name(rest)
             {
@@ -1229,8 +1261,7 @@ pub(crate) fn launch_in_terminal(
         // `~/.bashrc` / `~/.zshrc` frequently `cd $HOME`. Prefix with
         // an explicit `cd` so the test command always runs from the
         // project root. Same trick as `terminal_panel::terminal_cd_payload`.
-        let cd_prefix =
-            crate::editor::terminal_panel::terminal_cd_payload(cwd);
+        let cd_prefix = crate::editor::terminal_panel::terminal_cd_payload(cwd);
         let _ = t.inner.write(cd_prefix.as_bytes());
         let payload = format!("{command}\n");
         let _ = t.inner.write(payload.as_bytes());

@@ -5,8 +5,8 @@ use freetype::freetype::{
     FT_ULong,
 };
 use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
 use std::thread::{self, ThreadId};
@@ -409,4 +409,3 @@ pub fn is_whitespace(cp: u32) -> bool {
 // ── RenFont ──────────────────────────────────────────────────────────────────
 
 pub type FontRef = Arc<Mutex<FontInner>>;
-

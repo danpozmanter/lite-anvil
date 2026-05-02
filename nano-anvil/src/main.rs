@@ -20,9 +20,7 @@ fn main() {
 fn run(args: &[String]) -> anyhow::Result<()> {
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
 
-    anvil_core::window::set_app_icon_bytes(include_bytes!(
-        "../../resources/icons/nano-anvil.png"
-    ));
+    anvil_core::window::set_app_icon_bytes(include_bytes!("../../resources/icons/nano-anvil.png"));
     anvil_core::window::set_app_metadata("Nano Anvil", "nano-anvil");
     anvil_core::window::init()?;
 

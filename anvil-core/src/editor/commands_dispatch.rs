@@ -134,6 +134,8 @@ match cmd.as_str() {
             cached_change_id: -1,
             cached_scroll_y: -1.0,
             cached_hint_count: 0,
+            cached_rect_w: -1.0,
+            cached_rect_h: -1.0,
             dirty_cache: std::cell::Cell::new(None),
             token_cache: std::cell::RefCell::new(
                 crate::editor::open_doc::TokenCache::default(),

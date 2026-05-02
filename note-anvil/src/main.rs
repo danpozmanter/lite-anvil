@@ -19,9 +19,7 @@ fn main() {
 fn run(args: &[String]) -> anyhow::Result<()> {
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
 
-    anvil_core::window::set_app_icon_bytes(include_bytes!(
-        "../../resources/icons/note-anvil.png"
-    ));
+    anvil_core::window::set_app_icon_bytes(include_bytes!("../../resources/icons/note-anvil.png"));
     anvil_core::window::set_app_metadata("Note Anvil", "note-anvil");
     anvil_core::window::init()?;
 
