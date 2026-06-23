@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.12.3] - 2026-06-22 -- Tab tooltip dismisses on click.
+
+* Clicking a tab now dismisses the hover tooltip immediately. Previously the tooltip lingered until clicking inside the editor area.
+
 ## [2.12.2] - 2026-06-19 -- Fix multi line selection indentation.
 
 * Indenting selected text would only indent the line at the cursor. Fixed.

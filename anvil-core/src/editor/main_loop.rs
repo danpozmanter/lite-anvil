@@ -956,6 +956,9 @@ pub fn run(
     // Dropdown menu shown when the tab bar overflows — lists every open tab
     // so they stay reachable even when their labels don't fit on screen.
     let mut tab_dropdown_open: bool = false;
+    // Suppresses the hover tooltip after a tab click until the mouse leaves
+    // the tab bar; prevents the tooltip from lingering on the selected tab.
+    let mut tab_tooltip_suppressed: bool = false;
     // Tab targeted by the most recent right-click; consumed by the
     // tab:close / close-left / close-right / close-all dispatch in the
     // context-menu click handler.
@@ -6504,6 +6507,7 @@ pub fn run(
                                     clicked_close = true;
                                 } else {
                                     active_tab = i;
+                                    tab_tooltip_suppressed = true;
                                     tab_dragging = Some(i);
                                     if let Some(doc) = docs.get_mut(i) {
                                         doc.view.target_scroll_y = doc.view.scroll_y;
@@ -9048,6 +9052,9 @@ pub fn run(
                             tab_hover = Some(i);
                         }
                         tx += tw + style.divider_size;
+                    }
+                    if mouse_y >= tbh {
+                        tab_tooltip_suppressed = false;
                     }
 
                     // Overflow dropdown button. The arrow is drawn as a filled
@@ -11727,7 +11734,7 @@ pub fn run(
 
                     // Tooltip for a hovered (truncated) tab.
                     if let Some(hi) = tab_hover {
-                        if tab_overlay_overflow {
+                        if tab_overlay_overflow && !tab_tooltip_suppressed {
                             if let (Some(doc), Some((tx_h, tw_h, _, full_label))) =
                                 (docs.get(hi), tab_overlay_rects.get(hi))
                             {
