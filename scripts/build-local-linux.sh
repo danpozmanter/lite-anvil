@@ -34,9 +34,16 @@ cp -r data "$STAGE_DIR/"
 cp resources/linux/com.lite_anvil.LiteAnvil.desktop "$STAGE_DIR/"
 cp resources/linux/com.nano_anvil.NanoAnvil.desktop "$STAGE_DIR/"
 cp resources/linux/com.note_anvil.NoteAnvil.desktop "$STAGE_DIR/"
-cp resources/icons/lite-anvil.png "$STAGE_DIR/"
-cp resources/icons/nano-anvil.png "$STAGE_DIR/"
-cp resources/icons/note-anvil.png "$STAGE_DIR/"
+# Install the hicolor theme icons under their dashless reverse-DNS app IDs.
+# The freedesktop icon lookup strips a name's trailing "-component" as a
+# fallback, so a dashed name like "note-anvil" resolves to the generic
+# "note" icon shipped by Breeze before the app's own PNG is consulted. The
+# reverse-DNS IDs contain no dashes, so the fallback never fires and each
+# app's icon resolves to itself. The source filenames stay dashed; only
+# the installed theme name matters.
+cp resources/icons/lite-anvil.png "$STAGE_DIR/com.lite_anvil.LiteAnvil.png"
+cp resources/icons/nano-anvil.png "$STAGE_DIR/com.nano_anvil.NanoAnvil.png"
+cp resources/icons/note-anvil.png "$STAGE_DIR/com.note_anvil.NoteAnvil.png"
 
 tar -C "$DIST_DIR" -czf "$ARCHIVE" "$ARCHIVE_BASE"
 

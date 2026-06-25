@@ -103,8 +103,8 @@ fn sdl_error() -> String {
 // App metadata passed to SDL_SetAppMetadata in `init`. Defaults match
 // Lite-Anvil; Nano-Anvil overrides these via `set_app_metadata` before
 // calling `init` so the Linux taskbar matches `nano-anvil.desktop`
-// (StartupWMClass=nano-anvil, Icon=nano-anvil) instead of falling back
-// to the Lite-Anvil entry.
+// (StartupWMClass=nano-anvil, Icon=com.nano_anvil.NanoAnvil) instead of
+// falling back to the Lite-Anvil entry.
 thread_local! {
     static APP_NAME: std::cell::RefCell<std::ffi::CString> =
         std::cell::RefCell::new(
@@ -488,6 +488,30 @@ pub fn set_clipboard_text(text: &str) {
     if let Ok(cstr) = CString::new(text) {
         // SAFETY: cstr is a valid C string.
         unsafe { SDL_SetClipboardText(cstr.as_ptr()) };
+    }
+}
+
+/// Get text from the X11 PRIMARY selection (the middle-click paste buffer).
+/// Returns `None` on platforms without a primary selection (Windows/macOS).
+pub fn get_primary_selection_text() -> Option<String> {
+    // SAFETY: SDL_GetPrimarySelectionText returns a valid C string that must be freed.
+    let ptr = unsafe { SDL_GetPrimarySelectionText() };
+    if ptr.is_null() {
+        return None;
+    }
+    let text = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { sdl3_sys::everything::SDL_free(ptr as *mut std::ffi::c_void) };
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// Set the X11 PRIMARY selection (the middle-click paste buffer). A no-op on
+/// platforms without a primary selection.
+pub fn set_primary_selection_text(text: &str) {
+    if let Ok(cstr) = CString::new(text) {
+        // SAFETY: cstr is a valid C string.
+        unsafe { SDL_SetPrimarySelectionText(cstr.as_ptr()) };
     }
 }
 

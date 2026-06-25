@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.12.4] - 2026-06-25 -- Middle-click paste on Linux & Linux icons.
+
+* Middle-click now pastes the X11 PRIMARY selection at the click point, the standard Linux convention. Selecting text in the editor publishes it to the PRIMARY selection so it can be middle-click-pasted here or in other apps, and middle-clicking in the editor or terminal pastes whatever the PRIMARY selection holds. Implemented through SDL's own cross-platform primary-selection API, so it is a no-op on platforms without a primary selection (Windows/macOS).
+* Linux install now places app icons under their dashless reverse-DNS IDs (e.g. `com.note_anvil.NoteAnvil.png`) and removes the legacy dashed ones. The freedesktop lookup strips a trailing `-component`, so dashed `note-anvil` resolved to Breeze's generic `note` icon; the dotted IDs have no dashes and resolve each app to itself.
+
 ## [2.12.3] - 2026-06-22 -- Tab tooltip dismisses on click.
 
 * Clicking a tab now dismisses the hover tooltip immediately. Previously the tooltip lingered until clicking inside the editor area.

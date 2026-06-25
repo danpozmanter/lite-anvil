@@ -73,7 +73,10 @@ uninstall_linux() {
     rm_if_exists "$app_dir/com.nano_anvil.NanoAnvil.desktop"
     rm_if_exists "$app_dir/com.note_anvil.NoteAnvil.desktop"
 
-    # Hicolor icons.
+    # Hicolor icons (reverse-DNS names, plus legacy dashed names).
+    rm_if_exists "$icon_dir/com.lite_anvil.LiteAnvil.png"
+    rm_if_exists "$icon_dir/com.nano_anvil.NanoAnvil.png"
+    rm_if_exists "$icon_dir/com.note_anvil.NoteAnvil.png"
     rm_if_exists "$icon_dir/lite-anvil.png"
     rm_if_exists "$icon_dir/nano-anvil.png"
     rm_if_exists "$icon_dir/note-anvil.png"
@@ -104,6 +107,9 @@ uninstall_linux() {
                  /usr/share/applications/lite-anvil.desktop \
                  /usr/share/applications/nano-anvil.desktop \
                  /usr/share/applications/note-anvil.desktop \
+                 /usr/share/icons/hicolor/256x256/apps/com.lite_anvil.LiteAnvil.png \
+                 /usr/share/icons/hicolor/256x256/apps/com.nano_anvil.NanoAnvil.png \
+                 /usr/share/icons/hicolor/256x256/apps/com.note_anvil.NoteAnvil.png \
                  /usr/share/icons/hicolor/256x256/apps/lite-anvil.png \
                  /usr/share/icons/hicolor/256x256/apps/nano-anvil.png \
                  /usr/share/icons/hicolor/256x256/apps/note-anvil.png; do

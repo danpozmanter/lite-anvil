@@ -948,6 +948,11 @@ pub fn run(
     let mut sidebar_sb_dragging = false;
     let mut sidebar_sb_drag_offset: f64 = 0.0;
     let mut editor_mouse_down = false;
+    // Last (buffer, selection range) mirrored into the X11 PRIMARY selection.
+    // Keyed so a non-empty selection is pushed once per change rather than
+    // every frame, and a re-selection after a foreign app grabbed PRIMARY
+    // re-asserts ownership (the intervening caret changes the key).
+    let mut last_primary_key: (u64, Vec<usize>) = (0, Vec::new());
     // Local shift-key tracker. SDL's mouse events don't carry modifier state,
     // so tracking it from keyboard events directly by key name makes shift+click
     // robust against any SDL_GetModState quirks on different platforms/WMs.
@@ -1936,8 +1941,10 @@ pub fn run(
         }
 
         // Poll all pending events.
+        let mut had_input_events = false;
         while let Some(event) = crate::window::poll_event_native() {
             // Any event counts as activity for idle-drop tracking.
+            had_input_events = true;
             last_activity = Instant::now();
             dropped_caches_for_idle = false;
             // Scope each dialog field's undo history to a single open session:
@@ -6634,6 +6641,17 @@ pub fn run(
                                         inst.sel_dragging = true;
                                     }
                                 }
+                                // Middle-click pastes the X11 PRIMARY selection
+                                // into the shell, matching Linux terminals.
+                                if in_viewport
+                                    && *button == MouseButton::Middle
+                                    && let Some(text) = crate::window::get_primary_selection_text()
+                                    && let Some(inst) = terminal.active_terminal()
+                                {
+                                    let _ = inst.inner.write(text.as_bytes());
+                                    inst.scrollback = 0.0;
+                                    inst.scrollback_target = 0.0;
+                                }
                                 redraw = true;
                                 continue;
                             }
@@ -6911,6 +6929,63 @@ pub fn run(
                             redraw = true;
                             continue;
                         }
+                    }
+
+                    // Middle-click pastes the X11 PRIMARY selection at the
+                    // click point, the standard Linux convention. Only acts
+                    // inside the editor viewport rect; consumes the event so it
+                    // never falls through to cursor placement / drag-select.
+                    if *button == MouseButton::Middle {
+                        if let Some(text) = crate::window::get_primary_selection_text()
+                            && let Some(doc) = docs.get(active_tab)
+                        {
+                            let dv = &doc.view;
+                            if let Some(buf_id) = dv.buffer_id {
+                                let dvr = dv.rect();
+                                let in_editor = *x >= dvr.x
+                                    && *x < dvr.x + dvr.w
+                                    && *y >= dvr.y
+                                    && *y < dvr.y + dvr.h;
+                                if in_editor {
+                                    let line_h = style.code_font_height * 1.2;
+                                    let gutter_w = dv.gutter_width;
+                                    let text_x_start =
+                                        dv.rect().x + gutter_w + style.padding_x - dv.scroll_x;
+                                    let (click_line, click_col) = click_to_doc_pos(
+                                        dv,
+                                        buf_id,
+                                        &doc.cached_render,
+                                        *x,
+                                        *y,
+                                        text_x_start,
+                                        line_h,
+                                        &style,
+                                        &mut draw_ctx,
+                                    );
+                                    let text = if config.format_on_paste {
+                                        convert_paste_indent(
+                                            &text,
+                                            &doc.indent_type,
+                                            doc.indent_size,
+                                        )
+                                    } else {
+                                        text
+                                    };
+                                    let _ = buffer::with_buffer_mut(buf_id, |b| {
+                                        let line = click_line.min(b.lines.len()).max(1);
+                                        let max_col =
+                                            char_count(b.lines[line - 1].trim_end_matches('\n'))
+                                                + 1;
+                                        let col = click_col.min(max_col);
+                                        b.selections = vec![line, col, line, col];
+                                        insert_text_at_caret(b, &text);
+                                        Ok(())
+                                    });
+                                }
+                            }
+                        }
+                        redraw = true;
+                        continue;
                     }
 
                     if let Some(doc) = docs.get_mut(active_tab) {
@@ -7470,6 +7545,27 @@ pub fn run(
                 }
                 _ => {
                     redraw = true;
+                }
+            }
+        }
+
+        // Mirror the active editor selection into the X11 PRIMARY selection so
+        // middle-click paste (here and in other apps) uses the current
+        // selection, matching standard Linux behavior. A no-op on platforms
+        // without a primary selection.
+        if had_input_events
+            && let Some(doc) = docs.get(active_tab)
+            && let Some(buf_id) = doc.view.buffer_id
+        {
+            let coords =
+                buffer::with_buffer(buf_id, |b| Ok(b.selections.clone())).unwrap_or_default();
+            let key = (buf_id, coords);
+            if key != last_primary_key {
+                last_primary_key = key;
+                let selected = buffer::with_buffer(buf_id, |b| Ok(buffer::get_selected_text(b)))
+                    .unwrap_or_default();
+                if !selected.is_empty() {
+                    crate::window::set_primary_selection_text(&selected);
                 }
             }
         }
@@ -12386,6 +12482,46 @@ fn strip_trailing_line_comment(s: &str) -> &str {
     s
 }
 
+/// Insert `text` at the active caret, replacing any selection and splitting
+/// on '\n' across lines. Records an undo step and leaves the caret at the end
+/// of the inserted text. Shared by clipboard paste and middle-click (PRIMARY)
+/// paste so both behave identically.
+fn insert_text_at_caret(b: &mut crate::editor::buffer::BufferState, text: &str) {
+    buffer::push_undo(b);
+    buffer::delete_selection(b);
+    let line = b.selections[0];
+    let col = b.selections[1];
+    if line <= b.lines.len() {
+        let l = &mut b.lines[line - 1];
+        let byte_pos = char_to_byte(l, col - 1);
+        let after = l[byte_pos..].to_string();
+        l.truncate(byte_pos);
+        let paste_lines: Vec<&str> = text.split('\n').collect();
+        if paste_lines.len() == 1 {
+            l.push_str(text);
+            l.push_str(&after);
+            let new_col = col + text.chars().count();
+            b.selections = vec![line, new_col, line, new_col];
+        } else {
+            l.push_str(paste_lines[0]);
+            l.push('\n');
+            let mut cur_line = line;
+            for (i, pl) in paste_lines.iter().enumerate().skip(1) {
+                cur_line += 1;
+                if i == paste_lines.len() - 1 {
+                    let new_col = pl.chars().count() + 1;
+                    let mut new_line = pl.to_string();
+                    new_line.push_str(&after);
+                    b.lines.insert(cur_line - 1, new_line);
+                    b.selections = vec![cur_line, new_col, cur_line, new_col];
+                } else {
+                    b.lines.insert(cur_line - 1, format!("{pl}\n"));
+                }
+            }
+        }
+    }
+}
+
 /// Convert pasted text's leading whitespace to match the document's indent
 /// style. Detects whether the clipboard content uses tabs or spaces, then
 /// re-indents every line to the target style (preserving relative depth).
@@ -13866,5 +14002,41 @@ mod clipboard_tests {
         let caret = insert_clipboard_line(&mut buf, 1, "a\nb");
         assert_eq!(buf, "[ab]");
         assert_eq!(caret, 3);
+    }
+}
+
+#[cfg(test)]
+mod paste_insert_tests {
+    use super::insert_text_at_caret;
+    use crate::editor::buffer::default_buffer_state;
+
+    #[test]
+    fn inserts_single_line_at_caret_and_advances() {
+        let mut b = default_buffer_state();
+        b.lines = vec!["hello\n".to_string()];
+        b.selections = vec![1, 3, 1, 3];
+        insert_text_at_caret(&mut b, "XY");
+        assert_eq!(b.lines, vec!["heXYllo\n".to_string()]);
+        assert_eq!(b.selections, vec![1, 5, 1, 5]);
+    }
+
+    #[test]
+    fn inserts_multi_line_and_splits_the_row() {
+        let mut b = default_buffer_state();
+        b.lines = vec!["hello\n".to_string()];
+        b.selections = vec![1, 3, 1, 3];
+        insert_text_at_caret(&mut b, "A\nB");
+        assert_eq!(b.lines, vec!["heA\n".to_string(), "Bllo\n".to_string()]);
+        assert_eq!(b.selections, vec![2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn replaces_the_active_selection() {
+        let mut b = default_buffer_state();
+        b.lines = vec!["hello\n".to_string()];
+        b.selections = vec![1, 1, 1, 6];
+        insert_text_at_caret(&mut b, "bye");
+        assert_eq!(b.lines, vec!["bye\n".to_string()]);
+        assert_eq!(b.selections, vec![1, 4, 1, 4]);
     }
 }

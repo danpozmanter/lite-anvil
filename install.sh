@@ -96,42 +96,55 @@ install_linux() {
     if [ -f "$stage_dir/com.note_anvil.NoteAnvil.desktop" ]; then
         $sudo_cmd cp "$stage_dir/com.note_anvil.NoteAnvil.desktop" "$app_dir/note-anvil.desktop"
     fi
-    $sudo_cmd cp "$stage_dir/lite-anvil.png" "$icon_dir/lite-anvil.png"
-    if [ -f "$stage_dir/nano-anvil.png" ]; then
-        $sudo_cmd cp "$stage_dir/nano-anvil.png" "$icon_dir/nano-anvil.png"
+    # Theme icons are named by the dashless reverse-DNS app ID. The
+    # freedesktop icon lookup strips a name's trailing "-component" as a
+    # fallback, so a dashed "note-anvil" resolves to Breeze's generic
+    # "note" icon before the app's own PNG is found; the dotted IDs have no
+    # dashes, so the lookup resolves each app to itself.
+    $sudo_cmd cp "$stage_dir/com.lite_anvil.LiteAnvil.png" "$icon_dir/com.lite_anvil.LiteAnvil.png"
+    if [ -f "$stage_dir/com.nano_anvil.NanoAnvil.png" ]; then
+        $sudo_cmd cp "$stage_dir/com.nano_anvil.NanoAnvil.png" "$icon_dir/com.nano_anvil.NanoAnvil.png"
     fi
-    if [ -f "$stage_dir/note-anvil.png" ]; then
-        $sudo_cmd cp "$stage_dir/note-anvil.png" "$icon_dir/note-anvil.png"
+    if [ -f "$stage_dir/com.note_anvil.NoteAnvil.png" ]; then
+        $sudo_cmd cp "$stage_dir/com.note_anvil.NoteAnvil.png" "$icon_dir/com.note_anvil.NoteAnvil.png"
     fi
-    # Force a fresh mtime so any desktop env that watches dirs notices.
-    $sudo_cmd touch "$icon_dir/lite-anvil.png" \
-        "$icon_dir/nano-anvil.png" \
+    # Drop legacy dashed icons left by older installs; the .desktop files
+    # no longer reference them.
+    $sudo_cmd rm -f "$icon_dir/lite-anvil.png" "$icon_dir/nano-anvil.png" \
         "$icon_dir/note-anvil.png" 2>/dev/null || true
+    # Force a fresh mtime so any desktop env that watches dirs notices.
+    $sudo_cmd touch "$icon_dir/com.lite_anvil.LiteAnvil.png" \
+        "$icon_dir/com.nano_anvil.NanoAnvil.png" \
+        "$icon_dir/com.note_anvil.NoteAnvil.png" 2>/dev/null || true
 
     # User install: if ANY previous install ever put an anvil icon
     # system-wide (and left behind a stale / incomplete set), KDE's
     # KIconLoader prefers the system path and will fall back to the
     # mime-type icon for any app whose PNG is only in ~/.local. So
     # instead of wiping the system copies (which requires sudo), we
-    # top them up: if a writable system hicolor dir already contains
-    # lite-anvil.png or nano-anvil.png, copy note-anvil.png (and the
-    # others) alongside them so the theme lookup resolves for every
-    # app. Silently no-op if the dirs aren't writable.
+    # top them up: if a writable system hicolor dir already holds an
+    # anvil icon, refresh the full reverse-DNS set alongside it so the
+    # theme lookup resolves for every app. Silently no-op if the dirs
+    # aren't writable.
     if [ "$SYSTEM" -eq 0 ]; then
         for sys_icons in \
             /usr/local/share/icons/hicolor/256x256/apps \
             /usr/share/icons/hicolor/256x256/apps; do
             if [ -w "$sys_icons" ]; then
-                if [ -f "$sys_icons/lite-anvil.png" ] \
+                if [ -f "$sys_icons/com.lite_anvil.LiteAnvil.png" ] \
+                   || [ -f "$sys_icons/com.nano_anvil.NanoAnvil.png" ] \
+                   || [ -f "$sys_icons/lite-anvil.png" ] \
                    || [ -f "$sys_icons/nano-anvil.png" ]; then
-                    cp -f "$stage_dir/lite-anvil.png" "$sys_icons/lite-anvil.png" 2>/dev/null || true
-                    [ -f "$stage_dir/nano-anvil.png" ] && \
-                        cp -f "$stage_dir/nano-anvil.png" "$sys_icons/nano-anvil.png" 2>/dev/null || true
-                    [ -f "$stage_dir/note-anvil.png" ] && \
-                        cp -f "$stage_dir/note-anvil.png" "$sys_icons/note-anvil.png" 2>/dev/null || true
-                    touch "$sys_icons/lite-anvil.png" \
-                          "$sys_icons/nano-anvil.png" \
+                    cp -f "$stage_dir/com.lite_anvil.LiteAnvil.png" "$sys_icons/com.lite_anvil.LiteAnvil.png" 2>/dev/null || true
+                    [ -f "$stage_dir/com.nano_anvil.NanoAnvil.png" ] && \
+                        cp -f "$stage_dir/com.nano_anvil.NanoAnvil.png" "$sys_icons/com.nano_anvil.NanoAnvil.png" 2>/dev/null || true
+                    [ -f "$stage_dir/com.note_anvil.NoteAnvil.png" ] && \
+                        cp -f "$stage_dir/com.note_anvil.NoteAnvil.png" "$sys_icons/com.note_anvil.NoteAnvil.png" 2>/dev/null || true
+                    rm -f "$sys_icons/lite-anvil.png" "$sys_icons/nano-anvil.png" \
                           "$sys_icons/note-anvil.png" 2>/dev/null || true
+                    touch "$sys_icons/com.lite_anvil.LiteAnvil.png" \
+                          "$sys_icons/com.nano_anvil.NanoAnvil.png" \
+                          "$sys_icons/com.note_anvil.NoteAnvil.png" 2>/dev/null || true
                     local sys_root="${sys_icons%/256x256/apps}"
                     rm -f "$sys_root/icon-theme.cache" 2>/dev/null || true
                     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
@@ -152,6 +165,9 @@ install_linux() {
         rm -f "$HOME/.local/share/applications/lite-anvil.desktop" \
               "$HOME/.local/share/applications/nano-anvil.desktop" \
               "$HOME/.local/share/applications/note-anvil.desktop" \
+              "$HOME/.local/share/icons/hicolor/256x256/apps/com.lite_anvil.LiteAnvil.png" \
+              "$HOME/.local/share/icons/hicolor/256x256/apps/com.nano_anvil.NanoAnvil.png" \
+              "$HOME/.local/share/icons/hicolor/256x256/apps/com.note_anvil.NoteAnvil.png" \
               "$HOME/.local/share/icons/hicolor/256x256/apps/lite-anvil.png" \
               "$HOME/.local/share/icons/hicolor/256x256/apps/nano-anvil.png" \
               "$HOME/.local/share/icons/hicolor/256x256/apps/note-anvil.png" \
@@ -175,16 +191,11 @@ install_linux() {
     local icon_root="${icon_dir%/256x256/apps}"
     $sudo_cmd rm -f "$icon_root/icon-theme.cache" 2>/dev/null || true
     # Ensure the hicolor root has an `index.theme`. KDE/Plasma's
-    # KIconLoader skips a hicolor root that isn't a real theme, which
-    # means a user-install (`~/.local/share/icons/hicolor/`) is ignored
-    # unless the root is registered. Without this, KDE found icons that
-    # had also been installed system-wide (from an earlier
-    # `--system` run) but silently fell through to the mime-type
-    # fallback for any icon present only in the user root -- e.g.
-    # `Icon=note-anvil` after a fresh user install resolved to the
-    # Breeze text-markdown notebook. Writing the minimum spec-compliant
-    # `index.theme` fixes the lookup for every hicolor-only icon this
-    # install ships.
+    # KIconLoader only treats a hicolor root as a real theme when it is
+    # registered, so a user-install (`~/.local/share/icons/hicolor/`)
+    # needs the root described for its icons to be discoverable. Writing
+    # the minimum spec-compliant `index.theme` makes the lookup resolve
+    # every hicolor-only icon this install ships.
     if [ ! -f "$icon_root/index.theme" ]; then
         $sudo_cmd tee "$icon_root/index.theme" >/dev/null <<'EOF'
 [Icon Theme]
