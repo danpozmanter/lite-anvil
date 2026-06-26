@@ -1164,12 +1164,13 @@ pub fn tokenize_line_with_state(
                 continue;
             }
 
+            let next_i = find_results[1] + 1;
             push_tokens(
                 &mut tokens,
                 &current_syntax.symbols,
                 &pattern.token_types,
                 line,
-                find_results.clone(),
+                find_results,
             );
 
             if matches!(pattern.matcher, PatternMatcher::Pair { .. }) {
@@ -1188,7 +1189,7 @@ pub fn tokenize_line_with_state(
                     syn_state.current_pattern_idx = n + 1;
                 }
             }
-            i = find_results[1] + 1;
+            i = next_i;
             matched = true;
             break;
         }

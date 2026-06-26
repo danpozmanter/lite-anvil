@@ -1,6 +1,14 @@
 # Change Log
 
-## [2.12.4] - 2026-06-25 -- Middle-click paste on Linux & Linux icons.
+## [2.12.5] - 2026-06-26 - Performance and stability hardening.
+
+* Terminal scroll, insert-line, and delete-line no longer allocate per row: the screen region is rotated in place and vacated rows are cleared in place, eliminating one Vec<Cell> clone per visible row on every scroll tick.
+* LSP message decoding no longer copies the receive buffer on each parsed message: an offset cursor advances through the buffer instead, reducing large LSP responses from O(n^2) to O(n) in byte copies.
+* Syntax tokenizer inner loop no longer clones the match-positions vector on every pattern match.
+* Find/replace no longer allocates a temporary Vec<u8> per match: a reusable buffer is passed into the replacement writer.
+* Fold and bookmark gutter lookups in the draw pass converted from O(n) Vec scans to O(1) HashSet lookups. The fold-skip loop in `build_render_lines` now precomputes a HashSet once per frame instead of doing a linear fold search per document line.
+
+## [2.12.4] - 2026-06-25 - Middle-click paste on Linux & Linux icons.
 
 * Middle-click now pastes the X11 PRIMARY selection at the click point, the standard Linux convention. Selecting text in the editor publishes it to the PRIMARY selection so it can be middle-click-pasted here or in other apps, and middle-clicking in the editor or terminal pastes whatever the PRIMARY selection holds. Implemented through SDL's own cross-platform primary-selection API, so it is a no-op on platforms without a primary selection (Windows/macOS).
 * Linux install now places app icons under their dashless reverse-DNS IDs (e.g. `com.note_anvil.NoteAnvil.png`) and removes the legacy dashed ones. The freedesktop lookup strips a trailing `-component`, so dashed `note-anvil` resolved to Breeze's generic `note` icon; the dotted IDs have no dashes and resolve each app to itself.
@@ -61,7 +69,7 @@
 ## [2.11.28] - 2026-05-17 -- Tokenizer performance fixes.
 
 * Compiled regexes now request PCRE2's JIT (`jit_if_available`). PCRE2's JIT matcher is ~2-10x faster than the bytecode interpreter for typical syntax patterns; this was simply never enabled in the builder. Free win on every platform with JIT support, silent no-op everywhere else.
-* Fixed: tokenizing a syntax-highlighted file with non-ASCII characters (em-dashes, smart quotes, etc.) was up to 13x slower than the same file in pure ASCII because `ucharpos`, `prefix_ulen`, and `usub` walked the bytes from the start on every call — and the inner tokenize loop hits them hundreds of times per line. `tokenize_line_with_state` now primes a per-line char-byte index once up front, so every helper call inside the loop is O(1).
+* Fixed: tokenizing a syntax-highlighted file with non-ASCII characters (em-dashes, smart quotes, etc.) was up to 13x slower than the same file in pure ASCII because `ucharpos`, `prefix_ulen`, and `usub` walked the bytes from the start on every call  -  and the inner tokenize loop hits them hundreds of times per line. `tokenize_line_with_state` now primes a per-line char-byte index once up front, so every helper call inside the loop is O(1).
 * Combined measured speedup vs. 2.11.27: the project changelog (UTF-8 markdown, long lines) drops from 3.9 ms / line to 595 µs / line (6.6x); web_ready.md from 312 µs / line to 126 µs / line (2.5x).
 
 ## [2.11.27] - 2026-05-15 -- Indent detection ignores alignment-continuation widths.
@@ -70,7 +78,7 @@
 
 ## [2.11.26] - 2026-05-15 -- Inlay refresh on every edit, tab path-copy entries, bare version output.
 
-* Fixed: LSP inlay hints did not refresh after paste, undo, redo, format-document, multi-cursor delete, snippet apply, or find-and-replace — only direct typing rearmed the debounced `didChange`, so every other edit route left stale hints anchored at their pre-edit byte offsets. The active document's `change_id` is now polled once per frame and a mismatch fires the same debounce path that typing used to fire directly, so any buffer mutation re-asks the language server for inlays.
+* Fixed: LSP inlay hints did not refresh after paste, undo, redo, format-document, multi-cursor delete, snippet apply, or find-and-replace  -  only direct typing rearmed the debounced `didChange`, so every other edit route left stale hints anchored at their pre-edit byte offsets. The active document's `change_id` is now polled once per frame and a mismatch fires the same debounce path that typing used to fire directly, so any buffer mutation re-asks the language server for inlays.
 * Right-clicking an open file's tab now offers "Copy Path" and "Copy Relative Path" entries, mirroring the sidebar's per-file menu. Untitled tabs without an on-disk path don't get the entries.
 * The `about:version` command palette entry now prints just the bare version (e.g. `2.11.26`) instead of `Lite Anvil v2.11.26`.
 
@@ -87,19 +95,19 @@
 ## [2.11.23] - 2026-05-12 -- Home/End and Ctrl+C fixes, double/triple-click selection.
 
 * Fixed: pressing Home, End, or Ctrl+C while the find/replace bar was open silently swallowed the key instead of falling through to the document, so the document caret never moved and selections never copied. The find bar now passes Home/End/Ctrl+C (and any other unhandled keys) through to the normal keymap, so caret movement and clipboard shortcuts keep working with the find bar visible.
-* Double-click now selects the word under the caret and triple-click selects the whole line, matching Lite-XL. The SDL click count was previously hardcoded to 1, so neither selection ever fired — every click was treated as a single-click caret placement.
+* Double-click now selects the word under the caret and triple-click selects the whole line, matching Lite-XL. The SDL click count was previously hardcoded to 1, so neither selection ever fired  -  every click was treated as a single-click caret placement.
 
 ## [2.11.22] - 2026-05-12 -- Smart auto-indent, indent detection fix, smart backspace.
 
-* Smart auto-indent on Enter. After a line ending in `:`, `{`, `(`, or `[` (with optional trailing whitespace or line comment), the new line gets one extra indent unit on top of the previous line's leading whitespace — e.g. pressing Enter after `for a in sys.argv:` now lands the caret at the correct column. The indent unit honors the document's detected tab/space style and size.
-* Fixed: indent detection treated a uniformly-indented file as 2-space when it was actually 4-space. The old scoring required *multiple distinct* leading-space widths to vote for a candidate, so a file whose every indented line sat at depth 1 (e.g. `testy.py`) collapsed to the default. Detection is now frequency-weighted and picks the largest width in 1..=8 that explains the most observed indents — so a Python file with only 4-space lines reports 4.
+* Smart auto-indent on Enter. After a line ending in `:`, `{`, `(`, or `[` (with optional trailing whitespace or line comment), the new line gets one extra indent unit on top of the previous line's leading whitespace  -  e.g. pressing Enter after `for a in sys.argv:` now lands the caret at the correct column. The indent unit honors the document's detected tab/space style and size.
+* Fixed: indent detection treated a uniformly-indented file as 2-space when it was actually 4-space. The old scoring required *multiple distinct* leading-space widths to vote for a candidate, so a file whose every indented line sat at depth 1 (e.g. `testy.py`) collapsed to the default. Detection is now frequency-weighted and picks the largest width in 1..=8 that explains the most observed indents  -  so a Python file with only 4-space lines reports 4.
 * Smart backspace. On a soft-indented document, when the caret is inside a run of leading spaces, Backspace now snaps back to the previous indent boundary instead of deleting one space at a time. Four leading spaces become zero in one keystroke; six leading spaces become four (aligning to the indent unit). Lines with non-space content before the caret, hard-tab documents, and the column-1 edge case keep their original single-character behavior.
 
 ## [2.11.21] - 2026-05-11 -- Python syntax highlighting fix, csproj and fsproj highlighting.
 
-* Fixed: pair-based syntax patterns (Python's `for ... :`, `if ... :`, `def ... :`, etc.) collapsed the entire match into one flat token, leaving inner identifiers, keywords, brackets, and the closing `:` un-highlighted. The tokenizer now matches pair opens, descends into sub-syntaxes for inner content, and pops on the proper close — matching the lite-xl 1.5.5 reference behavior. Captures inside patterns are now split into their typed segments as well (e.g. `# heading {#anchor}` no longer collapses to one keyword run).
+* Fixed: pair-based syntax patterns (Python's `for ... :`, `if ... :`, `def ... :`, etc.) collapsed the entire match into one flat token, leaving inner identifiers, keywords, brackets, and the closing `:` un-highlighted. The tokenizer now matches pair opens, descends into sub-syntaxes for inner content, and pops on the proper close  -  matching the lite-xl 1.5.5 reference behavior. Captures inside patterns are now split into their typed segments as well (e.g. `# heading {#anchor}` no longer collapses to one keyword run).
 * `.csproj` and `.fsproj` files now open with XML syntax highlighting applied automatically.
-* Fixed: Lua `%f[set]` frontier patterns compiled to a bare lookahead, missing the "previous character not in set" half of the assertion. This caused XML's "text between tags" pattern to fire right after every `<`, swallowing tag names, attributes, and string values as plain text — so `.xml` / `.csproj` / `.fsproj` / `.svg` etc. opened with no visible highlighting beyond the angle brackets. Frontier patterns now emit `(?<![set])(?=[set])` and match lite-xl's Lua semantics.
+* Fixed: Lua `%f[set]` frontier patterns compiled to a bare lookahead, missing the "previous character not in set" half of the assertion. This caused XML's "text between tags" pattern to fire right after every `<`, swallowing tag names, attributes, and string values as plain text  -  so `.xml` / `.csproj` / `.fsproj` / `.svg` etc. opened with no visible highlighting beyond the angle brackets. Frontier patterns now emit `(?<![set])(?=[set])` and match lite-xl's Lua semantics.
 
 ## [2.11.20] - 2026-05-11 -- New / Delete / Copy Path from sidebar context menu.
 
@@ -138,7 +146,7 @@
 
 ## [2.11.13] - 2026-05-01 -- Mouse-hover tooltips and tighter LSP autocomplete.
 
-* Hovering the mouse over an LSP-underlined diagnostic now shows the diagnostic message as a tooltip — no more reaching for `Ctrl+K` just to see why something is squiggled. Fault was on the editor side; the LSP server was already publishing `message` text.
+* Hovering the mouse over an LSP-underlined diagnostic now shows the diagnostic message as a tooltip  -  no more reaching for `Ctrl+K` just to see why something is squiggled. Fault was on the editor side; the LSP server was already publishing `message` text.
 * Hovering the mouse over any code for ~600 ms now fires a `textDocument/hover` request and surfaces the LSP's type / doc info in the same tooltip surface. `Ctrl+K` continues to work as the explicit trigger.
 * Diagnostic hits show immediately; LSP hover info debounces so the server isn't spammed while the cursor is moving.
 * Autocomplete popup now auto-sizes its width to fit the widest item rather than always claiming 350 px. Short suggestions render as a tight box instead of a wide rectangle of empty space.
@@ -173,12 +181,12 @@
 ## [2.11.7] - 2026-04-24 -- Markdown preview styling + code-block syntax, Save As overwrite guard, faster path suggestions, highlighting fixes.
 
 * Markdown preview: `**bold**` renders via synthetic double-strike (we don't ship a bold font slot); `*italic*` renders in the accent colour so it's visibly distinct from body text.
-* Fenced code blocks tagged with a language (e.g. ```` ```sh ````, ```` ```rust ````, ```` ```python ````) render with the matching bundled syntax highlighter — pre-tokenized once per reparse, reuses the editor's compiled-syntax cache.
+* Fenced code blocks tagged with a language (e.g. ```` ```sh ````, ```` ```rust ````, ```` ```python ````) render with the matching bundled syntax highlighter  -  pre-tokenized once per reparse, reuses the editor's compiled-syntax cache.
 * Markdown preview: code blocks with no (or unknown) fence language render in the plain body text colour instead of the green `style.good` tint.
-* Editor: files whose extension has no compiled syntax *and* no fallback keyword set (plain text, dotfiles, etc.) now render as single plain-text runs — quotes and `//` are no longer tinted as strings / comments in prose.
-* Removed nesting-depth bracket-pair colorization — `()`, `[]`, `{}` now inherit their surrounding token colour; the cursor-on-bracket match underline is unaffected.
+* Editor: files whose extension has no compiled syntax *and* no fallback keyword set (plain text, dotfiles, etc.) now render as single plain-text runs  -  quotes and `//` are no longer tinted as strings / comments in prose.
+* Removed nesting-depth bracket-pair colorization  -  `()`, `[]`, `{}` now inherit their surrounding token colour; the cursor-on-bracket match underline is unaffected.
 * Save As now prompts `[Y]es / [N]o` before overwriting a different existing file; No returns to the picker so you can rename.
-* Save As Enter commits exactly the typed filename — no more silently substituting the highlighted autocomplete suggestion. Tab and right-arrow still accept the highlight; only Enter is the firm commit.
+* Save As Enter commits exactly the typed filename  -  no more silently substituting the highlighted autocomplete suggestion. Tab and right-arrow still accept the highlight; only Enter is the firm commit.
 * Save As without an extension prompts `No extension detected (<path>). Save anyway?  [Y]es  [N]o`; confirming then runs the existing overwrite check before writing.
 * Right-arrow at end of input in Open / Open Folder / Save As accepts the highlighted suggestion (like Tab) instead of committing, closing the autocomplete-races-Enter window.
 * When a nag (overwrite / create-dir / no-extension / reload-from-disk) is active over the Save As / Open picker, the picker shifts down below the nag bar so the prompt and its `[Y]es [N]o` buttons are fully visible, and the cmdview key handler steps aside so `Y` / `N` / `Enter` actually reach the nag.
@@ -191,7 +199,7 @@
 * Overflow dropdown button (filled down-arrow) at the right edge opens a left-anchored menu listing every open tab; click an entry to switch. Left-click only; Escape closes.
 * Hover tooltip on a truncated tab shows the full filename and (space permitting) the path.
 * Right-click on a tab shows Close / Close All to the Right / Close All to the Left / Close All; batch closes trigger the unsaved-changes nag if any target is modified.
-* Fixed: Open Recent could flash the previous project's file — the deferred render-cache now validates the doc's `buffer_id`, not just the tab index.
+* Fixed: Open Recent could flash the previous project's file  -  the deferred render-cache now validates the doc's `buffer_id`, not just the tab index.
 * Fixed: markdown preview auto-scrolled while typing; the per-frame scroll lerp is gone and `scroll_y` tracks `target_scroll_y` directly.
 
 ## [2.11.5] - 2026-04-21 -- Fix: `core:new-window` (Ctrl+Shift+N) was a no-op.
@@ -200,11 +208,11 @@
 
 ## [2.11.4] - 2026-04-21 -- AppImage fix: bundle runtime libraries.
 
-* AppImage builds now copy every non-core-glibc shared library the binary links against into `$APPDIR/usr/lib/` (recursively via `ldd`) and `AppRun` sets `LD_LIBRARY_PATH` to that directory. Prior builds shipped only the editor binary, so `libpcre2-8.so.0` and `libgcc_s.so.1` were resolved against the host — which fails on distros that have moved past libpcre2 soname 0, on Alpine/musl via gcompat, and on NixOS via `appimage-run`. Core glibc / loader libraries (`libc`, `libm`, `libdl`, `libpthread`, `ld-linux-*`, etc.).
+* AppImage builds now copy every non-core-glibc shared library the binary links against into `$APPDIR/usr/lib/` (recursively via `ldd`) and `AppRun` sets `LD_LIBRARY_PATH` to that directory. Prior builds shipped only the editor binary, so `libpcre2-8.so.0` and `libgcc_s.so.1` were resolved against the host  -  which fails on distros that have moved past libpcre2 soname 0, on Alpine/musl via gcompat, and on NixOS via `appimage-run`. Core glibc / loader libraries (`libc`, `libm`, `libdl`, `libpthread`, `ld-linux-*`, etc.).
 
 ## [2.11.3] - 2026-04-20 -- macOS memory: renderer command allocs + shared cached_render.
 
-* Reverted the 2.11.1 / 2.11.2 memory work (LSP prune, `malloc_zone_pressure_relief`, token-cache window cap) — they regressed..
+* Reverted the 2.11.1 / 2.11.2 memory work (LSP prune, `malloc_zone_pressure_relief`, token-cache window cap)  -  they regressed..
 * Renderer draw-text commands no longer heap-allocate per call. `DrawTextCmd.fonts` is now `Arc<[FontRef]>` shared with the font slot in `NativeDrawContext`, so `draw_text` performs one refcount bump instead of the old `Vec<FontRef>` clone. `DrawTextCmd.text` is `Box<str>` rather than `String`, dropping the per-cmd capacity field.
 * `OpenDoc.cached_render` is now `Arc<Vec<RenderLine>>`. Cache-hit redraws share by refcount instead of cloning the entire `Vec<RenderLine>` (which itself holds `Vec<RenderToken>` with `String` allocations per token). Invalidation on buffer change / scroll / hint-count is unchanged.
 
@@ -225,7 +233,7 @@
 * Skip render pass while window is occluded/minimised; drop renderer + glyph caches on hide, idle (60 s), or macOS `memorystatus_vm_pressure_level` WARN.
 * Syntax grammar cache capped at 8 MRU entries.
 * macOS: lower glyph-cache limit to 512 and skip ASCII prewarm on auxiliary fonts.
-* Test runner (restored from 1.5.5): detects cargo / pytest / unittest / go / jest / vitest / npm / dotnet / sbt / gradle / maven / phpunit / make / rake / rspec / leiningen / clojure-cli / dart / flutter / zig / ctest / meson from project markers. Commands `test:run-all` and `test:run-in-current-file` in the palette and right-click context menu. Inline "Run test" badge above every recognised test function — Rust, Python, Go, JavaScript/TypeScript, C#, F#, Java, Kotlin, Scala, PHP, Ruby, Clojure, Dart, Zig, and C/C++ (GoogleTest, Catch2, Boost.Test). Every run opens a fresh terminal.
+* Test runner (restored from 1.5.5): detects cargo / pytest / unittest / go / jest / vitest / npm / dotnet / sbt / gradle / maven / phpunit / make / rake / rspec / leiningen / clojure-cli / dart / flutter / zig / ctest / meson from project markers. Commands `test:run-all` and `test:run-in-current-file` in the palette and right-click context menu. Inline "Run test" badge above every recognised test function  -  Rust, Python, Go, JavaScript/TypeScript, C#, F#, Java, Kotlin, Scala, PHP, Ruby, Clojure, Dart, Zig, and C/C++ (GoogleTest, Catch2, Boost.Test). Every run opens a fresh terminal.
 * `install.sh` now writes a spec-compliant `index.theme` at the hicolor root on fresh installs. When a previous `--system` install left anvil PNGs in `/usr/share/icons/hicolor/256x256/apps/` and the dir is writable, also tops up the system copies with the freshly-staged versions so KDE's KIconLoader doesn't fall back to the Breeze text-markdown notebook for apps whose PNG is only user-level. Triggers `kbuildsycoca6` / `kbuildsycoca5` post-install so new `.desktop` files show up immediately.
 * Notes sort mode persists across restarts (`$userdir/session/notes_sort_mode`).
 * Scrollbars redone lite-xl style: thumb length is proportional to content with a minimum size, and click-drag grabs the thumb like a handle.
@@ -289,7 +297,7 @@
 ## [2.9.10] - 2026-04-19 -- Autoreload survives atomic saves; modal Reload-from-disk prompt; markdown preview strikes through checked tasks.
 
 * Fixed autoreload catching only the first external change. The file watcher was attached to the **file inode** (`notify::RecursiveMode::NonRecursive` on a file path). Editors that save via write-to-temp + atomic rename replace the file's inode on every save; the inotify watch stayed bound to the old, now-unlinked inode, so every save after the first went unnoticed. Watcher now binds to the file's **parent directory** and filters events by filename, with refcounting so multiple open files in the same directory share one watch and the last one tears it down.
-* Fixed Reload-from-disk prompt: (a) keyboard is now modal — characters typed while the prompt is up, including the Y / N themselves, no longer leak through `SDL_TEXTINPUT` into the document; (b) Y actually reloads now (was previously letting the paired `TextInput("y")` insert a `y` into the buffer right after); (c) the clean-buffer auto-reload path now updates `saved_change_id` + `saved_signature`, so a file that silently auto-reloads on external change doesn't then mis-read as modified on the *next* external change and bounce the user to the nag prompt; (d) the reload now actually shows the new text in the editor — `buffer::load_file` writes into a fresh `default_buffer_state()` whose `change_id` is `1`, and for a just-opened buffer (also `change_id = 1`) the render cache considered that a no-op. Bumped `b.change_id` on reload and explicitly invalidate `doc.cached_render` so the next frame rebuilds.
+* Fixed Reload-from-disk prompt: (a) keyboard is now modal  -  characters typed while the prompt is up, including the Y / N themselves, no longer leak through `SDL_TEXTINPUT` into the document; (b) Y actually reloads now (was previously letting the paired `TextInput("y")` insert a `y` into the buffer right after); (c) the clean-buffer auto-reload path now updates `saved_change_id` + `saved_signature`, so a file that silently auto-reloads on external change doesn't then mis-read as modified on the *next* external change and bounce the user to the nag prompt; (d) the reload now actually shows the new text in the editor  -  `buffer::load_file` writes into a fresh `default_buffer_state()` whose `change_id` is `1`, and for a just-opened buffer (also `change_id = 1`) the render cache considered that a no-op. Bumped `b.change_id` on reload and explicitly invalidate `doc.cached_render` so the next frame rebuilds.
 * Markdown preview: list items with checked task boxes (`- [x] ...`) now render the text with a 1px horizontal strikethrough in the dim color, matching the standard TODO-list convention. `~~~foo~~~` spans also get a proper line now (previously just dimmed).
 
 ## [2.9.9] - 2026-04-19 -- Nano-Anvil Open Recent; command palette "Open File" ranking.
@@ -313,7 +321,7 @@
 
 * Windows installer: Start Menu group is now "Lite-Anvil" instead of "Lite-Anvil contributors".
 * Linux: release now publishes a single `lite-anvil_*.deb` and single `lite-anvil-*.rpm` containing both editors (binaries + data under `/usr/share/{lite,nano}-anvil/data/` + both `.desktop` entries + icons) instead of two packages per format.
-* macOS: reverted the 2.9.4 switch to `.dmg` — macOS Sequoia's Gatekeeper no longer honors the right-click → *Open* bypass for ad-hoc signed apps, so drag-to-Applications hits a hard "malware" block. Release ships `lite-anvil-*-macos-{x86_64,aarch64}.zip` with `install-mac.sh` again: the script invoked via `bash` clears quarantine + codesigns without Gatekeeper interference (quarantine is enforced on app launch, not on interpreted scripts).
+* macOS: reverted the 2.9.4 switch to `.dmg`  -  macOS Sequoia's Gatekeeper no longer honors the right-click → *Open* bypass for ad-hoc signed apps, so drag-to-Applications hits a hard "malware" block. Release ships `lite-anvil-*-macos-{x86_64,aarch64}.zip` with `install-mac.sh` again: the script invoked via `bash` clears quarantine + codesigns without Gatekeeper interference (quarantine is enforced on app launch, not on interpreted scripts).
 
 ## [2.9.5] - 2026-04-17 -- CI fix: install cargo-deb / cargo-generate-rpm from source.
 
@@ -331,13 +339,13 @@
 * Fixed blank window / nothing renders on macOS (Intel + ARM).  (Regression fix).
 * Fixed `VCRUNTIME140.dll was not found` on clean Windows installs. (Regression fix).
 * macOS installer (`install-mac.sh` shipped in the release zip) now creates `lite-anvil` / `nano-anvil` CLI symlinks in `/usr/local/bin` and `/opt/homebrew/bin` so `lite-anvil` resolves from zsh under both Intel and Apple Silicon Homebrew layouts.
-* Find: F3 / Enter now reliably centers on off-screen matches — previous scroll target used a hardcoded line height and ignored the find-bar overlay.
+* Find: F3 / Enter now reliably centers on off-screen matches  -  previous scroll target used a hardcoded line height and ignored the find-bar overlay.
 
 ## [2.9.2] - 2026-04-17 -- Fix macOS / Windows launch; context-menu clipboard fix; install.sh fix. Find/cursor fixes.
 
 * Fixed `Fatal SDL3 init failed, x11,wayland not available` on launch for macOS (Intel + ARM) and Windows.
 * Context-menu Cut / Copy / Paste fix.
-* Find: match selection no longer hidden behind the find bar — doc view's rect now excludes the bar's height while active.
+* Find: match selection no longer hidden behind the find bar  -  doc view's rect now excludes the bar's height while active.
 * Find: navigating to a match now always vertically centers the view on it.
 * Find bar: Left/Right, Ctrl+Left/Right, Home/End, and Delete now work inside the find and replace inputs.
 * Find bar: click-to-focus.
@@ -346,7 +354,7 @@
   * A single `CaptureLocations` is reused across every line instead of being allocated per line.
   * ASCII-only lines skip char-index walking entirely (byte offset == column). Non-ASCII lines walk `char_indices` once per line.
 * PgUp / PgDn now scroll the view by a full page alongside the cursor, so the cursor keeps the same relative row position on screen.
-* `install.sh` on macOS now prints the `export PATH=...` line and matching shell rc (`.zshrc` / `.bash_profile` / fish config) when `/usr/local/bin` isn't in the user's PATH — common on Apple Silicon setups that prefer `/opt/homebrew/bin`.
+* `install.sh` on macOS now prints the `export PATH=...` line and matching shell rc (`.zshrc` / `.bash_profile` / fish config) when `/usr/local/bin` isn't in the user's PATH  -  common on Apple Silicon setups that prefer `/opt/homebrew/bin`.
 
 ## [2.9.1] - 2026-04-17 -- Fix macOS ARM release build.
 
@@ -354,23 +362,23 @@
 
 ## [2.9.0] - 2026-04-17 -- Statically-linked C deps, no GPU drivers loaded, big code cleanup.
 
-* Static C deps. SDL3, FreeType, and PCRE2 are now compiled from vendored source and statically linked into `lite-anvil` / `nano-anvil`. No `libSDL3.*` / `libfreetype.*` / `libpcre2-*.*` / `libpng*` / `libbrotli*` / `libbz2.*` / `libz.*` ships with the editor; Linux `ldd` output shrinks from ten libraries to just the libc family. Distro drift (Nix's GPU-enabled SDL3, Homebrew's freetype version, Debian's pcre2-dev) no longer changes the binary's behavior — source builders on NixOS, Arch, Debian, Fedora, macOS, and Windows all get the same editor.
+* Static C deps. SDL3, FreeType, and PCRE2 are now compiled from vendored source and statically linked into `lite-anvil` / `nano-anvil`. No `libSDL3.*` / `libfreetype.*` / `libpcre2-*.*` / `libpng*` / `libbrotli*` / `libbz2.*` / `libz.*` ships with the editor; Linux `ldd` output shrinks from ten libraries to just the libc family. Distro drift (Nix's GPU-enabled SDL3, Homebrew's freetype version, Debian's pcre2-dev) no longer changes the binary's behavior  -  source builders on NixOS, Arch, Debian, Fedora, macOS, and Windows all get the same editor.
   * `sdl3-sys` uses `build-from-source-static` with `no-sdl-gpu` / `no-sdl-camera` / `no-sdl-joystick` / `no-sdl-haptic` / `no-sdl-hidapi` / `no-sdl-sensor` / `no-sdl-dialog` / `no-sdl-tray` / `no-sdl-power` + `sdl-lean-and-mean`.
   * `pcre2-sys` is forced static via `PCRE2_SYS_STATIC=1` in `.cargo/config.toml`.
-  * `freetype-sys` uses its compile-from-source fallback via `FREETYPE2_NO_PKG_CONFIG=1`. FreeType's bundled build leaves PNG / BZIP2 / Brotli / HarfBuzz off by default — the only capability lost is color-emoji PNG font tables and WOFF2, neither of which we render.
+  * `freetype-sys` uses its compile-from-source fallback via `FREETYPE2_NO_PKG_CONFIG=1`. FreeType's bundled build leaves PNG / BZIP2 / Brotli / HarfBuzz off by default  -  the only capability lost is color-emoji PNG font tables and WOFF2, neither of which we render.
   * Source-build prerequisites: cmake + a C compiler. No `libfreetype*-dev` / `libpcre2-dev` / `libsdl3-dev` / vcpkg packages needed on any platform. See `BUILDING.md`.
 * No GPU driver load at runtime. `window::init` sets `SDL_FRAMEBUFFER_ACCELERATION=0`, `SDL_VIDEO_DRIVER=x11,wayland`, and `SDL_RENDER_DRIVER=software` before `SDL_Init`. The framebuffer hint is load-bearing: without it, `SDL_GetWindowSurface` silently creates an OpenGL SDL_Renderer for "accelerated" presentation on Linux, which dlopens `libGL` / `libGLX_nvidia` / `libnvidia-glcore` and balloons RSS from ~18 MB to ~70 MB. With the hint, RSS at startup is ~32 MB and no GPU libraries are mapped.
-* Packaging cleanup. `release.yml`, `install.sh`, and the local build scripts drop every manual C-lib build step (git-clone SDL + cmake on all platforms, manual freetype / pcre2 on Mac Intel, vcpkg installs on Windows, `brew install freetype pcre2` on Mac ARM, `libfreetype6-dev libpcre2-dev` apt packages on Linux). Windows no longer bundles the VC runtime DLLs either — `+crt-static` plus the static C deps leave the archive as just two exes + `data/` + `data-nano/`. `lite-anvil/build.rs` and `nano-anvil/build.rs` shrink to empty stubs.
-* Code cleanup. Removed 12 dead modules (`view_bridge`, `view_types`, `scheduler`, `symbol_index`, `highlighter`, `doc_layout`, `doc_ops`, `event_loop`, `command_view`, `plugins`, `commands`, `views`) — ~2,800 lines of Lua-era residue. Dropped the blanket `#[allow(dead_code)]` attributes in `editor/mod.rs`. Stale Lua-era doc comments rewritten throughout.
+* Packaging cleanup. `release.yml`, `install.sh`, and the local build scripts drop every manual C-lib build step (git-clone SDL + cmake on all platforms, manual freetype / pcre2 on Mac Intel, vcpkg installs on Windows, `brew install freetype pcre2` on Mac ARM, `libfreetype6-dev libpcre2-dev` apt packages on Linux). Windows no longer bundles the VC runtime DLLs either  -  `+crt-static` plus the static C deps leave the archive as just two exes + `data/` + `data-nano/`. `lite-anvil/build.rs` and `nano-anvil/build.rs` shrink to empty stubs.
+* Code cleanup. Removed 12 dead modules (`view_bridge`, `view_types`, `scheduler`, `symbol_index`, `highlighter`, `doc_layout`, `doc_ops`, `event_loop`, `command_view`, `plugins`, `commands`, `views`)  -  ~2,800 lines of Lua-era residue. Dropped the blanket `#[allow(dead_code)]` attributes in `editor/mod.rs`. Stale Lua-era doc comments rewritten throughout.
   * Extracted three new modules from `main_loop`: `open_doc` (per-tab state + session I/O, ~400 lines), `cmdview` (file-picker helpers, ~290 lines), and `commands_dispatch` (the unified command-dispatch match body, ~840 lines pulled in via `include!()`).
   * Moved `build_render_lines`, `click_to_doc_pos`, `simple_tokenize`, `syntax_color`, `draw_breadcrumb`, and `format_window_title` out of `main_loop` into `doc_view` where they belong.
-  * Collapsed three independent nag-bar state trackers (unsaved-changes, reload-from-disk, create-directory) into a single `Nag` enum with four variants — only one prompt can be active at a time and the draw/key paths match on it once.
+  * Collapsed three independent nag-bar state trackers (unsaved-changes, reload-from-disk, create-directory) into a single `Nag` enum with four variants  -  only one prompt can be active at a time and the draw/key paths match on it once.
   * Consolidated 14 scattered `#[cfg(feature = "sdl")]` gates under a new `sdl_only!` macro that bulk-gates a contiguous item block.
   
 ## [2.8.5] - 2026-04-17 -- Long-path ergonomics in the file picker, breadcrumb, and status bar.
 
 * The Open / Save / Open Recent picker now handles long paths gracefully. The input area horizontally auto-scrolls so the caret is always visible and clips its text to the box (previously long paths bled past the border); `<` / `>` hints appear at the edges when content is scrolled off.
-* Suggestions with paths wider than the picker are ellipsis-truncated on the LEFT (`…Downloads\projects\deep\nest\file.rs`), keeping the filename — the part users are actually trying to pick — on screen.
+* Suggestions with paths wider than the picker are ellipsis-truncated on the LEFT (`…Downloads\projects\deep\nest\file.rs`), keeping the filename  -  the part users are actually trying to pick  -  on screen.
 * Widened the picker box from 50% to 70% of the window so most common paths fit without scrolling.
 * Breadcrumb above the editor area now drops leading path segments one at a time (prefixed with `… > `) until the tail fits, instead of letting long paths run off the right edge. The filename (final segment) is always visible; when the filename alone is wider than the bar, it's ellipsis-truncated on the LEFT so the extension stays in view.
 * Status-bar filename is capped at one-third of the window width, again with left ellipsis, so a runaway filename can't collide with the cursor-position segment or the Lang / EOL / INS group on the right.
@@ -379,7 +387,7 @@
 
 * Merged PR from cp89cyber: Lua `%a` / `%w` / `%l` / `%u` classes now expand to PCRE2 Unicode property classes (`\p{L}`, `[\w\p{M}]`, `\p{Ll}`, `\p{Lu}`), so syntax tokenizers match accented / combining-mark text (Hungarian, Cyrillic, etc.) instead of stopping at the first non-ASCII char.
 * No more black console window behind the editor on Windows: release builds now use `windows_subsystem = "windows"` for both `lite-anvil.exe` and `nano-anvil.exe`. Debug builds still get a console so `eprintln!` stays visible when developing.
-* Fixed `Theme not found: \\?\C:\Users\...\data/assets/themes/dark_default.json` and the same class of failure for syntax / icon / config / log paths. Two root causes: (1) `std::fs::canonicalize` on Windows returns paths in the `\\?\` extended-length form which rejects forward-slash separators — we now strip that prefix in `runtime.rs`; (2) several hot paths (theme loader, syntax loader, file icons, log, settings, Open File / Save picker) concatenated with `/` via `format!`, mixing separators even after the prefix fix. Those now use `PathBuf::join` so Windows gets `\` throughout and Unix stays unchanged.
+* Fixed `Theme not found: \\?\C:\Users\...\data/assets/themes/dark_default.json` and the same class of failure for syntax / icon / config / log paths. Two root causes: (1) `std::fs::canonicalize` on Windows returns paths in the `\\?\` extended-length form which rejects forward-slash separators  -  we now strip that prefix in `runtime.rs`; (2) several hot paths (theme loader, syntax loader, file icons, log, settings, Open File / Save picker) concatenated with `/` via `format!`, mixing separators even after the prefix fix. Those now use `PathBuf::join` so Windows gets `\` throughout and Unix stays unchanged.
 * The Open / Save picker accepts and displays the platform's native separator. `~` now expands via `USERPROFILE` on Windows, `Path::is_absolute` replaces the `starts_with('/')` check, and `Ctrl+Left/Right` walk over both `/` and `\` segments.
 * Windows user-data now lives under `%APPDATA%\lite-anvil` (Microsoft's recommended location) instead of dropping a folder directly at `%USERPROFILE%\lite-anvil`. `LITE_USERDIR` and `XDG_CONFIG_HOME` continue to override.
 
@@ -479,11 +487,11 @@
 * Unsaved files are now consistently named "untitled" everywhere.
 * Added Nano-Anvil section to user guide and site.
 
-## [2.6.1] - 2026-04-11 — LSP Inlay hints fix.
+## [2.6.1] - 2026-04-11  -  LSP Inlay hints fix.
 
 * Fixed: LSP inlay hints didn't display on initial editor load without scrolling.
 
-## [2.6.0] - 2026-04-11 — Nano-Anvil, workspace refactor, lazy syntax loading, fixes.
+## [2.6.0] - 2026-04-11  -  Nano-Anvil, workspace refactor, lazy syntax loading, fixes.
 
 * **Nano-Anvil**: minimal single-file editor. Software-rendered (no GPU drivers), ~28MB RAM. No sidebar, terminal, LSP, git, find-in-files, bookmarks, code folding, or toolbar.
 * Cargo workspace: `anvil-core` (shared library), `lite-anvil` (full editor), `nano-anvil` (minimal editor).
@@ -498,7 +506,7 @@
 * Fixed: autocomplete popup hidden during Save As input.
 * Desktop files for both Lite-Anvil and Nano-Anvil with full mime type coverage.
 
-## [2.5.0] - 2026-04-10 — Replace in files, find/replace shortcut overhaul.
+## [2.5.0] - 2026-04-10  -  Replace in files, find/replace shortcut overhaul.
 
 * Replace in files (`Alt+Shift+F`): project-wide find-and-replace with live preview. Search input, replace input, Tab to switch fields, Enter to preview matches, Ctrl+Enter to execute replace across all matching files. Open buffers are reloaded after replacement.
 * Replace in file shortcut changed from `Ctrl+H` to `Alt+F` (avoids Cmd+H conflict on macOS).
@@ -506,15 +514,15 @@
 * Find in files (`Ctrl+Shift+F`) no longer conflicts with focus mode (focus mode moved to palette only).
 * Both Find in Files and Replace in Files now have clear "FIND IN FILES" / "REPLACE IN FILES" title bars, match counts, and the same toggle options as single-file find: `Alt+R` regex, `Alt+W` whole word, `Alt+I` case-insensitive. Grep flags (`-F`, `-w`, `-i`) update live as toggles change.
 
-## [2.4.3] - 2026-04-10 — Scroll discipline.
+## [2.4.3] - 2026-04-10  -  Scroll discipline.
 
 * Scrolling now only occurs from: mouse wheel, scrollbar, keyboard navigation (arrows, Home/End, PageUp/Down, Ctrl+arrows).
 
-## [2.4.2] - 2026-04-10 — Minor render bug fix.
+## [2.4.2] - 2026-04-10  -  Minor render bug fix.
 
 * Tab and sidebar gap fix.
 
-## [2.4.1] - 2026-04-10 — Scroll and rendering fixes.
+## [2.4.1] - 2026-04-10  -  Scroll and rendering fixes.
 
 * Mouse wheel over sidebar scrolls sidebar only; over editor scrolls editor only.
 * Sidebar width limit raised to 90% of window (was hardcoded 600px).
@@ -522,7 +530,7 @@
 * Fixed project-switch render cache bug: switching projects no longer shows stale content from the previous project's active file.
 * Render line caching: `build_render_lines` (syntax tokenization) is skipped on cursor-only redraws when the buffer hasn't changed, reducing per-frame work.
 
-## [2.4.0] - 2026-04-10 — File type icons, hidden file toggle, check for updates, other ergonomic improvements.
+## [2.4.0] - 2026-04-10  -  File type icons, hidden file toggle, check for updates, other ergonomic improvements.
 
 * Sidebar file icons now use the Seti icon font (MIT, from VS Code's Seti theme) for recognizable per-language glyphs -- Rust gear, Python snake, Go gopher, JS/TS badges, HTML brackets, Docker whale, and 90+ more. Each icon renders in the language's signature color. The Seti font (`data/fonts/seti.ttf`) scales perfectly at any DPI. Icon mappings (extension to codepoint + color) are in `data/assets/file_icons.json`. Directories keep the existing folder icon.
 * Added RGBA image blitting to the render cache (`DrawImageCmd`) for future use.
@@ -537,14 +545,14 @@
 * Smooth scrolling: all auto-scroll (cursor off-screen, find, bookmarks) now animates via the lerp instead of snapping.
 * Clicking in the document no longer triggers auto-scroll.
 
-## [2.3.0] - 2026-04-10 — Bookmarks, find-in-selection, graceful font fallback.
+## [2.3.0] - 2026-04-10  -  Bookmarks, find-in-selection, graceful font fallback.
 
 * Bookmarks: `Ctrl+F4` toggles a bookmark on the current line, `F4` jumps to the next bookmark, `Shift+F4` to the previous. Bookmarked lines show an accent-colored marker in the gutter. Bookmarks are per-document and wrap around.
 * Find in selection: when a multi-line selection is active and `Ctrl+F` is pressed, search automatically scopes to the selected region. Toggle with `Alt+S` inside the find bar. The hint row shows `[x]` next to `Sel` when active.
 * Graceful font fallback: if a configured font path fails to load (e.g. missing file, bad path), the editor now resets to the built-in default fonts and shows a warning banner instead of crashing. If even the defaults fail, a clear error message is printed to stderr before exiting.
 * SDL Window title fix - consistent across platforms.
 
-## [2.2.2] - 2026-04-10 — Mac font fix, Cmd-as-Ctrl on by default, docs overhaul.
+## [2.2.2] - 2026-04-10  -  Mac font fix, Cmd-as-Ctrl on by default, docs overhaul.
 
 * Fixed `FT_New_Face failed (data/fonts/Lilex-Regular.ttf)` on macOS: `current_exe()` can return a relative path on macOS; we now canonicalize it before deriving the data directory. Also added a `Contents/Resources/data/` lookup for standard app-bundle layouts.
 * `mac_command_as_ctrl` now defaults to `true` on macOS (matching native Mac conventions: Cmd+S saves). Set to `false` in config.toml to use Ctrl-only behavior.
@@ -554,13 +562,13 @@
     - **Command Palette**: updated to reflect the filtered palette (Git-prefixed commands, no raw key-input entries).
 * Rebuilt `docs/` from `docs_src/` via mkdocs.
 
-## [2.2.1] - 2026-04-09 — Mac Ctrl/Cmd behavior reverted, opt-in via config.
+## [2.2.1] - 2026-04-09  -  Mac Ctrl/Cmd behavior reverted, opt-in via config.
 
-* Reverted the macOS Ctrl→Cmd alias that shipped in 2.2.0. On Mac, the default shortcuts are now the same as Linux/Windows — press `Ctrl+S` to save, not `Cmd+S`.
+* Reverted the macOS Ctrl→Cmd alias that shipped in 2.2.0. On Mac, the default shortcuts are now the same as Linux/Windows  -  press `Ctrl+S` to save, not `Cmd+S`.
 * New config option `mac_command_as_ctrl` (default `false`, top-level in `config.toml`). When enabled on macOS, the Command key folds into Control so `Cmd+S` acts like `Ctrl+S`, matching standard Mac conventions. No-op on other platforms.
 * Removed the now-dead `ctrl+X → cmd+X` binding duplication from `NativeKeymap::with_defaults` and the two `macos_alias_*` tests that exercised it.
 
-## [2.2.0] - 2026-04-09 — Enhanced Find/Replace, Command Palette fixes, comment fixes.
+## [2.2.0] - 2026-04-09  -  Enhanced Find/Replace, Command Palette fixes, comment fixes.
 
 * Find/Replace bar now appears at the top of the editor (just below the tabs and breadcrumb), matching the file picker, command palette, and project search. Previously it sat in the lower-left, splitting the user's attention between two corners of the window.
 * Find bar now spans only the active editor's column instead of the full window, so it visually belongs to the document being searched.
@@ -570,11 +578,11 @@
 * `F3` jumps to the next match, `Shift+F3` to the previous, both with wraparound. Works whether the Find bar is open or closed (as long as a query exists).
 * `Enter` / `Shift+Enter` inside the Find input also navigate next / previous.
 * Command Palette Cleanup: filtered out raw key-input commands (Backspace, Return, Tab, cursor movement, selection extension, multi-cursor creation, and the `command:` / `context-menu:` / `dialog:` namespaces) so the palette only lists meaningful actions.
-* Git commands in the palette are now prefixed with "Git" — `Git Pull`, `Git Push`, `Git Commit`, `Git Stash` — instead of bare verbs.
+* Git commands in the palette are now prefixed with "Git"  -  `Git Pull`, `Git Push`, `Git Commit`, `Git Stash`  -  instead of bare verbs.
 * `Ctrl+/` toggle line comments now picks the right marker for the active language by reading the `comment` field from the per-language syntax JSON.
-* Updated tagline / description across `README.md`, `Cargo.toml`, `mkdocs.yml`, and the GitHub Pages site to drop "lightweight" — now consistently "code editor".
+* Updated tagline / description across `README.md`, `Cargo.toml`, `mkdocs.yml`, and the GitHub Pages site to drop "lightweight"  -  now consistently "code editor".
 
-## [2.1.3] - 2026-04-09 — File picker editing, sidebar overflow, docs rebuild.
+## [2.1.3] - 2026-04-09  -  File picker editing, sidebar overflow, docs rebuild.
 
 * Fixed file/folder open picker text editing: arrow keys, Home, End, Delete, and Ctrl+Left / Ctrl+Right now work.
 * Fixed file/folder open picker root path: now opens with the absolute project directory instead of `./`.
@@ -584,20 +592,20 @@
 * Scroll weirdness fixes.
 * Fixed horizontal scroll: long lines no longer slide under the line-number gutter;
 
-## [2.1.2] - 2026-04-09 — Dispatch refactor + recent folder restore + version + keybinding fixes.
+## [2.1.2] - 2026-04-09  -  Dispatch refactor + recent folder restore + version + keybinding fixes.
 
 * Refactored command dispatch into a single `dispatch_command!` macro. Both the keyboard binding path and the command palette now share one match block instead of duplicating logic in two places. Adding a new command is now a one-place edit.
 * Fixed Ctrl+Shift+R: actually opens the Open Recent picker (was a victim of the duplicate-dispatch bug; the refactor above prevents this class of bug).
 * Fixed recent folder not loading on restart: session save now persists `project_root` even when no files are open. Previously the session was cleared in that case, so the project folder was lost across restarts.
 * Fixed About: now reports the actual package version instead of a hardcoded `v2.0.0`.
 
-## [2.1.1] - 2026-04-09 — Release pipeline + test workflow fixes.
+## [2.1.1] - 2026-04-09  -  Release pipeline + test workflow fixes.
 
 * Fixed release workflow regression: pinned `softprops/action-gh-release` to `@v2` (`@v3` does not exist).
 * Fixed Windows test job: vcpkg DLLs now on PATH so the test binary loads at runtime.
 * Fixed macOS keymap alias: `cmd` added to modifier ordering so Cmd+ aliases normalize correctly.
 
-## [2.1.0] - 2026-04-09 — Windows terminal, Open Recent, macOS keys, many fixes.
+## [2.1.0] - 2026-04-09  -  Windows terminal, Open Recent, macOS keys, many fixes.
 
 * Windows terminal support via piped stdin/stdout with reader thread (cmd.exe /Q).
 * Open Recent (Ctrl+Shift+R, auto-aliased to Cmd+Shift+R on macOS : combined recent files and folders list. Files open directly, folders switch project. Listed in the splash screen and README.
@@ -611,19 +619,19 @@
 * Local build scripts for linux, mac, and windows. install.sh uses the correct one.
 * Increased text coverage.
 
-## [2.0.2] - 2026-04-09 — Windows build fix, caret/selection fixes.
+## [2.0.2] - 2026-04-09  -  Windows build fix, caret/selection fixes.
 
 * Full dummy stubs for TerminalInstance fields (inner, tbuf) on non-Unix platforms.
 * Terminal emulator unavailable on Windows (conpty planned).
 * Fix: delete/backspace with active selection now deletes the selection instead of a single character.
 * Fix: selection highlight no longer extends one character past the cursor position.
 
-## [2.0.1] - 2026-04-09 — Windows build fix.
+## [2.0.1] - 2026-04-09  -  Windows build fix.
 
 * Fix Windows compilation: gate Unix-only PTY/process code behind `#[cfg(unix)]`.
 * Provide dummy terminal panel on non-Unix platforms.
 
-## [2.0.0] - 2026-04-08 — Entirely Rust - Lua Removed + UI/Ux refinement.
+## [2.0.0] - 2026-04-08  -  Entirely Rust - Lua Removed + UI/Ux refinement.
 
 * 100% Rust.
 * mlua (and Lua support, plugins) removed in favor of a fully native editor.
@@ -635,16 +643,16 @@
 * UI/Ux improvements including consistency.
 * Command palette command-naming simplification.
 
-## [1.5.5] - 2026-04-06 — Save crash and project folder memory fixes.
+## [1.5.5] - 2026-04-06  -  Save crash and project folder memory fixes.
 
 * Fix crash when saving a file with no folder open.
 * Fix project folder being forgotten on restart.
 
-## [1.5.4] - 2026-04-03 — Folder open post startup fix.
+## [1.5.4] - 2026-04-03  -  Folder open post startup fix.
 
 * Fix crash on folder open after restart: `_goto_positions` table was nil when the arg-parsing block didn't run (e.g. on `core:restart`).
 
-## [1.5.3] - 2026-04-03 — Command line arguments.
+## [1.5.3] - 2026-04-03  -  Command line arguments.
 
 * Add `-n` / `--new-window`: launch with no project and a blank file, skipping session/workspace/backup restore.
 * Add `-g` / `--goto <file:line[:col]>`: open a file at a specific line and optional column.
@@ -652,16 +660,16 @@
 * Support `file:line[:col]` syntax in bare path arguments (e.g. `lite-anvil src/main.rs:42:10`).
 * Invalid file paths and unknown flags are logged and skipped.
 
-## [1.5.2] - 2026-04-02 — Project session fixes.
+## [1.5.2] - 2026-04-02  -  Project session fixes.
 
 * Fix restart after closing a project opening `/` as a project: now starts with no project and a blank sidebar.
 * Fix `core.exit` being defined after plugin load, causing the workspace plugin's exit wrapper to be overwritten. Workspace state (open files/tabs) now saves correctly on quit.
 
-## [1.5.1] - 2026-04-02 — Session fix.
+## [1.5.1] - 2026-04-02  -  Session fix.
 
 * Fix closed project reopening on restart: session restore now respects an explicitly closed project instead of falling back to the most recent one.
 
-## [1.5.0] - 2026-04-02 — Bookmarks, indent guides, line sorting, sidebar improvements, and 15 new language servers.
+## [1.5.0] - 2026-04-02  -  Bookmarks, indent guides, line sorting, sidebar improvements, and 15 new language servers.
 
 * Add bookmarks plugin: toggle (Ctrl+F2), next (F2), previous (Shift+F2), clear. Accent marker in gutter.
 * Add indent guide plugin: vertical lines at each indentation level (off by default). Toggle via `indent-guide:toggle`.
@@ -676,14 +684,14 @@
 * Deleting a file via sidebar now flags the open doc as dirty/unsaved.
 * Added builtin LSP specs for Elixir, Erlang, OCaml, Gleam, C/C++, Haskell, Zig, Dart, Scala, Swift, Ruby, Julia, Clojure, Crystal, Lua, and Bash.
 
-## [1.4.1] - 2026-04-02 — Stability fixes and dead code cleanup.
+## [1.4.1] - 2026-04-02  -  Stability fixes and dead code cleanup.
 
 * Fix F# (fsautocomplete) root patterns to include `.fsproj` for standalone F# projects without solution files.
 * Fix workspace data loss: storage is now deleted only after restore succeeds, not before.
 * Fix `test_class_name` returning `Option<String>` when it can never be `None`.
 * Remove unused `clear_failed` LSP API function and dead variables from log removal.
 
-## [1.4.0] - 2026-04-01 — Per-project workspace memory, builtin LSP for 10 languages, log cleanup.
+## [1.4.0] - 2026-04-01  -  Per-project workspace memory, builtin LSP for 10 languages, log cleanup.
 
 * Enable workspace plugin: per-project open file/tab memory now activates (was registered but never loaded).
 * Fix workspace not restoring on project switch: `load_workspace` was only called at startup, not after `set_project`.
@@ -704,7 +712,7 @@
 * Remove `at [C]:0` from log entries originating in Rust; Lua-sourced entries still show source location.
 * Filter LSP stderr `WARN notify error:` messages (file watcher noise like "Too many open files" from Rust Analyzer).
 
-## [1.3.6] - 2026-04-01 — Test runner fixes, language support, and new syntax highlighting.
+## [1.3.6] - 2026-04-01  -  Test runner fixes, language support, and new syntax highlighting.
 
 * Fix F#/C# projects with a `tests/` directory being misdetected as Python unittest.
 * Fix `has_extension` crashing at runtime (`list_dir` returns a flat string table, not a table of tables).
@@ -718,12 +726,12 @@
 * Add Dockerfile syntax highlighting.
 * Add builtin LSP specs for C# (OmniSharp), F# (fsautocomplete), Java (jdtls), and Kotlin (kotlin-language-server).
 
-## [1.3.5] - 2026-04-01 — Removing legacy files.
+## [1.3.5] - 2026-04-01  -  Removing legacy files.
 
 * Removed `scripts/fontello-config.json` - no longer needed (project uses PNG icons instead of font icons).
 * Removed `scripts/keymap-generator/` - obsolete SDL-based keymap generator incompatible with winit input system.
 
-## [1.3.4] - 2026-04-01 — Syntax highlighting fix for multi-byte characters, code quality, stability, and style fixes.
+## [1.3.4] - 2026-04-01  -  Syntax highlighting fix for multi-byte characters, code quality, stability, and style fixes.
 
 * Fix syntax highlighting breaking after multi-byte UTF-8 characters (e.g. arrows, emoji).
 * Fix `assert!(x == false)` anti-pattern → `assert!(!x)` in project_fs tests.
@@ -737,7 +745,7 @@
 * Clean up unused imports in core editor and LSP modules.
 * Consolidate redundant `PathBuf` to `String` conversions.
 
-## [1.3.3] - 2026-04-01 — F# syntax fix, CLI file/folder open fix, active file fixes, and BOM support.
+## [1.3.3] - 2026-04-01  -  F# syntax fix, CLI file/folder open fix, active file fixes, and BOM support.
 
 * Fix wrong active file after restart: suppress active_file disk writes during session restore and exit so only user tab switches persist the value.
 * Remove duplicate active_file disk write that was in `core.set_active_view` (autoreload's patch is the single writer now).
@@ -745,7 +753,7 @@
 * When opening lite-anvil with a file/directory from CLI, previously open files are now closed first.
 * Add full BOM (Byte Order Mark) support: UTF-8, UTF-16 BE/LE, and UTF-32 BE/LE BOMs are detected on load and preserved on save.
 
-## [1.3.2] - 2026-03-31 — Dead code removal, float comparison fix, and error handling improvements.
+## [1.3.2] - 2026-03-31  -  Dead code removal, float comparison fix, and error handling improvements.
 
 * Remove `#[allow(dead_code)]` on tree model watcher (legitimate RAII pattern, explicitly marked).
 * Fix float comparison with epsilon in session.lua_to_color.
@@ -753,7 +761,7 @@
 * Replace `unreachable!()` with proper error handling in command core.
 * Clean up enumerate pattern in runtime args processing.
 
-## [1.3.1] - 2026-03-31 — Bug fixes and dead code cleanup.
+## [1.3.1] - 2026-03-31  -  Bug fixes and dead code cleanup.
 
 * Fix panic on truncated multi-byte UTF-8 sequences in the renderer text cache.
 * Fix byte-level string truncation when copying whole lines without a trailing newline.
@@ -761,7 +769,7 @@
 * Remove erroneous `#[allow(dead_code)]` on `LuaEventVal::Bool` (variant is used).
 * Clean up fragile unwrap patterns in linewrapping and git command checking.
 
-## [1.3.0] - 2026-03-31 — Multi-tab terminal, breadcrumbs, LSP hierarchy, test runner, and file watching.
+## [1.3.0] - 2026-03-31  -  Multi-tab terminal, breadcrumbs, LSP hierarchy, test runner, and file watching.
 
 * Multi-tab terminal: navigate between terminal tabs with Ctrl+Alt+Left/Right, jump by number with Ctrl+Alt+1-9, and list all terminals with Ctrl+Alt+T.
 * Breadcrumbs/scope bar: displays file path segments and current code scope (from LSP document symbols) between the tab bar and editor content.
@@ -773,14 +781,14 @@
 * Dividers for the context menu.
 * Fix cursor navigation bug.
 
-## [1.2.1] - 2026-03-30 — Diagnostics improvements.
+## [1.2.1] - 2026-03-30  -  Diagnostics improvements.
 
 * Diagnostic tooltip width increased for readability.
 * Tooltip text wraps at word boundaries instead of splitting mid-word.
 * Single-character diagnostic underlines expand to cover the full word.
 * Fix diagnostics on load.
 
-## [1.2.0] - 2026-03-30 — LSP snippets, diagnostics hover-only, dirty state fix.
+## [1.2.0] - 2026-03-30  -  LSP snippets, diagnostics hover-only, dirty state fix.
 
 * LSP snippet support -- completions with placeholders and tabstops now expand correctly.
 * Diagnostic text only shown on mouse hover; underlines and gutter markers always visible.
@@ -789,139 +797,139 @@
 * Fix `extract_subsyntaxes` crash when toggling block/line comments.
 * Dialog bar color changed from red to neutral gray across all themes.
 
-## [1.1.2] - 2026-03-29 — Fix quit confirmation, Windows CI reliability.
+## [1.1.2] - 2026-03-29  -  Fix quit confirmation, Windows CI reliability.
 
 * Fix quit confirmation dialog not waiting for user input when there are unsaved changes.
 * Add retry logic and binary caching for vcpkg installs to handle transient download failures.
 
-## [1.1.1] - 2026-03-29 — Terminal opens in active file's directory.
+## [1.1.1] - 2026-03-29  -  Terminal opens in active file's directory.
 
 * New terminals open in the directory of the currently active tab. Falls back to project root or home for unsaved/untitled files.
 
-## [1.1.0] - 2026-03-29 — LSP inlay hints.
+## [1.1.0] - 2026-03-29  -  LSP inlay hints.
 
 * LSP inlay hints (type annotations, parameter names) rendered inline with text shifting.
 
-## [1.0.4] - 2026-03-27 — Fix command view typeahead completing on multiple suggestions.
+## [1.0.4] - 2026-03-27  -  Fix command view typeahead completing on multiple suggestions.
 
 * Fix typeahead completing full word on single character when multiple suggestions exist. Typeahead now only fires when exactly one suggestion matches.
 
-## [1.0.3] - 2026-03-27 — Fix persistent undo for saved files, fix active tab persistence.
+## [1.0.3] - 2026-03-27  -  Fix persistent undo for saved files, fix active tab persistence.
 
 * Fix persistent undo not working for saved (clean) files. Undo history was only persisted for unsaved documents, clean files lost their undo stacks on restart.
 * Fix active tab being lost across sessions. Active file is now saved in session.json during session save.
 
-## [1.0.2] - 2026-03-27 — Persistent undo with 5MB cap.
+## [1.0.2] - 2026-03-27  -  Persistent undo with 5MB cap.
 
-* Persistent undo history — undo/redo stacks are saved alongside backup files and restored when reopening unsaved/dirty documents.
+* Persistent undo history  -  undo/redo stacks are saved alongside backup files and restored when reopening unsaved/dirty documents.
 * 5MB cap per file on persistent undo storage to prevent excessive disk usage.
 
-## [1.0.1] - 2026-03-26 — Cursor fix, codebase reorganization.
+## [1.0.1] - 2026-03-26  -  Cursor fix, codebase reorganization.
 
 * Fix cursor up/down always jumping to line start.
 * Codebase reorganization.
 
 ## [1.0.0] - 2026-03-26 1.0.0 Release - stability and performance fixes + minimap, find in selection, unsaved file persistence.
 
-* Find in selection — when a multi-line selection is active and Find is opened, search is limited to the selected region. Toggle with Alt+S. Status bar shows [S] when active.
-* Tab reordering — drag tabs within the same pane to reorder them (previously only cross-pane moves worked).
-* Recent files in Open File — when the Open File command palette is empty, shows recently opened files instead of directory listing.
-* Incremental highlighter — undo/redo no longer calls soft_reset() (which wiped ALL cached tokens). Now uses targeted insert_notify/remove_notify to invalidate only affected lines. Typing and undo on large files is significantly faster.
-* Event batching — after a redraw, immediately checks for pending events before sleeping. Key repeat & rapid undo no longer wait for the frame timer between events.
+* Find in selection  -  when a multi-line selection is active and Find is opened, search is limited to the selected region. Toggle with Alt+S. Status bar shows [S] when active.
+* Tab reordering  -  drag tabs within the same pane to reorder them (previously only cross-pane moves worked).
+* Recent files in Open File  -  when the Open File command palette is empty, shows recently opened files instead of directory listing.
+* Incremental highlighter  -  undo/redo no longer calls soft_reset() (which wiped ALL cached tokens). Now uses targeted insert_notify/remove_notify to invalidate only affected lines. Typing and undo on large files is significantly faster.
+* Event batching  -  after a redraw, immediately checks for pending events before sleeping. Key repeat & rapid undo no longer wait for the frame timer between events.
 * Add PLUGINS_GUIDE.md with API reference, config reference (79+ options), 10 recipes, lifecycle docs, and pitfall warnings.
 * 74 tests (up from 69). New tests for undo merge edge cases, atomic save, content signature, selection iterator truthiness.
 * SAFETY comments on all 40+ unsafe blocks. All are FFI (SDL3, FreeType, libc).
 * `let _ =` silent error swallows upgraded to `log::warn`.
 * Optional minimap.
-* Unsaved file persistence (Sublime-style) — dirty/unsaved buffers are backed up to `USERDIR/backups/` on session save and restored on next launch. Files that no longer exist on disk remain open instead of being closed.
-* LSP typing debounce — rapid keystrokes are coalesced with a 150ms debounce before sending `textDocument/didChange` to the language server, preventing server flooding.
-* LSP robustness — malformed JSON from language servers is now logged via `log::warn` instead of silently dropped or panicking. LSP panics are caught gracefully.
-* SIGINT/SIGTERM signal handler — graceful shutdown on Unix signals. Session is saved (including unsaved file backups) before exiting.
+* Unsaved file persistence (Sublime-style)  -  dirty/unsaved buffers are backed up to `USERDIR/backups/` on session save and restored on next launch. Files that no longer exist on disk remain open instead of being closed.
+* LSP typing debounce  -  rapid keystrokes are coalesced with a 150ms debounce before sending `textDocument/didChange` to the language server, preventing server flooding.
+* LSP robustness  -  malformed JSON from language servers is now logged via `log::warn` instead of silently dropped or panicking. LSP panics are caught gracefully.
+* SIGINT/SIGTERM signal handler  -  graceful shutdown on Unix signals. Session is saved (including unsaved file backups) before exiting.
 * Linter cleanup across 75 files: replaced `unwrap_or_else` error swallows with proper propagation, tightened borrow patterns, removed unused variables.
 
-## [0.20.0] - 2026-03-25 — Stability hardening for 1.0.
+## [0.20.0] - 2026-03-25  -  Stability hardening for 1.0.
 * Atomic file writes for doc save and session save (write to .tmp, fsync, rename). Prevents data corruption on power loss or crash mid-write.
 * Guard undo merge stack pop against empty stack.
 * Safe defaults for terminal view property access (nil → 0.0 instead of crash).
 * Safe hex color parsing in terminal (malformed escape sequences → 0 instead of panic).
 * Bounds-safe line content extraction in doc commands.
-* Fix Lua truthiness check in selection sort (`doc_module.rs:665`) — same class of bug as the v0.19.5 `get_selections` fix.
+* Fix Lua truthiness check in selection sort (`doc_module.rs:665`)  -  same class of bug as the v0.19.5 `get_selections` fix.
 * Log backup file write failures in project replace instead of silently ignoring.
 
-## [0.19.6] - 2026-03-25 — Undo grouping and input latency improvements.
+## [0.19.6] - 2026-03-25  -  Undo grouping and input latency improvements.
 * Consecutive single-character inserts (typing/key repeat) merge into a single undo entry. A new undo group starts on: pause >1s, newline, delete, cursor movement, or batch edit. Holding a key then pressing Ctrl+Z undoes the entire run at once.
 * Reduced per-frame overhead: cached `core.try`'s error handler and `xpcall` (previously recreated every event), cached `poll_event`/`renderer` via named registry slots, replaced Lua `math.min/max/ceil` with native Rust in the run loop, cached `fps`/`blink_period`/`wait_event`/`has_focus` outside the loop.
 * Fixed 75% rendering regression from integer-to-float window size conversion.
 
-## [0.19.5] - 2026-03-24 — Key repeat, typeahead, and wrap rendering fixes.
+## [0.19.5] - 2026-03-24  -  Key repeat, typeahead, and wrap rendering fixes.
 * Improved key repeat stutter.
 * Fix ghost character at end of wrapped lines.
 * Fix aggressive command palette typeahead after typing a path separator (/ or \).
 * Undo now handles edits cohesively.
 
-## [0.19.4] - 2026-03-24 — macOS "Open With" fix.
+## [0.19.4] - 2026-03-24  -  macOS "Open With" fix.
 * Fix macOS "Open With" not opening the file. macOS sends files via Apple Events (converted to `SDL_EVENT_DROP_FILE`), not command-line args. The `on_file_dropped` handler required x/y coordinates that the drop event doesn't provide, crashing on nil-to-f64 conversion. Made coordinates optional.
 
-## [0.19.3] - 2026-03-24 — Cross-platform "Open With" file associations.
+## [0.19.3] - 2026-03-24  -  Cross-platform "Open With" file associations.
 * Register Lite-Anvil for "Open With" on all platforms for 100+ file extensions matching supported syntax types plus .txt, .log, .conf, .env, .diff, .patch, Dockerfile, and other common text files.
 * Linux: updated .desktop file with full MimeType list; included in .tar.gz and .deb archives.
 * macOS: new Info.plist with CFBundleDocumentTypes covering all extensions and UTI content types; replaces inline plist in CI.
 * Windows: PowerShell scripts (install/uninstall-file-associations.ps1) register per-user OpenWithProgids for all extensions; included in .zip archive.
 
-## [0.19.2] - 2026-03-24 — macOS Intel link fix.
+## [0.19.2] - 2026-03-24  -  macOS Intel link fix.
 * Fix macOS x86_64 link failure: undefined `HVF_*` symbols from FreeType HEAD (VER-2-14-3, released 2026-03-22). Pin CI FreeType build to VER-2-14-2. Provide C stub fallbacks via `cc` build dep for local builds against newer FreeType.
 
-## [0.19.1] - 2026-03-23 — Fix Mac OS Intel build regression.
+## [0.19.1] - 2026-03-23  -  Fix Mac OS Intel build regression.
 
-## [0.19.0] - 2026-03-23 — All embedded Lua eliminated from Rust source; all plugins native, fixes++.
+## [0.19.0] - 2026-03-23  -  All embedded Lua eliminated from Rust source; all plugins native, fixes++.
 * Converted all remaining embedded Lua to pure Rust mlua closures. Modules converted: doc, syntax, highlighter, statusview, node, rootview, git_view, treeview, toolbarview, terminal_view, tokenizer_shim.
 * Converted all 13 bundled plugin .lua files (3,550 lines) to pure Rust: projectsearch, projectreplace, markdown_preview, remotessh, scale, trimwhitespace, theme_toggle, macro, reflow, tabularize, language_md. Delete data/plugins/ .lua files.
 * Converted all 6 color theme .lua files (277 lines) to pure load from json.
 * Fixed scale plugin missing storage persistence and session hooks (text size now remembered across restarts).
 * Fixed `core` not registered as a strict-mode global, causing "cannot get undefined variable: core" on quit.
-* Fixed Lua truthiness bug in `get_selections` iterator — numeric idx_reverse values were treated as falsy, breaking backspace, delete, and left/right arrow keys
+* Fixed Lua truthiness bug in `get_selections` iterator  -  numeric idx_reverse values were treated as falsy, breaking backspace, delete, and left/right arrow keys
 * Removed LSP warning at startup.
 * Last active file remembered.
 * Color themes now loaded from JSON files (`data/assets/themes/*.json`).
 
-## [0.18.2] - 2026-03-23 — Lua iterator and UTF-8 navigation fixes.
+## [0.18.2] - 2026-03-23  -  Lua iterator and UTF-8 navigation fixes.
 
 * Fix freeze when arrow-key navigating through multi-byte UTF-8 text near document boundaries. `previous_char` and `next_char` in `doc_translate` looped on continuation bytes without checking whether `position_offset` actually advanced; at the start/end of a document the position stays unchanged, producing an infinite loop. Added boundary guards that break when the position stops moving.
 * Fix "error converting Lua string to String (incomplete utf-8 byte sequence)" crash when navigating through non-ASCII text. `Doc:get_char` returns a single byte via Lua `string.sub`, which for multi-byte UTF-8 characters yields an incomplete byte sequence that cannot be converted to a Rust `String`. Changed all `get_char` consumers in `doc_translate`, `docview`, `autocomplete`, and `lsp_plugin_preloads` to use `LuaString` (raw bytes) instead of `String`, and updated `is_non_word` to operate on byte slices.
 * Fix command palette crash from incorrectly driven Lua iterator protocol. `commands_findreplace` captured only the iterator function from `Doc:get_selections()`, discarding the invariant table and start index required by Lua's generic-for protocol. The iterator was then called with no arguments, making `invariant` nil inside `selection_iterator`. Added `collect_selections` helper that properly unpacks all three return values and drives the iterator correctly.
 
-## [0.18.1] - 2026-03-23 — Dirty-state tracking behavior fix.
+## [0.18.1] - 2026-03-23  -  Dirty-state tracking behavior fix.
 * Move content signature (FNV-1a hash) to native Rust in `BufferState`.
 * Fix stale signature cache after `load_file_into_state`.
 * Fix `Doc:new` not calling `clean()` after non-lazy `load()`, leaving `clean_signature` stuck at the empty-buffer hash.
 
-## [0.18.0] - 2026-03-23 — Core runtime fully native Rust.
+## [0.18.0] - 2026-03-23  -  Core runtime fully native Rust.
 * Converted all 38 `data/core/*.lua` files and the `core` orchestrator to pure Rust via mlua.
 * Some key fixes including around Lua/C/Rust boundaries, yielding, and closures.
 
-## [0.17.3] - 2026-03-22 — Command palette, open, and script fixes.
-* Fix command palette input showing only the very last character of a path (e.g. "e" from "forge-core/"). `docview_get_line_screen_position` used `docview_get_gutter_width` (Rust, line-number-based, ~28 px) to position text on screen, while `scroll_to_make_visible` and the clip rect both used `gutter_width_from_method` (virtual Lua dispatch, returns CommandView's label width, ~98 px). The 70 px discrepancy caused `scroll_to_make_visible` to over-scroll by exactly that amount, leaving only the last character in view. Changed `docview_get_line_screen_position` to use `gutter_width_from_method` so all three subsystems agree on where text starts — for regular DocView the result is identical (both paths call the same Rust function), and for CommandView the label width is used consistently.
+## [0.17.3] - 2026-03-22  -  Command palette, open, and script fixes.
+* Fix command palette input showing only the very last character of a path (e.g. "e" from "forge-core/"). `docview_get_line_screen_position` used `docview_get_gutter_width` (Rust, line-number-based, ~28 px) to position text on screen, while `scroll_to_make_visible` and the clip rect both used `gutter_width_from_method` (virtual Lua dispatch, returns CommandView's label width, ~98 px). The 70 px discrepancy caused `scroll_to_make_visible` to over-scroll by exactly that amount, leaving only the last character in view. Changed `docview_get_line_screen_position` to use `gutter_width_from_method` so all three subsystems agree on where text starts  -  for regular DocView the result is identical (both paths call the same Rust function), and for CommandView the label width is used consistently.
 * Fix path truncation and invisible-backspace in the Open File (and all other) command palette inputs. `CommandView:scroll_to_make_visible` was a no-op and `get_h_scrollable_size` returned 0, so the view never scrolled horizontally and `View:clamp_scroll_position` immediately zeroed any scroll.x that was set. Now `scroll_to_make_visible` delegates to DocView for horizontal tracking (resetting y=0 to stay single-line), `clamp_scroll_position` is overridden to preserve x while locking y=0, and the `get_h_scrollable_size` override is removed so the inherited `math.huge` allows the scroll position to be maintained.
 * Fix `attempt to index a nil value (local 'path_stat')` crash when submitting a filename in the Open File command palette. `system.get_file_info` was returning a single `nil` on error, but the Lua validate callback expects the canonical two-return `nil, error_string` form. Changed the Rust implementation to return `nil, error_message` on failure.
 * Fix `bad argument #4: error converting Lua number to i64 (out of range)` crash when opening a file through the command palette. The autocomplete `Doc:remove` wrapper used `i64` for coordinates, which cannot represent `math.huge` (Lua infinity) passed by `commandview.set_text` to clear the input doc. Changed coordinate types to `f64` so infinity passes through to the original sanitizing function.
 
-## [0.17.2] - 2026-03-22 — CI cleanup + release script.
+## [0.17.2] - 2026-03-22  -  CI cleanup + release script.
 
 * Fix macOS Intel CI build - attempt 2.
 * Add `release.sh` helper script.
 
-## [0.17.1] - 2026-03-22 — macOS Intel build fix.
+## [0.17.1] - 2026-03-22  -  macOS Intel build fix.
 
 * Fix macOS Intel CI build: SDL3 cmake issue.
 
-## [0.17.0] - 2026-03-22 — Some plugins into Rust + fixes.
+## [0.17.0] - 2026-03-22  -  Some plugins into Rust + fixes.
 
 * Translate all embedded Lua plugin bootstraps to pure Rust via mlua APIs. Autorestart, quote, terminal, findfile, lineguide, autoreload, folding, drawwhitespace, toolbarview, git commands and UI, autocomplete, and all three LSP modules (`plugins.lsp`, `plugins.lsp.server-manager`, `plugins.lsp.client`) are now registered as Rust closures; no Lua string is interpreted at runtime for any bundled plugin.
 * Fix LSP inline diagnostics (squiggly underlines and end-of-line ghost text) broken by an incorrect `core.add_thread` call pattern introduced during the Lua-to-Rust migration.
 * Fix all fully-Rust bundled plugins not loading on startup: populate `package.native_plugins` from Rust, teach `core.load_plugins()` to consume it, and guard `runtime_setup.lua` with `or {}` so it does not overwrite the list Rust built before Lua initialised.
 * Fix LSP diagnostic tooltip crash on mouse move: `mgr_wrap_tooltip_lines` called `font:get_width` without passing `font` as `self`, causing "bad argument #1: error converting Lua string to table" in every `on_mouse_moved` event. Also replace twelve other `table.get::<LuaFunction>("method")?.call((table, args))` OOP dispatch anti-patterns with `table.call_method("method", args)` throughout the LSP patches.
 
-## [0.16.0] - 2026-03-20 — More progress on core modules to Rust and moving some plugins into core.
+## [0.16.0] - 2026-03-20  -  More progress on core modules to Rust and moving some plugins into core.
 
 * Move all `core.*` modules (config, style, syntax, tokenizer, highlighter, command, keymap, process, view, scrollbar, contextmenu, nagview, logview, commandview, all commands submodules, doc.search, doc.translate, common, object, strict, regex, storage, utf8string, gitignore, dirwatch, ime, project, plugin_api, modkeys, emptyview, titleview, and more) to Rust-owned `package.preload` entries. Every `require "core.*"` call is now intercepted before any disk lookup.
 * Move all bundled plugins (`plugins.autocomplete`, `plugins.autoreload`, `plugins.autorestart`, `plugins.bracketmatch`, `plugins.detectindent`, `plugins.drawwhitespace`, `plugins.findfile`, `plugins.folding`, `plugins.git` and sub-modules, `plugins.language_md`, `plugins.lineguide`, `plugins.linewrapping`, `plugins.macro`, `plugins.markdown_preview` and sub-modules, `plugins.projectreplace`, `plugins.projectsearch`, `plugins.quote`, `plugins.reflow`, `plugins.remotessh`, `plugins.scale`, `plugins.tabularize`, `plugins.theme_toggle`, `plugins.toolbarview`, `plugins.terminal` and sub-modules, `plugins.trimwhitespace`) to Rust-owned preloads. Plugins are discovered from disk metadata but loaded from the binary.
@@ -936,13 +944,13 @@
 * Move `plugins.lsp.server-manager` (1,892 lines) to an inline Rust const string in `lsp_plugin_preloads.rs`; delete `forge-core/src/api/lua/plugins_lsp_server_manager.lua`. (63.5% Rust)
 * Move `plugins.lsp` init module (507 lines) to an inline Rust const string in `lsp_plugin_preloads.rs`; delete `forge-core/src/api/lua/plugins_lsp_init.lua`. All LSP Lua sources are now embedded in the binary. (64.5% Rust)
 
-## [0.15.1] - 2026-03-19 — New window command and clippy cleanup.
+## [0.15.1] - 2026-03-19  -  New window command and clippy cleanup.
 
 * Add `core:new-window` command (`Ctrl+Shift+N` / `Cmd+Shift+N`) that opens a new editor instance by spawning the current executable.
 * Make `system.exec` cross-platform: uses `sh -c` on Unix and `cmd /C` on Windows.
 * Fix 23 clippy warnings across `affordance_model`, `commands_doc_native`, `docview_native`, `node_model`, `project_fs`, `project_model`, `terminal_buffer`, `tree_model`, and `workspace_native`.
 
-## [0.15.0] - 2026-03-19 — Rust-owned editor runtime + fixes.
+## [0.15.0] - 2026-03-19  -  Rust-owned editor runtime + fixes.
 
 * Move all core module bodies (`core`, `core.statusview`, `core.rootview`, `core.node`, `core.doc`, `core.docview`, `core.commands.doc`, `plugins.treeview`, `plugins.lsp.server-manager`, `plugins.terminal.view`, `plugins.workspace`) to Rust-owned package preloads. Lua is now the extension and customization layer; the runtime is Rust.
 * Add native Rust backends for startup globals and path resolution, tab and pane layout math, persistent storage I/O, document load/save/edit/undo/redo, session persistence, project file search and replace, bracket matching, fold calculations, indent detection, trim-whitespace decisions, and autorestart path checks.
@@ -954,7 +962,7 @@
 * Fix Open File crash when submitting an empty string.
 * Fix Esc incorrectly triggering focus-mode exit when focus mode was not active.
 
-## [0.14.7] - 2026-03-18 — RAM reductions and cache bounds.
+## [0.14.7] - 2026-03-18  -  RAM reductions and cache bounds.
 
 * Reduce terminal scrollback memory and allocator churn.
 * Terminal now swaps ownership instead of cloning.
@@ -974,99 +982,99 @@
 * Fix crash in Open File validate when submitting an empty string (`bad argument #1: error converting Lua nil to String`).
 * Fix Esc not exiting commands like Open File: `root:exit-focus-mode` now only fires when focus mode is actually active.
 
-## [0.14.6] - 2026-03-17 — macOS release fix and lower-memory restore.
+## [0.14.6] - 2026-03-17  -  macOS release fix and lower-memory restore.
 
 * Fix macOS release builds by replacing the non-portable BSD-`sed` version lookup in the release workflow with a portable parser.
 * Persist the “no active project open” state so closing a project folder stays closed across restart.
 * Release native project file-list and manifest caches immediately when a project closes instead of retaining them until restart.
 * Restore session and workspace documents lazily so inactive tabs do not eagerly load every file into memory on startup.
 
-## [0.14.5] - 2026-03-17 — Versioning and packaging consistency.
+## [0.14.5] - 2026-03-17  -  Versioning and packaging consistency.
 
 * Centralize the app version in the workspace Cargo manifest so Cargo, `about:version`, installers, and release packaging all report the same version.
 * Include the app version in generated release archive names such as `lite-anvil-0.14.5-macos-aarch64.zip`.
 
-## [0.14.4] - 2026-03-17 — Find/replace and command palette polish.
+## [0.14.4] - 2026-03-17  -  Find/replace and command palette polish.
 
 * Fix a command palette suggestion-index crash that could trigger while opening search prompts.
 * Make in-file find/replace easier to reach with `Ctrl+F` / `Ctrl+H`.
 * Point the toolbar search button at in-file find and label search commands in the palette as `Find`, `Replace`, or `Swap`.
 
-## [0.14.3] - 2026-03-17 — Inline diagnostics.
+## [0.14.3] - 2026-03-17  -  Inline diagnostics.
 
 * Render LSP diagnostics inline at the error line in addition to the existing hover popup.
 
-## [0.14.2] - 2026-03-17 — About:version and highlight-open fix.
+## [0.14.2] - 2026-03-17  -  About:version and highlight-open fix.
 
 * Preload the matching language plugin before opening a file so syntax-highlighted files render once, immediately, without a plain-text flash.
 * Stop requesting LSP semantic token overlays on initial open, avoiding a second recolor pass right after the file appears.
 * Make app and installer build-version metadata derive from the package version instead of duplicated literals.
 * Add an `about:version` command that shows the current Lite-Anvil version inside the app.
 
-## [0.14.1] - 2026-03-17 — macOS bundle/signing fixes.
+## [0.14.1] - 2026-03-17  -  macOS bundle/signing fixes.
 
 * Fix macOS app metadata to use the current release version and a valid bundle identifier.
 * Improve macOS dependency bundling so `@rpath` libraries and framework-style dependencies are copied into the app bundle correctly.
 * Sign and verify the assembled `.app` bundle during install to catch broken local builds before launch.
 
-## [0.14.0] - 2026-03-16 — Focus mode, LSP navigation, unsaved files ergonomics, terminal improvements.
+## [0.14.0] - 2026-03-16  -  Focus mode, LSP navigation, unsaved files ergonomics, terminal improvements.
 
 * Add closing the current project folder so Lite-Anvil can stay open with no folder attached and just unsaved files, plus a reversible focus mode for the active file.
 * Harden LSP-driven navigation and diagnostics with jump-back, inline error surfacing, hover popups for diagnostic messages, and LSP quick fixes.
 * Improve terminal/TUI support by handling alternate-screen, charset, cursor, and scroll-region escape sequences natively, draining PTY output more aggressively, and adding first-letter nag dialog shortcuts like Terminate/Cancel.
 * Terminal UI bugfixes.
 
-## [0.13.9] - 2026-03-16 — UI polish.
+## [0.13.9] - 2026-03-16  -  UI polish.
 
 * Fix cross-platform tree spacing and truncation so icons, chevrons, labels, tooltips, and resize behavior stay clean on macOS and Linux.
 * Polish tabs, titlebar, command palette, Git status, and panel separators while keeping the recent large-workspace Git/search/replace work off the main thread.
 
-## [0.13.8] - 2026-03-16 — UI optimizations.
+## [0.13.8] - 2026-03-16  -  UI optimizations.
 
 * Move sidebar/tree hot paths fully native, fetch only visible row windows, and cut repeated tab, toolbar, titlebar, tooltip, statusbar, and context-menu layout work on the UI thread.
 * Remove remaining main-thread blockers from workspace-scale features by dropping synchronous native Git refreshes from the refresh loop, moving native replace work off-thread, and preferring the async project file cache for search/replace file collection.
 
-## [0.13.7] - 2026-03-16 — Treeview lazy loading.
+## [0.13.7] - 2026-03-16  -  Treeview lazy loading.
 
 * Make the native tree model lazy so treeview no longer walks whole projects before showing results.
 * Fix blank or slow treeview loads on very large projects, including macOS/APFS.
 
-## [0.13.6] - 2026-03-16 — Native treeview hot-path port.
+## [0.13.6] - 2026-03-16  -  Native treeview hot-path port.
 
 * Move treeview traversal, flattening, expand state, ignore filtering, and filesystem watching into a native async Rust tree model.
 * Remove overlapping recursive treeview watchers that could stall even small projects when expanding folders.
 
-## [0.13.5] - 2026-03-16 — Tree highlight stability and tests.
+## [0.13.5] - 2026-03-16  -  Tree highlight stability and tests.
 
 * Sidebar tree's blue focused-row highlight flicker fix.
 * Fix Git branch parsing for statuses that report both ahead and behind counts.
 * Improve TreeView folder-creation error reporting and add regression tests for Git status parsing and native project file walking.
 
-## [0.13.4] - 2026-03-16 — Large-project responsiveness: deeper dive.
+## [0.13.4] - 2026-03-16  -  Large-project responsiveness: deeper dive.
 
 * Move project file-tree walks and filesystem-watcher setup entirely off the Lua main thread into background threads; callers always get the current (possibly stale) list immediately and the UI wakes when fresh results arrive.
 * Defer inotify/FSEvents recursive watcher registration until after the file walk completes, eliminating the multi-second main-thread stall on trees with tens of thousands of directories.
 * Apply a 500 ms debounce to dirty-flag rebuilds so that build-system churn (thousands of rapid file events) triggers at most one rebuild per burst.
 * Eliminate one `stat(2)` syscall per file in `project:files()` and `core:find-file` by substituting a synthetic `{type="file", size=0}` info table; the native model already enforced the size cap, so no filtering is lost.
 
-## [0.13.3] - 2026-03-16 — Large-project responsiveness.
+## [0.13.3] - 2026-03-16  -  Large-project responsiveness.
 
 * Stop recursive native directory watches from expanding across entire subtrees.
 * Cap native project file collection and tree directory listing to keep huge workspaces responsive.
 * Avoid full-project native scans when project search or replace targets a single file.
 * Coalesce filesystem change bursts so large directory churn does not flood rebuild work.
 
-## [0.13.2] - 2026-03-16 — Additional syntax highlighting.
+## [0.13.2] - 2026-03-16  -  Additional syntax highlighting.
 
 * Add syntax highlighting for env, ini, and zsh files.
 
-## [0.13.1] - 2026-03-15 — Autocomplete mode cleanup and LSP-first completions.
+## [0.13.1] - 2026-03-15  -  Autocomplete mode cleanup and LSP-first completions.
 
 * Replace autocomplete source toggles with explicit modes: off, in-document, via LSP, and totally on.
 * Default autocomplete to via-LSP when the LSP provider is available; otherwise default it to off.
 * Wire LSP completions into the autocomplete popup so typing can use server results instead of only manual `ctrl+space`.
 
-## [0.13.0] - 2026-03-15 — Stability fixes, tab menu, recent items, folding, editor polish.
+## [0.13.0] - 2026-03-15  -  Stability fixes, tab menu, recent items, folding, editor polish.
 
 * Stability fixes - segfault fixes.
 * Add a tab right-click menu with Close, Close Right, Close Others, Close Saved, and Close All.
@@ -1078,7 +1086,7 @@
 * Add indentation-based code folding with gutter UI and persisted fold state.
 * Improve save and rename path previews while editing names.
 
-## [0.12.0] - 2026-03-15 — Large-file mode, project cleanup, terminal reuse, more.
+## [0.12.0] - 2026-03-15  -  Large-file mode, project cleanup, terminal reuse, more.
 
 * Close all open docs when changing the active project folder.
 * Add large-file mode with plain-text, read-only fallback and reduced LSP/autocomplete work.
@@ -1089,67 +1097,67 @@
 * Make dirwatch and LSP JSON/config parsing fail more safely.
 * Removed unused manifest.json file.
 
-## [0.11.2] - 2026-03-15 — New default themes, light and dark mode toggle.
+## [0.11.2] - 2026-03-15  -  New default themes, light and dark mode toggle.
 
 * Adjusted default dark theme, and added light theme.
 * Added a bottom bar toggle for switching light and dark mode.
 
-## [0.11.1] - 2026-03-15 — Windows build fix.
+## [0.11.1] - 2026-03-15  -  Windows build fix.
 
 * Fixed Windows MSVC SDL3 linking by wiring vcpkg library discovery into the build.
 
-## [0.11.0] - 2026-03-15 — Terminal placement, native hot-path work.
+## [0.11.0] - 2026-03-15  -  Terminal placement, native hot-path work.
 
 * New terminals now open in a bottom pane by default, with configurable tab/left/right/top/bottom placement.
 * Moved more hot-path layout and cache work into Rust for LSP overlays, monospaced doc hit-testing, status bar fitting, tab metrics, and Git status caching.
 
-## [0.10.3] - 2026-03-15 — Terminal color output fix, removing more unsafe code.
+## [0.10.3] - 2026-03-15  -  Terminal color output fix, removing more unsafe code.
 
 * Fixed terminal color output by ensuring terminal sessions get TERM and COLORTERM defaults when the app is launched without them.
 * Stability fix + removing more unsafe code with Lua VM.
 
-## [0.10.2] - 2026-03-15 — Terminal ANSI color fix & further fixes.
+## [0.10.2] - 2026-03-15  -  Terminal ANSI color fix & further fixes.
 
 * Fixed terminal ANSI color parsing by switching the native terminal parser back to byte-oriented processing.
 * Further fixes in terminal.
 
-## [0.10.1] - 2026-03-14 — macOS terminal build fix & unsafe reduction.
+## [0.10.1] - 2026-03-14  -  macOS terminal build fix & unsafe reduction.
 
 * Fixed the native terminal PTY build on macOS.
 * Removed unnecessary unsafe Send/Sync impls from native terminal, picker, regex, and process wrappers.
 
-## [0.10.0] - 2026-03-14 — Native LSP, project, command palette picker, terminal emulation.
+## [0.10.0] - 2026-03-14  -  Native LSP, project, command palette picker, terminal emulation.
 
 * Moved LSP config/spec resolution, diagnostics state, and semantic refresh scheduling into Rust.
 * Added a native project model for cached project file lists and path normalization helpers.
 * Added a native picker backend for command, file, branch, and status item ranking.
 * Moved terminal emulation and scrollback buffering into the Rust core.
 
-## [0.9.0] - 2026-03-14 — Native text buffer core.
+## [0.9.0] - 2026-03-14  -  Native text buffer core.
 
 * Moved the document text buffer core into Rust.
 * Moved document load/save, edit apply, and undo/redo into the native buffer path.
 * Kept the Lua `Doc` API as a thin wrapper over the native core for compatibility.
 
-## [0.8.0] - 2026-03-14 — Native edit, autocomplete, and watch paths.
+## [0.8.0] - 2026-03-14  -  Native edit, autocomplete, and watch paths.
 
 * Moved document edits and packed undo records into the Rust core.
 * Added a native autocomplete symbol index and project manifest cache.
 * Added native Git status/branch plumbing and native LSP transport/framing/JSON.
 * Switched dirwatch polling to the native watcher backend.
 
-## [0.7.0] - 2026-03-14 — Native search, tree, and document/buffer functionality.
+## [0.7.0] - 2026-03-14  -  Native search, tree, and document/buffer functionality.
 
 * Moved tree directory listing into the Rust core.
 * Added Rust file & project search, replace, and offset helper.
 * Moved some document/buffer functions to Rust.
 
-## [0.6.0] - 2026-03-14 — Native tokenizer, swap.
+## [0.6.0] - 2026-03-14  -  Native tokenizer, swap.
 
 * Moved tokenization from Lua to Rust.
 * Project swap operation with per-side regex and case-sensitivity options, using an isolated placeholder pass.
 
-## [0.5.0] - 2026-03-14 — LSP, terminal, Git, and project workflow upgrades, fixes.
+## [0.5.0] - 2026-03-14  -  LSP, terminal, Git, and project workflow upgrades, fixes.
 
 * Added built-in LSP support with startup enabled by default, project lsp.json config, completion, hover, definition/type-definition/implementation, references, rename, symbols, code actions, formatting, signature help, diagnostics, and restart/refresh commands.
 * Added semantic token overlays on top of the core tokenizer/highlighter instead of replacing syntax highlighting.
@@ -1172,7 +1180,7 @@
 * Added `root:reset-layout` command to collapse all split panels back to a single panel while keeping all open files.
 * Open files and terminal windows are now saved and restored across restarts.
 
-## [0.4.0] - 2026-03-12 — Startup loading optimizations, SDL tuning, and fixes.
+## [0.4.0] - 2026-03-12  -  Startup loading optimizations, SDL tuning, and fixes.
 
 * Load language_*.lua syntax plugins lazily on first matching file/header instead of at editor startup.
 * Lazy-load selected command-driven plugins on first use instead of at startup, including Markdown preview, project search, project replace, and remote SSH.
@@ -1182,9 +1190,9 @@
 * Remove internal uses of deprecated project-path helper functions to avoid deprecation warnings in normal editor workflows.
 * Fix Rust lifetime highlighting so &'static str is no longer tokenized as a quoted string.
 
-## [0.3.1] - 2026-03-11 — Release binary size optimization.
+## [0.3.1] - 2026-03-11  -  Release binary size optimization.
 
-## [0.3.0] - 2026-03-11 — Config + editing upgrades and language support.
+## [0.3.0] - 2026-03-11  -  Config + editing upgrades and language support.
 
 * Moved editor fonts, theme colors, syntax colors, and UI style tuning into config.lua
 * Added long-line indicator
@@ -1193,22 +1201,22 @@
 * Remote SSH project mounting via sshfs.
 * Added syntax highlighting for F#, SQL, PHP, Assembly, Ruby, Dart, Swift, R, Elixir, Clojure, and Scala.
 
-## [0.2.6] - 2026-03-11 — Markdown + fonts.
+## [0.2.6] - 2026-03-11  -  Markdown + fonts.
 
 * Switching to [Lilex Font](https://github.com/mishamyrt/Lilex)
 * Further markdown rendering fix.
 
-## [0.2.5] - 2026-03-10 — Fixes and polish.
+## [0.2.5] - 2026-03-10  -  Fixes and polish.
 
 * Fixing markdown rendering bugs.
 * Adding "show shortcuts" to the load screen prompt.
 * Delete key fix.
 
-## [0.2.4] - 2026-03-10 — Mac + minor fixes.
+## [0.2.4] - 2026-03-10  -  Mac + minor fixes.
 
-## [0.2.3] - 2026-03-10 — Lua fixes.
+## [0.2.3] - 2026-03-10  -  Lua fixes.
 
-## [0.2.2] - 2026-03-10 — Fixes / polishing:
+## [0.2.2] - 2026-03-10  -  Fixes / polishing:
 
 * Ctrl + +/- changes font for sidebar as well as main window.
 * Command instead of control on Mac OS
@@ -1216,9 +1224,9 @@
 * Window resize on folder open bugfix.
 * Mac OS display bug fix.
 
-## [0.2.1] - 2026-03-10 — Fixing Mac OS bundling bug.
+## [0.2.1] - 2026-03-10  -  Fixing Mac OS bundling bug.
 
-## [0.2.0] - 2026-03-10 — Adding markdown preview.
+## [0.2.0] - 2026-03-10  -  Adding markdown preview.
 
 ### Added
 
@@ -1226,37 +1234,37 @@
   natively using pulldown-cmark: headings, paragraphs, bold/italic (colour
   differentiated), inline and fenced code blocks, blockquotes, ordered and
   unordered lists, horizontal rules, and tables with column alignment.
-* Clickable links — left-click any link or image reference to open it with
+* Clickable links  -  left-click any link or image reference to open it with
   `xdg-open` (Linux) or `open` (macOS).
 * Table rendering with equal-width columns, header highlighting, and border lines
   derived from the active theme.
 * Preview stays in sync with the editor in real time; layout reflows when the
   pane is resized.
 
-## [0.1.1] - 2026-03-08 — Clipboard fix, initial render fix, dialog render fix.
+## [0.1.1] - 2026-03-08  -  Clipboard fix, initial render fix, dialog render fix.
 
-## [0.1.0] - 2026-03-06 — Additional languages, bracket matching, replace in project, font size.
+## [0.1.0] - 2026-03-06  -  Additional languages, bracket matching, replace in project, font size.
 
 ### Added
 
 * Syntax highlighting for 9 new languages:
-  * **Rust** (`.rs`) — lifetimes, macros (`name!`), attributes (`#[...]`), raw strings
-  * **Kotlin** (`.kt`, `.kts`) — annotations, triple-quoted strings, coroutine keywords
-  * **Go** (`.go`) — backtick raw strings, built-in functions (`make`, `append`, `len`, …)
-  * **Bash** (`.sh`, `.bash`, `.zsh`, `.fish`) — shebang detection, `$VAR`/`${VAR}` variables, heredocs
-  * **Java** (`.java`) — annotations, text blocks, modern keywords (`record`, `sealed`, `permits`, `yield`)
-  * **C#** (`.cs`) — verbatim strings, attributes, modern keywords (`record`, `init`, `required`, `file`)
-  * **TOML** (`.toml`) — `[[array]]`/`[table]` headers, bare key highlighting, ISO 8601 dates
-  * **YAML** (`.yaml`, `.yml`) — anchors (`&`), aliases (`*`), tags (`!!str`), key detection
-  * **TypeScript** (`.ts`, `.tsx`, `.d.ts`) — decorators, template literals, utility types, TS-specific keywords
+  * **Rust** (`.rs`)  -  lifetimes, macros (`name!`), attributes (`#[...]`), raw strings
+  * **Kotlin** (`.kt`, `.kts`)  -  annotations, triple-quoted strings, coroutine keywords
+  * **Go** (`.go`)  -  backtick raw strings, built-in functions (`make`, `append`, `len`, …)
+  * **Bash** (`.sh`, `.bash`, `.zsh`, `.fish`)  -  shebang detection, `$VAR`/`${VAR}` variables, heredocs
+  * **Java** (`.java`)  -  annotations, text blocks, modern keywords (`record`, `sealed`, `permits`, `yield`)
+  * **C#** (`.cs`)  -  verbatim strings, attributes, modern keywords (`record`, `init`, `required`, `file`)
+  * **TOML** (`.toml`)  -  `[[array]]`/`[table]` headers, bare key highlighting, ISO 8601 dates
+  * **YAML** (`.yaml`, `.yml`)  -  anchors (`&`), aliases (`*`), tags (`!!str`), key detection
+  * **TypeScript** (`.ts`, `.tsx`, `.d.ts`)  -  decorators, template literals, utility types, TS-specific keywords
 
-* Bracket pair highlighting — when the cursor is adjacent to `(`, `)`, `[`, `]`, `{`, or `}`, both brackets are underlined using the theme accent color. Nesting is tracked correctly across lines.
+* Bracket pair highlighting  -  when the cursor is adjacent to `(`, `)`, `[`, `]`, `{`, or `}`, both brackets are underlined using the theme accent color. Nesting is tracked correctly across lines.
 
-* Persistent font size — `Ctrl+-` decreases and `Ctrl++`/`Ctrl+=` increases the code font size. The chosen size is saved to disk and restored on next launch. `Ctrl+0` resets to the default.
+* Persistent font size  -  `Ctrl+-` decreases and `Ctrl++`/`Ctrl+=` increases the code font size. The chosen size is saved to disk and restored on next launch. `Ctrl+0` resets to the default.
 
-* **Project-wide replace** (`Ctrl+Shift+H`) — two-step command palette prompt (search term, then replacement). Scans the project and lists all matches identically to project-find. Press `F5` in the results view to apply all replacements atomically (files are written only when the match count is non-zero). A regex variant (`project-search:replace-regex`) is also available from the command palette.
+* **Project-wide replace** (`Ctrl+Shift+H`)  -  two-step command palette prompt (search term, then replacement). Scans the project and lists all matches identically to project-find. Press `F5` in the results view to apply all replacements atomically (files are written only when the match count is non-zero). A regex variant (`project-search:replace-regex`) is also available from the command palette.
 
-## [0.0.0] - 2026-03-06 — First Rust release
+## [0.0.0] - 2026-03-06  -  First Rust release
 
 Initial port. Complete replacement of the C backend with Rust. The Lua editor layer is
 unchanged; all Lite XL plugins targeting mod-version 4 should (could?) continue to work.

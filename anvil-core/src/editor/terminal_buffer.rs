@@ -302,24 +302,29 @@ impl TerminalBufferInner {
         if self.screen.is_empty() || self.scroll_top > self.scroll_bottom {
             return;
         }
-        for _ in 0..count.max(1) {
-            if self.scroll_top == 1 && self.scroll_bottom == self.rows && !self.in_alt_screen {
-                if !self.screen.is_empty() {
-                    let row = self.screen.remove(0);
-                    self.push_history(row);
-                    self.screen.push(self.blank_row());
+        let n = count.max(1);
+        if self.scroll_top == 1 && self.scroll_bottom == self.rows && !self.in_alt_screen {
+            for _ in 0..n {
+                if self.screen.is_empty() {
+                    break;
                 }
-                continue;
+                let row = self.screen.remove(0);
+                self.push_history(row);
+                self.screen.push(self.blank_row());
             }
-            let top = self.scroll_top - 1;
-            let bottom = self.scroll_bottom - 1;
-            if top >= self.screen.len() || bottom >= self.screen.len() || top >= bottom {
-                break;
-            }
-            for row in top..bottom {
-                self.screen[row] = self.screen[row + 1].clone();
-            }
-            self.screen[bottom] = self.blank_row();
+            return;
+        }
+        let top = self.scroll_top - 1;
+        let bottom = self.scroll_bottom - 1;
+        if top >= self.screen.len() || bottom >= self.screen.len() || top >= bottom {
+            return;
+        }
+        let n = n.min(bottom - top + 1);
+        // Rotate the region left by n, then clear the n vacated rows in-place.
+        self.screen[top..=bottom].rotate_left(n);
+        let blank = Cell::blank(self.default_fg);
+        for row in &mut self.screen[bottom + 1 - n..=bottom] {
+            row.fill(blank);
         }
     }
 
@@ -327,16 +332,17 @@ impl TerminalBufferInner {
         if self.screen.is_empty() || self.scroll_top > self.scroll_bottom {
             return;
         }
-        for _ in 0..count.max(1) {
-            let top = self.scroll_top - 1;
-            let bottom = self.scroll_bottom - 1;
-            if top >= self.screen.len() || bottom >= self.screen.len() || top >= bottom {
-                break;
-            }
-            for row in (top + 1..=bottom).rev() {
-                self.screen[row] = self.screen[row - 1].clone();
-            }
-            self.screen[top] = self.blank_row();
+        let top = self.scroll_top - 1;
+        let bottom = self.scroll_bottom - 1;
+        if top >= self.screen.len() || bottom >= self.screen.len() || top >= bottom {
+            return;
+        }
+        let n = count.max(1).min(bottom - top + 1);
+        // Rotate the region right by n, then clear the n vacated rows in-place.
+        self.screen[top..=bottom].rotate_right(n);
+        let blank = Cell::blank(self.default_fg);
+        for row in &mut self.screen[top..top + n] {
+            row.fill(blank);
         }
     }
 
@@ -344,14 +350,14 @@ impl TerminalBufferInner {
         if self.cursor_row < self.scroll_top || self.cursor_row > self.scroll_bottom {
             return;
         }
-        let count = count.max(1).min(self.scroll_bottom - self.cursor_row + 1);
+        let n = count.max(1).min(self.scroll_bottom - self.cursor_row + 1);
         let start = self.cursor_row - 1;
         let bottom = self.scroll_bottom - 1;
-        for _ in 0..count {
-            for row in (start + 1..=bottom).rev() {
-                self.screen[row] = self.screen[row - 1].clone();
-            }
-            self.screen[start] = self.blank_row();
+        // Shift existing rows down by rotating right, then clear the vacated rows.
+        self.screen[start..=bottom].rotate_right(n);
+        let blank = Cell::blank(self.default_fg);
+        for row in &mut self.screen[start..start + n] {
+            row.fill(blank);
         }
     }
 
@@ -359,14 +365,14 @@ impl TerminalBufferInner {
         if self.cursor_row < self.scroll_top || self.cursor_row > self.scroll_bottom {
             return;
         }
-        let count = count.max(1).min(self.scroll_bottom - self.cursor_row + 1);
+        let n = count.max(1).min(self.scroll_bottom - self.cursor_row + 1);
         let start = self.cursor_row - 1;
         let bottom = self.scroll_bottom - 1;
-        for _ in 0..count {
-            for row in start..bottom {
-                self.screen[row] = self.screen[row + 1].clone();
-            }
-            self.screen[bottom] = self.blank_row();
+        // Shift existing rows up by rotating left, then clear the vacated rows.
+        self.screen[start..=bottom].rotate_left(n);
+        let blank = Cell::blank(self.default_fg);
+        for row in &mut self.screen[bottom + 1 - n..=bottom] {
+            row.fill(blank);
         }
     }
 
@@ -472,15 +478,15 @@ impl TerminalBufferInner {
         }
         if mode == 0 {
             self.clear_line(0);
-            let blank = self.blank_row();
-            for row in self.cursor_row..self.rows {
-                self.screen[row] = blank.clone();
+            let blank = Cell::blank(self.default_fg);
+            for row in &mut self.screen[self.cursor_row..self.rows] {
+                row.fill(blank);
             }
         } else if mode == 1 {
             self.clear_line(1);
-            let blank = self.blank_row();
-            for row in 0..self.cursor_row.saturating_sub(1) {
-                self.screen[row] = blank.clone();
+            let blank = Cell::blank(self.default_fg);
+            for row in &mut self.screen[..self.cursor_row.saturating_sub(1)] {
+                row.fill(blank);
             }
         }
     }

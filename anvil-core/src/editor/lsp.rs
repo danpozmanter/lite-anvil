@@ -28,9 +28,13 @@ pub fn encode_message(value: &Value) -> Result<String, String> {
 /// Returns (parsed_messages, remaining_buffer).
 pub fn decode_messages(buffer: &str) -> Result<(Vec<Value>, String), String> {
     let mut messages = Vec::new();
-    let mut remaining = buffer.to_string();
-    while let Some(header_end) = remaining.find("\r\n\r\n") {
-        let header = &remaining[..header_end];
+    let mut pos = 0usize;
+    loop {
+        let slice = &buffer[pos..];
+        let Some(header_end) = slice.find("\r\n\r\n") else {
+            break;
+        };
+        let header = &slice[..header_end];
         let Some(content_length) = header.lines().find_map(|line| {
             line.split_once(':').and_then(|(k, v)| {
                 if k.eq_ignore_ascii_case("Content-Length") {
@@ -45,19 +49,19 @@ pub fn decode_messages(buffer: &str) -> Result<(Vec<Value>, String), String> {
         if content_length > MAX_LSP_FRAME {
             return Err("LSP Content-Length exceeds frame cap".to_string());
         }
-        let body_start = header_end + 4;
+        let body_start = pos + header_end + 4;
         let Some(body_end) = body_start.checked_add(content_length) else {
             return Err("LSP Content-Length overflow".to_string());
         };
-        if remaining.len() < body_end {
+        if buffer.len() < body_end {
             break;
         }
         let decoded: Value =
-            serde_json::from_str(&remaining[body_start..body_end]).map_err(|e| e.to_string())?;
+            serde_json::from_str(&buffer[body_start..body_end]).map_err(|e| e.to_string())?;
         messages.push(decoded);
-        remaining = remaining[body_end..].to_string();
+        pos = body_end;
     }
-    Ok((messages, remaining))
+    Ok((messages, buffer[pos..].to_string()))
 }
 
 /// LSP completion kind index to token type name.

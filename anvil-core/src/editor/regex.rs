@@ -158,6 +158,7 @@ impl NativeRegex {
         limit: usize,
     ) -> Result<(Vec<u8>, usize), RegexError> {
         let mut result = Vec::with_capacity(subject.len());
+        let mut repl_buf = Vec::new();
         let mut count = 0usize;
         let mut pos = 0usize;
 
@@ -174,7 +175,9 @@ impl NativeRegex {
                     let ms = m.start();
                     let me = m.end();
                     result.extend_from_slice(&subject[pos..ms]);
-                    result.extend_from_slice(&apply_replacement(replacement, subject, &locs));
+                    repl_buf.clear();
+                    apply_replacement_into(replacement, subject, &locs, &mut repl_buf);
+                    result.extend_from_slice(&repl_buf);
                     count += 1;
                     if me == ms {
                         if pos < subject.len() {
@@ -247,9 +250,13 @@ impl Iterator for FindIter<'_> {
     }
 }
 
-/// Apply PCRE2 extended replacement: `$$` -> `$`, `$0`/`$n`/`${n}` -> group.
-fn apply_replacement(repl: &[u8], subject: &[u8], locs: &CaptureLocations) -> Vec<u8> {
-    let mut out = Vec::new();
+/// Apply PCRE2 extended replacement into `out`: `$$` -> `$`, `$0`/`$n`/`${n}` -> group.
+fn apply_replacement_into(
+    repl: &[u8],
+    subject: &[u8],
+    locs: &CaptureLocations,
+    out: &mut Vec<u8>,
+) {
     let mut i = 0;
     while i < repl.len() {
         if repl[i] != b'$' || i + 1 >= repl.len() {
@@ -286,7 +293,6 @@ fn apply_replacement(repl: &[u8], subject: &[u8], locs: &CaptureLocations) -> Ve
             out.push(b'$');
         }
     }
-    out
 }
 
 #[cfg(test)]

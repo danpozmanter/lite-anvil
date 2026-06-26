@@ -287,6 +287,11 @@ impl DocView {
         let gutter_w = self.gutter_width;
         let text_x = self.rect.x + gutter_w;
         let text_w = (self.rect.w - gutter_w).max(0.0);
+        // Build per-frame sets for O(1) lookup in the per-line draw loop.
+        let fold_starts: std::collections::HashSet<usize> =
+            self.folds.iter().map(|&(s, _)| s).collect();
+        let bookmark_set: std::collections::HashSet<usize> =
+            self.bookmarks.iter().copied().collect();
 
         // Validate the per-frame measurement cache against the inputs that
         // also rebuild `cached_render`; a mismatch drops stale widths before
@@ -373,13 +378,13 @@ impl DocView {
                 ctx.draw_text(style.code_font, &ln_str, ln_x, text_y, ln_color);
 
                 // Fold indicator in gutter
-                if self.folds.iter().any(|(s, _)| *s == line.line_number) {
+                if fold_starts.contains(&line.line_number) {
                     let fold_x = self.rect.x + 4.0;
                     ctx.draw_text(style.code_font, ">", fold_x, text_y, style.dim.to_array());
                 }
 
                 // Bookmark marker
-                if self.bookmarks.contains(&line.line_number) {
+                if bookmark_set.contains(&line.line_number) {
                     let bm_x = self.rect.x + 2.0;
                     let bm_y = y + line_h * 0.3;
                     let bm_size = line_h * 0.4;
@@ -1128,6 +1133,13 @@ pub(crate) fn build_render_lines(
         let last = (first + visible_lines + 1).min(b.lines.len());
         let mut render = Vec::new();
         let mut i = first;
+        // Precompute a flat set of folded line numbers so the per-line check
+        // below is O(1) instead of O(folds) per line.
+        let folded_lines: std::collections::HashSet<usize> = dv
+            .folds
+            .iter()
+            .flat_map(|&(fs, fe)| fs + 1..=fe)
+            .collect();
         // Bulk-invalidate the per-line tokenize cache if the buffer has
         // changed since we last populated it. This keeps the happy-path
         // (pure scrolling) effectively free while still picking up real
@@ -1168,15 +1180,7 @@ pub(crate) fn build_render_lines(
             }
         }
         while i <= last && i <= b.lines.len() {
-            // Skip folded lines.
-            let mut folded = false;
-            for (fs, fe) in &dv.folds {
-                if i > *fs && i <= *fe {
-                    folded = true;
-                    break;
-                }
-            }
-            if folded {
+            if folded_lines.contains(&i) {
                 i += 1;
                 continue;
             }
