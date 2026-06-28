@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.12.6] - 2026-06-28 - Markdown emphasis highlighting fix.
+
+* Markdown bold/italic highlighting now follows the CommonMark rule that delimiters must hug their content: `**x**` and `*x*` highlight, but `** x **`, `**x **`, and `a ** notbold ** b` do not. Emphasis with a space next to a delimiter previously highlighted incorrectly and, when it found no closing delimiter, leaked its open state so the rest of the document rendered emphasized. Standalone `__bold__` / `_italic_` now highlight correctly while intraword underscores (`snake_case`) stay plain.
+
 ## [2.12.5] - 2026-06-26 - Performance and stability hardening.
 
 * Terminal scroll, insert-line, and delete-line no longer allocate per row: the screen region is rotated in place and vacated rows are cleared in place, eliminating one Vec<Cell> clone per visible row on every scroll tick.

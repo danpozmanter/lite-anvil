@@ -98,9 +98,7 @@
   "11": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "12"
-},
+  "regex": "(?<!\\w)__(?=\\S)(?:[^_]|_(?!_))*?(?<=\\S)__(?!\\w)",
   "type": "markdown_bold"
 }
 },
@@ -248,9 +246,7 @@
   "13": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "14"
-},
+  "regex": "(?<!\\w)_(?=[^\\s_])[^_]*?(?<=\\S)_(?!\\w)",
   "type": "markdown_italic"
 }
 },
@@ -283,9 +279,7 @@
   "134": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "135"
-},
+  "regex": "\\*\\*\\*(?=\\S)(?:[^*]|\\*\\*?(?!\\*))*?(?<=\\S)\\*\\*\\*",
   "type": "markdown_bold_italic"
 }
 },
@@ -296,9 +290,7 @@
   "136": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "137"
-},
+  "regex": "\\*\\*(?=\\S)(?:[^*]|\\*(?!\\*))*?(?<=\\S)\\*\\*",
   "type": "markdown_bold"
 }
 },
@@ -309,9 +301,7 @@
   "138": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "139"
-},
+  "regex": "(?<!\\*)\\*(?=[^\\s*])[^*]*?(?<=\\S)\\*(?!\\*)",
   "type": "markdown_italic"
 }
 },
@@ -1241,9 +1231,7 @@
   "9": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "10"
-},
+  "regex": "(?<!\\w)___(?=\\S)(?:[^_]|_(?!__))*?(?<=\\S)___(?!\\w)",
   "type": "markdown_bold_italic"
 }
 },

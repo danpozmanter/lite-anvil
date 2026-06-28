@@ -1493,6 +1493,94 @@ mod tests {
         );
     }
 
+    /// The text covered by any emphasis token (bold / italic / bold-italic).
+    fn emphasized_text(syntax: &CompiledSyntax, line: &str) -> (String, Vec<u8>) {
+        let (tokens, state) = tokenize_line_with_state(syntax, line, &[]);
+        let joined: String = tokens.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(joined, line, "tokens must round-trip the line {line:?}");
+        let emph: String = tokens
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.token_type.as_str(),
+                    "markdown_bold" | "markdown_italic" | "markdown_bold_italic"
+                )
+            })
+            .map(|t| t.text.as_str())
+            .collect();
+        (emph, state)
+    }
+
+    #[test]
+    fn markdown_emphasis_requires_no_inner_whitespace() {
+        let syntax = markdown_syntax();
+        // Valid CommonMark emphasis: delimiters hug the content.
+        for (line, expected) in [
+            ("**x**", "**x**"),
+            ("*x*", "*x*"),
+            ("***x***", "***x***"),
+            ("__x__", "__x__"),
+            ("_x_", "_x_"),
+            ("a **bold** b", " **bold**"),
+            ("a *it* b", " *it*"),
+        ] {
+            let (emph, state) = emphasized_text(&syntax, line);
+            assert_eq!(emph, expected, "{line:?} should emphasize {expected:?}");
+            assert!(
+                state.is_empty(),
+                "{line:?} must not carry state, got {state:?}"
+            );
+        }
+
+        // Whitespace between a delimiter and its content invalidates the
+        // emphasis (CommonMark flanking rule). Nothing should be emphasized
+        // and, crucially, no state may leak to the next line.
+        for line in [
+            "** x **",
+            "** x**",
+            "**x **",
+            "*** x ***",
+            "a ** notbold ** b",
+            "_ x _",
+            "__ x __",
+            "x = 2 * y + 3 * z",
+            "use a * b and c * d",
+        ] {
+            let (emph, state) = emphasized_text(&syntax, line);
+            assert!(
+                emph.is_empty(),
+                "{line:?} should not emphasize, got {emph:?}"
+            );
+            assert!(
+                state.is_empty(),
+                "{line:?} must not carry state, got {state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_emphasis_does_not_bleed_to_following_lines() {
+        // Regression: an emphasis delimiter with no valid partner used to
+        // open a pair whose close never matched, carrying open state to the
+        // next line and rendering the rest of the document emphasized.
+        let syntax = markdown_syntax();
+        for opener in ["** x **", "*x*", "a single * here", "trailing star *"] {
+            let (_t1, s1) = tokenize_line_with_state(&syntax, opener, &[]);
+            assert!(
+                s1.is_empty(),
+                "{opener:?} must not leave open emphasis state, got {s1:?}"
+            );
+            let (tokens, s2) = tokenize_line_with_state(&syntax, "plain next line", &s1);
+            assert!(s2.is_empty(), "follow-up line should stay stateless");
+            assert!(
+                tokens.iter().all(|t| t.token_type != "markdown_italic"
+                    && t.token_type != "markdown_bold"
+                    && t.token_type != "markdown_bold_italic"),
+                "follow-up line must not inherit emphasis, got {tokens:?}"
+            );
+        }
+    }
+
     #[test]
     fn markdown_asset_highlights_unicode_italic_text() {
         let syntax = markdown_syntax();
@@ -1509,6 +1597,25 @@ mod tests {
             tokens.iter().any(|token| token.token_type != "normal"),
             "expected Markdown syntax to apply a non-normal token to {line:?}"
         );
+    }
+
+    #[test]
+    fn markdown_emphasis_handles_adversarial_delimiter_runs() {
+        // The emphasis regexes use non-greedy bodies with mutually exclusive
+        // alternatives, so adversarial delimiter runs must still terminate and
+        // round-trip every byte rather than backtracking pathologically.
+        let syntax = markdown_syntax();
+        for line in [
+            "*".repeat(200),
+            "_".repeat(200),
+            format!("**{}", "a".repeat(500)),
+            format!("{}**", "a *".repeat(200)),
+            "*_*_*_*_*_*_".repeat(40),
+        ] {
+            let (tokens, _state) = tokenize_line_with_state(&syntax, &line, &[]);
+            let joined: String = tokens.iter().map(|t| t.text.as_str()).collect();
+            assert_eq!(joined, line, "adversarial line must round-trip");
+        }
     }
 
     fn python_syntax() -> CompiledSyntax {
