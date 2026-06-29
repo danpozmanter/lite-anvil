@@ -138,6 +138,7 @@ jobs:
               local data_src="$2"
               local display="$3"
               local desktop_src="resources/linux/com.${app//-/_}.${display//-/}.desktop"
+              local icon_name="com.${app//-/_}.${display//-/}"
 
               local dir="${app}.AppDir"
               rm -rf "$dir"
@@ -156,6 +157,7 @@ jobs:
               cp "$desktop_src" "$dir/usr/share/applications/${app}.desktop"
               cp "$desktop_src" "$dir/${app}.desktop"
               cp "resources/icons/${app}.png" "$dir/usr/share/icons/hicolor/256x256/apps/${app}.png"
+              cp "resources/icons/${app}.png" "$dir/${icon_name}.png"
               cp "resources/icons/${app}.png" "$dir/${app}.png"
               cp "resources/icons/${app}.png" "$dir/.DirIcon"
 
