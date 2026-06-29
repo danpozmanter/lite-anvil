@@ -24,6 +24,10 @@ use crate::editor::view::View;
 /// haven't changed instead of re-running the regex engine every frame.
 pub(crate) struct TokenCache {
     pub change_id: i64,
+    /// Buffer line count when the cache was last synced. A mismatch means
+    /// whole lines were inserted or removed, which shifts every lower
+    /// line-number key, so the cache falls back to a full rebuild.
+    pub line_count: usize,
     pub lines: HashMap<usize, std::sync::Arc<Vec<Token>>>,
     /// Tokenizer state at the END of each line. The byte stack mirrors
     /// the legacy lite-xl format: each level holds a 1-based pattern
@@ -39,6 +43,7 @@ impl Default for TokenCache {
     fn default() -> Self {
         Self {
             change_id: -1,
+            line_count: 0,
             lines: HashMap::new(),
             line_end_states: HashMap::new(),
         }
@@ -82,6 +87,22 @@ pub(crate) struct OpenDoc {
     /// Rendered markdown preview state. Idle (zero-cost) until the user
     /// toggles preview on for this tab.
     pub preview: MarkdownPreviewState,
+}
+
+impl Drop for OpenDoc {
+    /// Reclaim the backing buffer (its line vector and undo history) from
+    /// the global `BUFFERS` map when the tab is closed. Each `OpenDoc`
+    /// exclusively owns its `buffer_id` - every id is minted by a fresh
+    /// `insert_buffer` and never shared between tabs - so closing the tab
+    /// is the point at which the buffer becomes unreachable and should be
+    /// freed. Tabs close by `Vec::remove`, by whole-list replacement on
+    /// project switch, and at shutdown; routing the reclaim through `Drop`
+    /// covers every path without each call site having to remember.
+    fn drop(&mut self) {
+        if let Some(buf_id) = self.view.buffer_id {
+            buffer::remove_buffer(buf_id);
+        }
+    }
 }
 
 /// Byte threshold above which `doc_is_modified` short-circuits to a pure
@@ -443,5 +464,55 @@ mod tests {
         let result = check_file_size_limit(tmp.to_str().unwrap(), 1);
         assert!(result.is_ok());
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    fn make_doc(buf_id: u64) -> OpenDoc {
+        let mut dv = DocView::new();
+        dv.buffer_id = Some(buf_id);
+        OpenDoc {
+            view: dv,
+            path: String::new(),
+            name: "t".to_string(),
+            saved_change_id: 1,
+            saved_signature: 0,
+            indent_type: "soft".to_string(),
+            indent_size: 2,
+            git_changes: HashMap::new(),
+            cached_render: std::sync::Arc::new(Vec::new()),
+            cached_change_id: -1,
+            cached_scroll_y: -1.0,
+            cached_hint_count: 0,
+            cached_rect_w: -1.0,
+            cached_rect_h: -1.0,
+            dirty_cache: std::cell::Cell::new(None),
+            token_cache: std::cell::RefCell::new(TokenCache::default()),
+            preview: MarkdownPreviewState::default(),
+        }
+    }
+
+    #[test]
+    fn dropping_doc_frees_its_buffer() {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        assert!(
+            buffer::with_buffer(buf_id, |_| Ok(())).is_ok(),
+            "buffer should exist after insert"
+        );
+        let doc = make_doc(buf_id);
+        drop(doc);
+        assert!(
+            buffer::with_buffer(buf_id, |_| Ok(())).is_err(),
+            "buffer must be reclaimed when its OpenDoc is dropped"
+        );
+    }
+
+    #[test]
+    fn removing_doc_from_vec_frees_its_buffer() {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        let mut docs = vec![make_doc(buf_id)];
+        docs.remove(0);
+        assert!(
+            buffer::with_buffer(buf_id, |_| Ok(())).is_err(),
+            "Vec::remove of a tab must reclaim its buffer"
+        );
     }
 }

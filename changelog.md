@@ -1,5 +1,44 @@
 # Change Log
 
+## [2.13.0] - 2026-06-29 - Resizable markdown preview, performance, and correctness.
+
+### Features
+
+* The markdown preview pane is now horizontally resizable: drag the divider between the editor and the preview to set the split (the cursor shows a horizontal resize arrow over the divider). The chosen split is remembered per application (Lite Anvil, Nano Anvil, Note Anvil each keep their own), the same way the sidebar width and window size are.
+
+### Performance
+
+* Release builds now compile with `opt-level = 2` instead of `opt-level = "z"`. The editor was being optimised for binary size at the expense of speed; this restores the vectorisation and inlining the per-pixel blit, the tokenizer scan, and the UTF-8 walks depend on.
+* Syntax tokenisation no longer scans the rest of a line and discards it on every non-matching pattern. The inner loop now uses a `\G`-anchored regex variant, so an open-matcher probe that does not match at the current column returns immediately instead of scanning forward to the next match. This collapses per-line tokenisation from quadratic to linear in line length and removes the multi-second freeze on very long or minified lines.
+* Editing deep in a large file no longer re-tokenises from the top of the document. The per-line token cache is invalidated incrementally from the lowest changed line downward (lines above keep their cached tokens and carry-over highlighting state), so typing latency no longer scales with how far down the file the cursor sits.
+* The editor sleeps between frames when idle instead of waking at the frame rate. When nothing is animating, no terminal is open, and no background job is running, the event loop blocks on a longer timeout; input and background results still wake it immediately, so responsiveness is unchanged while idle CPU and battery use drop.
+* Glyph metrics (baseline, advance, tab width) are read once per drawn text run instead of re-locking the font for every character and every glyph, and the text-width measurement pass holds a single font lock across a run rather than one lock per character.
+* Glyph blits clamp to the clip rectangle once per row instead of testing every pixel, letting the inner loop vectorise.
+* The integrated terminal drains its output up to a per-frame budget instead of a single 4 KiB read, so a build or `cat` of a large file appears at once instead of trickling in.
+* The terminal's ANSI/CSI escape parser no longer allocates a string and parameter vectors per escape sequence; parameters parse into a stack buffer and the escape buffer is reused.
+* LSP messages are drained fully each frame; a per-frame cap previously let the queue (and its memory) accumulate a backlog during diagnostic or token bursts on large workspaces.
+* Per-line find no longer recompiles its regex once per line; the compiled pattern is reused across the lines of a single search.
+
+### Correctness and stability
+
+* Editing, deleting, and copying text on lines containing multi-byte characters now use character columns consistently, matching the renderer, click mapping, and search. Previously the edit primitives treated the column as a byte offset, so an edit after an accented or non-Latin character could land at the wrong position or corrupt the line. ASCII text is unaffected.
+* Closing a tab or switching projects now frees the underlying document buffer (its text and undo history). Buffers previously leaked for the lifetime of the process, so a long session that opened many files kept growing.
+* Opening a file that is not valid UTF-8 now logs a warning that bytes were replaced and saving will not preserve them, instead of silently rewriting the file's bytes.
+* Replaying a corrupted persisted undo record no longer panics: edit positions are clamped to valid line and character boundaries before being applied.
+* Atomic saves write to a unique hidden temporary file in the target's directory and clean it up on failure, instead of a predictable `<name>.tmp` that could clobber a user's own file or race a concurrent save.
+* A latent out-of-bounds read when copying an up-flow (negative-pitch) FreeType glyph bitmap is fixed by using signed row-stride arithmetic.
+* Raw window-surface pixel writes now honour SDL's surface-lock contract.
+* The dirty-rectangle grid is sized to the actual surface instead of a fixed 7680x4800 pixel ceiling, so 8K and multi-monitor (high-DPI) windows no longer leave stale regions un-repainted.
+* The tokenizer's multi-line state index widened from 8 to 16 bits internally, so grammars with more than 255 patterns no longer mis-resolve multi-line constructs.
+
+### Memory
+
+* The Windows integrated terminal reader uses a bounded channel, restoring back-pressure so a flooding child process cannot grow the buffer without bound.
+* The per-line token cache evicts lines far outside the viewport, so scrolling through a large read-only file no longer retains tokens for every line ever shown.
+* Cleared LSP diagnostics drop their map entry instead of leaving an empty list behind.
+* The git path-to-repository-root cache is now LRU-capped, matching the status cache.
+* The non-ASCII per-line UTF-8 index stores 32-bit offsets instead of 64-bit, halving its size on lines with multi-byte characters.
+
 ## [2.12.6] - 2026-06-28 - Markdown emphasis highlighting fix.
 
 * Markdown bold/italic highlighting now follows the CommonMark rule that delimiters must hug their content: `**x**` and `*x*` highlight, but `** x **`, `**x **`, and `a ** notbold ** b` do not. Emphasis with a space next to a delimiter previously highlighted incorrectly and, when it found no closing delimiter, leaked its open state so the rest of the document rendered emphasized. Standalone `__bold__` / `_italic_` now highlight correctly while intraword underscores (`snake_case`) stay plain.

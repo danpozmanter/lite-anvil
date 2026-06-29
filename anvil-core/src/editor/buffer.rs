@@ -4,7 +4,12 @@ use std::io::Write;
 use std::time::Instant;
 
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
+
+/// Per-process counter making each atomic-save temp file name unique, so
+/// concurrent saves never collide on one another's scratch file.
+static TMP_SAVE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Byte Order Mark types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +151,27 @@ pub struct BufferState {
     /// `change_id` for repeated whole-document regex scans (find/replace as you
     /// type). Rebuilt lazily by `search_subject_cached` after any edit.
     pub search_cache: Option<(i64, Arc<SearchSubject>)>,
+    /// True when loading replaced invalid UTF-8 bytes with U+FFFD. The file is
+    /// editable but not byte-preserving, so saving over the original would lose
+    /// the invalid bytes; callers surface this so the rewrite is not silent.
+    pub lossy_load: bool,
+    /// Lowest 1-based line whose content (or position) changed since a token
+    /// cache last consumed this buffer; `usize::MAX` means "nothing tracked".
+    /// Edits that know their exact line record it here so the per-line
+    /// tokenize cache can invalidate only from that line downward instead of
+    /// re-tokenizing from the top of the document on every keystroke. Edits
+    /// that touch an unknown or document-wide range record `1` (full
+    /// invalidation). Interior-mutable so the immutable render path can reset
+    /// it after syncing.
+    pub min_dirty_line: std::cell::Cell<usize>,
+}
+
+impl BufferState {
+    /// Record that line `line` (1-based) changed, lowering the dirty watermark.
+    pub fn mark_dirty_line(&self, line: usize) {
+        self.min_dirty_line
+            .set(self.min_dirty_line.get().min(line.max(1)));
+    }
 }
 
 impl BufferState {
@@ -185,6 +211,8 @@ pub fn default_buffer_state() -> BufferState {
         sig_cache: (1, sig),
         last_edit: None,
         search_cache: None,
+        lossy_load: false,
+        min_dirty_line: std::cell::Cell::new(usize::MAX),
     }
 }
 
@@ -299,12 +327,31 @@ pub fn validate_selection_shape(selections: &[usize]) -> Result<(), BufferError>
 }
 
 /// Clamp a column to a valid UTF-8 boundary within a line.
-pub fn clamp_column_to_boundary(line: &str, col: usize) -> usize {
-    let mut byte = col.clamp(1, line.len().max(1)).saturating_sub(1);
-    while byte > 0 && !line.is_char_boundary(byte) {
-        byte -= 1;
+/// 0-based byte offset of 1-based character column `col` within `line`.
+/// Columns throughout the editor are character indices (matching the
+/// renderer, click mapping, and search); this converts one to the byte
+/// offset needed to slice the line's UTF-8 storage. On an ASCII line it is
+/// the identity `col - 1`; a column past the end clamps to the byte length so
+/// callers never slice out of range.
+fn col_to_byte(line: &str, col: usize) -> usize {
+    let nth = col.saturating_sub(1);
+    if nth == 0 {
+        return 0;
     }
-    byte + 1
+    if line.is_ascii() {
+        return nth.min(line.len());
+    }
+    line.char_indices()
+        .nth(nth)
+        .map(|(b, _)| b)
+        .unwrap_or(line.len())
+}
+
+/// Clamp a 1-based character column to this line. The trailing `\n` counts as
+/// one character, so the largest valid column sits just before it.
+pub fn clamp_column_to_boundary(line: &str, col: usize) -> usize {
+    let char_count = line.chars().count().max(1);
+    col.clamp(1, char_count)
 }
 
 /// Sanitize a (line, col) position to be within bounds.
@@ -329,7 +376,8 @@ pub fn normalize_range(
     sort_positions(line1, col1, line2, col2)
 }
 
-/// Move a position by a byte offset, wrapping across lines.
+/// Move a position by a character offset, wrapping across lines. Columns are
+/// 1-based character indices, so `offset` is counted in characters.
 pub fn position_offset(
     lines: &[String],
     mut line: usize,
@@ -341,13 +389,15 @@ pub fn position_offset(
         return (1, 1);
     }
     line = line.clamp(1, lines.len());
-    col = col.clamp(1, lines[line - 1].len().max(1));
+    let mut cur_chars = lines[line - 1].chars().count();
+    col = col.clamp(1, cur_chars.max(1));
     while remaining != 0 {
         if remaining > 0 {
-            if col < lines[line - 1].len() {
+            if col < cur_chars {
                 col += 1;
             } else if line < lines.len() {
                 line += 1;
+                cur_chars = lines[line - 1].chars().count();
                 col = 1;
             } else {
                 break;
@@ -358,7 +408,8 @@ pub fn position_offset(
                 col -= 1;
             } else if line > 1 {
                 line -= 1;
-                col = lines[line - 1].len().max(1);
+                cur_chars = lines[line - 1].chars().count();
+                col = cur_chars.max(1);
             } else {
                 break;
             }
@@ -380,19 +431,24 @@ pub fn get_text(
     let (line1, col1) = sanitize_position(lines, line1, col1);
     let (line2, col2) = sanitize_position(lines, line2, col2);
     let (line1, col1, line2, col2) = sort_positions(line1, col1, line2, col2);
-    let col2_offset = if inclusive { 0 } else { 1 };
+    // Exclusive end column in character units: an inclusive range covers
+    // through `col2`, an exclusive one stops just before it.
+    let end_col = if inclusive { col2 + 1 } else { col2 };
     if line1 == line2 {
-        return lines[line1 - 1]
-            .get(col1 - 1..col2.saturating_sub(col2_offset))
+        let l = &lines[line1 - 1];
+        return l
+            .get(col_to_byte(l, col1)..col_to_byte(l, end_col))
             .unwrap_or("")
             .to_string();
     }
     let mut out = String::new();
-    out.push_str(&lines[line1 - 1][col1 - 1..]);
+    let l1 = &lines[line1 - 1];
+    out.push_str(&l1[col_to_byte(l1, col1)..]);
     for line in lines.iter().take(line2 - 1).skip(line1) {
         out.push_str(line);
     }
-    out.push_str(&lines[line2 - 1][..col2.saturating_sub(col2_offset)]);
+    let l2 = &lines[line2 - 1];
+    out.push_str(&l2[..col_to_byte(l2, end_col)]);
     out
 }
 
@@ -405,23 +461,28 @@ pub fn apply_insert_internal(
     text: &str,
 ) {
     let mut insert_lines = split_lines(text);
-    let len = insert_lines.last().map(|s| s.len()).unwrap_or(0);
+    // Character length of the final inserted segment shifts same-line cursors;
+    // the number of added lines shifts cursors below. `split_lines` strips the
+    // newlines, so the last segment is the text after the final '\n'.
+    let len = insert_lines.last().map(|s| s.chars().count()).unwrap_or(0);
+    let added_lines = insert_lines.len() - 1;
+    // Byte offset of the insert column in the (pre-edit) line's UTF-8 storage.
+    let byte = col_to_byte(&lines[line - 1], col);
     if insert_lines.len() == 1 {
         // Single-line insert: modify in place, no temporary allocations.
-        lines[line - 1].insert_str(col - 1, &insert_lines[0]);
+        lines[line - 1].insert_str(byte, &insert_lines[0]);
     } else {
-        let after = lines[line - 1][col - 1..].to_string();
-        let split_count = insert_lines.len().saturating_sub(1);
-        for item in insert_lines.iter_mut().take(split_count) {
+        let after = lines[line - 1][byte..].to_string();
+        for item in insert_lines.iter_mut().take(added_lines) {
             if !item.ends_with('\n') {
                 item.push('\n');
             }
         }
         // Prepend the portion before the insert point to the first new line.
-        insert_lines[0].insert_str(0, &lines[line - 1][..col - 1]);
+        insert_lines[0].insert_str(0, &lines[line - 1][..byte]);
         let last_idx = insert_lines.len() - 1;
         insert_lines[last_idx].push_str(&after);
-        lines.splice(line - 1..line, insert_lines.clone());
+        lines.splice(line - 1..line, insert_lines);
     }
 
     for idx in (0..selections.len()).step_by(4).rev() {
@@ -433,7 +494,7 @@ pub fn apply_insert_internal(
             break;
         }
         let line_addition = if line < cline1 || (line == cline1 && col < ccol1) {
-            insert_lines.len() - 1
+            added_lines
         } else {
             0
         };
@@ -467,10 +528,14 @@ pub fn apply_remove_internal(
     };
     let line_removal = line2 - line1;
     if line1 == line2 {
-        lines[line1 - 1].replace_range(col1 - 1..col2 - 1, "");
+        let b1 = col_to_byte(&lines[line1 - 1], col1);
+        let b2 = col_to_byte(&lines[line1 - 1], col2);
+        lines[line1 - 1].replace_range(b1..b2, "");
     } else {
-        let after = lines[line2 - 1][col2 - 1..].to_string();
-        lines[line1 - 1].truncate(col1 - 1);
+        let b2 = col_to_byte(&lines[line2 - 1], col2);
+        let after = lines[line2 - 1][b2..].to_string();
+        let b1 = col_to_byte(&lines[line1 - 1], col1);
+        lines[line1 - 1].truncate(b1);
         lines[line1 - 1].push_str(&after);
         lines.drain(line1..line2);
     }
@@ -648,31 +713,39 @@ pub fn apply_single_edit(
     selections: &mut Vec<usize>,
     edit: &EditRecord,
 ) -> EditRecord {
+    // Records replayed from persisted history are not re-validated against the
+    // current buffer, so clamp the edit's positions to valid lines and char
+    // boundaries before indexing. A self-generated record is already valid, so
+    // this is a no-op on the normal path; on a corrupted on-disk record it
+    // keeps the byte-slicing in `apply_*_internal` from panicking.
     match edit.kind {
         b'i' => {
-            apply_insert_internal(lines, selections, edit.line1, edit.col1, &edit.text);
+            let (line1, col1) = sanitize_position(lines, edit.line1, edit.col1);
+            apply_insert_internal(lines, selections, line1, col1, &edit.text);
             sanitize_selections(lines, selections);
+            let (end_line, end_col) =
+                position_offset(lines, line1, col1, edit.text.chars().count() as isize);
             EditRecord {
                 kind: b'r',
-                line1: edit.line1,
-                col1: edit.col1,
-                line2: position_offset(lines, edit.line1, edit.col1, edit.text.len() as isize).0,
-                col2: position_offset(lines, edit.line1, edit.col1, edit.text.len() as isize).1,
+                line1,
+                col1,
+                line2: end_line,
+                col2: end_col,
                 text: String::new(),
             }
         }
         _ => {
-            let removed = get_text(lines, edit.line1, edit.col1, edit.line2, edit.col2, false);
-            apply_remove_internal(
-                lines, selections, edit.line1, edit.col1, edit.line2, edit.col2,
-            );
+            let (line1, col1, line2, col2) =
+                normalize_range(lines, edit.line1, edit.col1, edit.line2, edit.col2);
+            let removed = get_text(lines, line1, col1, line2, col2, false);
+            apply_remove_internal(lines, selections, line1, col1, line2, col2);
             sanitize_selections(lines, selections);
             EditRecord {
                 kind: b'i',
-                line1: edit.line1,
-                col1: edit.col1,
-                line2: edit.line1,
-                col2: edit.col1,
+                line1,
+                col1,
+                line2: line1,
+                col2: col1,
                 text: removed,
             }
         }
@@ -827,6 +900,7 @@ pub fn load_file_with_progress<F: FnMut(u64, u64)>(
     }
 
     let mut crlf_detected = false;
+    let mut lossy = false;
     let mut bytes_read: u64 = bom_len as u64;
     let mut progress_tick: u64 = 0;
     let mut line_bytes = Vec::with_capacity(256);
@@ -841,14 +915,20 @@ pub fn load_file_with_progress<F: FnMut(u64, u64)>(
         if !crlf_detected && line_bytes.len() >= 2 && line_bytes.ends_with(b"\r\n") {
             crlf_detected = true;
         }
-        // Normalize line: strip \r from \r\n.
+        // Normalize line: strip \r from \r\n. `from_utf8_lossy` returns an
+        // owned string only when it had to substitute U+FFFD for invalid
+        // bytes, so an `Owned` variant flags a non-byte-preserving load.
         let s = if line_bytes.len() >= 2 && line_bytes.ends_with(b"\r\n") {
             let without_cr = &line_bytes[..line_bytes.len() - 2];
-            let mut s = String::from_utf8_lossy(without_cr).into_owned();
+            let cow = String::from_utf8_lossy(without_cr);
+            lossy |= matches!(cow, std::borrow::Cow::Owned(_));
+            let mut s = cow.into_owned();
             s.push('\n');
             s
         } else {
-            String::from_utf8_lossy(&line_bytes).into_owned()
+            let cow = String::from_utf8_lossy(&line_bytes);
+            lossy |= matches!(cow, std::borrow::Cow::Owned(_));
+            cow.into_owned()
         };
         state.lines.push(s);
 
@@ -860,6 +940,13 @@ pub fn load_file_with_progress<F: FnMut(u64, u64)>(
         }
     }
     state.crlf = crlf_detected;
+    state.lossy_load = lossy;
+    if lossy {
+        log::warn!(
+            "{filename}: contains invalid UTF-8; bytes were replaced with U+FFFD. \
+             Saving will not preserve the original bytes."
+        );
+    }
     // Ensure last line ends with '\n'.
     if let Some(last) = state.lines.last_mut() {
         if !last.ends_with('\n') {
@@ -942,30 +1029,50 @@ fn save_file_atomic(state: &BufferState, filename: &str, crlf: bool) -> Result<(
     let path = std::path::Path::new(filename);
     let orig_meta = fs::metadata(path).ok();
 
-    let tmp = path.with_extension("tmp");
-    let mut f = fs::File::create(&tmp)?;
-    write_content(&mut f, state, crlf)?;
-    f.sync_all()?;
-    drop(f);
+    // Write to a unique hidden sibling in the target's own directory, then
+    // rename it over the target. A unique name (pid + counter) avoids
+    // clobbering any pre-existing `<name>.tmp` the user owns and stops two
+    // concurrent saves from racing on one scratch file; keeping it in the same
+    // directory keeps the final rename on one filesystem, so it is atomic.
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let base = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let seq = TMP_SAVE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{base}.{}.{seq}.tmp", std::process::id()));
 
-    if let Some(meta) = orig_meta {
-        // Permissions (mode bits) — portable.
-        let _ = fs::set_permissions(&tmp, meta.permissions());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let _ = set_owner(&tmp, meta.uid(), meta.gid());
+    let result = (|| -> Result<(), std::io::Error> {
+        let mut f = fs::File::create(&tmp)?;
+        write_content(&mut f, state, crlf)?;
+        f.sync_all()?;
+        drop(f);
+
+        if let Some(meta) = &orig_meta {
+            // Permissions (mode bits) - portable.
+            let _ = fs::set_permissions(&tmp, meta.permissions());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let _ = set_owner(&tmp, meta.uid(), meta.gid());
+            }
+            // Extended attributes - also covers POSIX ACLs (system.posix_acl_*)
+            // and SELinux labels (security.selinux) on Linux.
+            #[cfg(target_os = "linux")]
+            {
+                let _ = copy_xattrs(path, &tmp);
+            }
         }
-        // Extended attributes — also covers POSIX ACLs (system.posix_acl_*)
-        // and SELinux labels (security.selinux) on Linux.
-        #[cfg(target_os = "linux")]
-        {
-            let _ = copy_xattrs(path, &tmp);
-        }
+
+        fs::rename(&tmp, path)?;
+        Ok(())
+    })();
+
+    // Leave no scratch file behind if writing or renaming failed partway.
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
     }
-
-    fs::rename(&tmp, path)?;
-    Ok(())
+    result
 }
 
 #[cfg(unix)]
@@ -1142,7 +1249,11 @@ fn diff_to_undo_edits(base_text: &str, current: &[String]) -> Vec<EditRecord> {
         let i = line_starts
             .partition_point(|&s| s <= offset)
             .saturating_sub(1);
-        (i + 1, offset - line_starts[i] + 1)
+        // Convert the within-line byte offset to a 1-based character column so
+        // the undo record's columns match the editor's character convention.
+        let byte_in_line = (offset - line_starts[i]).min(current[i].len());
+        let char_col = current[i][..byte_in_line].chars().count() + 1;
+        (i + 1, char_col)
     };
 
     let (start_line, start_col) = to_line_col(start);
@@ -1197,6 +1308,10 @@ fn finalize_pending(state: &mut BufferState) {
 /// even capturing the base would lock up the editor. Callers don't need to
 /// special-case huge files; the function handles it.
 pub fn push_undo(state: &mut BufferState) {
+    // General edit entry point: the affected range is not known here, so fall
+    // back to full invalidation. The single-character typing path
+    // (`push_undo_mergeable`) records a precise line for the common case.
+    state.min_dirty_line.set(1);
     if state.is_huge() {
         state.pending = None;
         state.redo.clear();
@@ -1234,6 +1349,10 @@ pub fn push_undo_mergeable(
             if line == prev_line && col == prev_col + 1 && (now - prev_time) < UNDO_MERGE_TIMEOUT {
                 state.last_edit = Some((now, line, col, true, false));
                 state.change_id += 1;
+                // A merged keystroke only edits this one line, and it can only
+                // follow another single-char insert (so any earlier edit this
+                // frame already lowered the watermark): record just this line.
+                state.mark_dirty_line(line);
                 return true;
             }
         }
@@ -1246,6 +1365,7 @@ pub fn push_undo_mergeable(
 /// Undo the most recent edit by replaying its packed inverse record onto
 /// the buffer and pushing the corresponding forward record onto redo.
 pub fn undo(state: &mut BufferState) {
+    state.min_dirty_line.set(1);
     finalize_pending(state);
     let Some(entry) = state.undo.pop() else {
         return;
@@ -1276,6 +1396,7 @@ pub fn undo(state: &mut BufferState) {
 
 /// Redo the most recently undone edit, the mirror of `undo`.
 pub fn redo(state: &mut BufferState) {
+    state.min_dirty_line.set(1);
     finalize_pending(state);
     let Some(entry) = state.redo.pop() else {
         return;
@@ -1404,6 +1525,14 @@ pub fn delete_selection(state: &mut BufferState) {
     state.selections = vec![l1, c1, l1, c1];
 }
 
+thread_local! {
+    /// Last pattern compiled by `regex_find_in_line`, reused across the many
+    /// per-line calls of a single find so the regex is compiled once per
+    /// distinct pattern instead of once per line per keystroke.
+    static FIND_IN_LINE_RE: std::cell::RefCell<Option<(String, pcre2::bytes::Regex)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Regex find within a line. Returns 1-based (start, end) column positions.
 pub fn regex_find_in_line(
     line: &str,
@@ -1416,13 +1545,25 @@ pub fn regex_find_in_line(
     } else {
         pattern.to_string()
     };
-    let re = pcre2::bytes::Regex::new(&pat).ok()?;
-    let mut locs = re.capture_locations();
-    re.captures_read_at(&mut locs, line.as_bytes(), start_col.saturating_sub(1))
-        .ok()
-        .flatten()?;
-    let (s, e) = locs.get(0)?;
-    Some((s + 1, e + 1))
+    FIND_IN_LINE_RE.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if !matches!(&*slot, Some((p, _)) if *p == pat) {
+            match pcre2::bytes::Regex::new(&pat) {
+                Ok(re) => *slot = Some((pat.clone(), re)),
+                Err(_) => {
+                    *slot = None;
+                    return None;
+                }
+            }
+        }
+        let (_, re) = slot.as_ref()?;
+        let mut locs = re.capture_locations();
+        re.captures_read_at(&mut locs, line.as_bytes(), start_col.saturating_sub(1))
+            .ok()
+            .flatten()?;
+        let (s, e) = locs.get(0)?;
+        Some((s + 1, e + 1))
+    })
 }
 
 /// The document concatenated into one byte string with per-line start offsets,
@@ -1958,6 +2099,98 @@ mod tests {
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o755);
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn atomic_save_does_not_clobber_users_dot_tmp() {
+        let dir = std::env::temp_dir().join("liteanvil_test_atomic_tmp_dir");
+        let _ = fs::create_dir_all(&dir);
+        let target = dir.join("notes.txt");
+        let user_tmp = dir.join("notes.tmp");
+        fs::write(&target, "original\n").unwrap();
+        fs::write(&user_tmp, "PRECIOUS USER DATA\n").unwrap();
+
+        let mut state = default_buffer_state();
+        load_file(&mut state, target.to_str().unwrap()).unwrap();
+        state.lines = vec!["rewritten\n".into()];
+        save_file(&state, target.to_str().unwrap(), false, true).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&user_tmp).unwrap(),
+            "PRECIOUS USER DATA\n",
+            "atomic save must not overwrite a pre-existing <name>.tmp the user owns"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_corrupt_edit_does_not_panic() {
+        let mut lines = split_lines("hello");
+        let mut selections = vec![1, 1, 1, 1];
+        // Out-of-range line and column, as a corrupted persisted record could hold.
+        let bad_insert = EditRecord {
+            kind: b'i',
+            line1: 0,
+            col1: 9999,
+            line2: 0,
+            col2: 0,
+            text: "X".to_string(),
+        };
+        let _ = apply_single_edit(&mut lines, &mut selections, &bad_insert);
+        let bad_remove = EditRecord {
+            kind: b'r',
+            line1: 50,
+            col1: 0,
+            line2: 1,
+            col2: 9999,
+            text: String::new(),
+        };
+        let _ = apply_single_edit(&mut lines, &mut selections, &bad_remove);
+    }
+
+    #[test]
+    fn multibyte_insert_and_remove_use_char_columns() {
+        // "héllo" is 5 chars / 6 bytes (é is 2 bytes). Columns are 1-based
+        // character indices everywhere the cursor is set (renderer, click,
+        // search), so an insert at char column 6 must land after 'o'.
+        let mut lines = vec!["héllo\n".to_string()];
+        let mut sel = vec![1, 6, 1, 6];
+        apply_insert_internal(&mut lines, &mut sel, 1, 6, "X");
+        assert_eq!(lines[0], "hélloX\n");
+
+        // Remove the 'é' (char column 2..3) from "héllo\n".
+        let mut lines = vec!["héllo\n".to_string()];
+        let mut sel = vec![1, 1, 1, 1];
+        apply_remove_internal(&mut lines, &mut sel, 1, 2, 1, 3);
+        assert_eq!(lines[0], "hllo\n");
+
+        // get_text over a multibyte range returns the right characters.
+        let lines = vec!["héllo wörld\n".to_string()];
+        assert_eq!(get_text(&lines, 1, 7, 1, 12, false), "wörld");
+    }
+
+    #[test]
+    fn merge_typing_tracks_only_its_line_other_edits_full_invalidate() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["x\n".to_string(); 100];
+        state.selections = vec![50, 1, 50, 1];
+
+        // First keystroke can't merge (no prior insert): full invalidation.
+        let merged = push_undo_mergeable(&mut state, 50, 1, false);
+        assert!(!merged);
+        assert_eq!(state.min_dirty_line.get(), 1);
+
+        // The render path resets the watermark once it has consumed it.
+        state.min_dirty_line.set(usize::MAX);
+
+        // Adjacent keystroke merges and records only its own line.
+        let merged = push_undo_mergeable(&mut state, 50, 2, false);
+        assert!(merged);
+        assert_eq!(state.min_dirty_line.get(), 50);
+
+        // Undo conservatively forces a full invalidation.
+        undo(&mut state);
+        assert_eq!(state.min_dirty_line.get(), 1);
     }
 
     #[cfg(unix)]

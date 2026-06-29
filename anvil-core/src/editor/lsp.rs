@@ -160,6 +160,10 @@ fn start_stdout_thread(mut stdout: ChildStdout, sender: Sender<Value>) {
                 Ok(n) => {
                     buf.extend_from_slice(&chunk[..n]);
                     parse_messages(&mut buf, &sender);
+                    // Wake the (possibly idle-blocked) render loop so it drains
+                    // the freshly parsed messages instead of waiting out its
+                    // idle timeout.
+                    crate::window::push_wakeup_event();
                 }
             }
         }
@@ -306,16 +310,18 @@ pub struct PollResult {
 }
 
 /// Poll a transport for messages, stderr output, and process status.
-pub fn poll_transport(id: u64, max_messages: usize) -> Result<PollResult, String> {
+///
+/// Drains all currently queued messages: capping the per-frame count let the
+/// unbounded channel accumulate a backlog (and unbounded memory) whenever a
+/// server emitted more than the cap in one frame, e.g. a burst of streamed
+/// diagnostics or semantic tokens on a large workspace.
+pub fn poll_transport(id: u64) -> Result<PollResult, String> {
     let mut transports = TRANSPORTS.lock();
     let handle = transports.get_mut(&id).ok_or("unknown LSP transport")?;
 
     let mut messages = Vec::new();
-    for _ in 0..max_messages {
-        match handle.messages.try_recv() {
-            Ok(msg) => messages.push(msg),
-            Err(_) => break,
-        }
+    while let Ok(msg) = handle.messages.try_recv() {
+        messages.push(msg);
     }
 
     let mut stderr = Vec::new();

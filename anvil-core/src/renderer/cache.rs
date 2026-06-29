@@ -1,11 +1,9 @@
 use super::fallback;
-use super::font::{FontRef, GlyphInfo, is_whitespace};
+use super::font::{Antialiasing, FontRef, GlyphInfo, Hinting, is_whitespace};
 use sdl3_sys::everything::*;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-pub const CELLS_X: usize = 80;
-pub const CELLS_Y: usize = 50;
 const CELL_SIZE: i32 = 96;
 const HASH_INITIAL: u32 = 0x811C9DC5;
 const FNV_PRIME: u32 = 0x01000193;
@@ -104,24 +102,39 @@ pub enum Command {
 
 pub struct RenCache {
     pub commands: Vec<Command>,
-    cells: [u32; CELLS_X * CELLS_Y],
-    cells_prev: [u32; CELLS_X * CELLS_Y],
+    /// Per-cell hash grid sized to the live surface, row-major over
+    /// `cells_w` x `cells_h`. Indexed as `y * cells_w + x`.
+    cells: Vec<u32>,
+    cells_prev: Vec<u32>,
+    /// Cell-grid dimensions, recomputed each frame from the surface size so
+    /// the grid always covers the full surface (8K and multi-monitor pixel
+    /// extents included) rather than a fixed pixel ceiling.
+    cells_w: usize,
+    cells_h: usize,
     pub screen: RenRect,
     pub last_clip: RenRect,
 }
 
+/// Number of `CELL_SIZE`-wide cells needed to cover `px` pixels (ceiling).
+fn cells_for(px: i32) -> usize {
+    let px = px.max(0) as usize;
+    px.div_ceil(CELL_SIZE as usize)
+}
+
 impl RenCache {
     pub fn new() -> Self {
-        let mut c = RenCache {
+        // The grid is allocated on the first `begin_frame` once the surface
+        // size is known; until then it is empty and the initial frame paints
+        // fully (the resize path forces a full invalidate).
+        RenCache {
             commands: Vec::new(),
-            cells: [HASH_INITIAL; CELLS_X * CELLS_Y],
-            cells_prev: [0xFF_FF_FF_FF; CELLS_X * CELLS_Y],
+            cells: Vec::new(),
+            cells_prev: Vec::new(),
+            cells_w: 0,
+            cells_h: 0,
             screen: RenRect::default(),
             last_clip: RenRect::default(),
-        };
-        // cells_prev = 0xFFFFFFFF → first frame fully dirty.
-        c.cells_prev.fill(0xFF_FF_FF_FF);
-        c
+        }
     }
 
     pub fn invalidate(&mut self) {
@@ -129,14 +142,30 @@ impl RenCache {
     }
 
     pub fn begin_frame(&mut self, w: i32, h: i32) {
-        if self.screen.w != w || self.screen.h != h {
+        let resized = self.screen.w != w || self.screen.h != h;
+        if resized {
             self.screen = RenRect { x: 0, y: 0, w, h };
-            self.invalidate();
+        }
+        let cells_w = cells_for(w);
+        let cells_h = cells_for(h);
+        if cells_w != self.cells_w || cells_h != self.cells_h {
+            // Surface grew or shrank past a cell boundary: resize the grid and
+            // repaint everything this frame. `cells_prev` of all-ones marks
+            // every cell dirty against this frame's freshly hashed cells.
+            self.cells_w = cells_w;
+            self.cells_h = cells_h;
+            let len = cells_w * cells_h;
+            self.cells = vec![HASH_INITIAL; len];
+            self.cells_prev = vec![0xFF_FF_FF_FF; len];
+        } else {
+            // Reset cells to HASH_INITIAL for this frame's hash accumulation.
+            self.cells.fill(HASH_INITIAL);
+            if resized {
+                self.invalidate();
+            }
         }
         self.last_clip = self.screen;
         self.commands.clear();
-        // Reset cells to HASH_INITIAL for this frame's hash accumulation.
-        self.cells.fill(HASH_INITIAL);
     }
 
     pub fn push_set_clip(&mut self, rect: RenRect) {
@@ -227,16 +256,14 @@ impl RenCache {
             if clipped.is_empty() {
                 continue;
             }
-            update_cells(&mut self.cells, clipped, h);
+            update_cells(&mut self.cells, self.cells_w, self.cells_h, clipped, h);
         }
 
         // Find changed cells → dirty rects.
         let mut dirty: Vec<RenRect> = Vec::new();
-        let max_x = (self.screen.w / CELL_SIZE + 1) as usize;
-        let max_y = (self.screen.h / CELL_SIZE + 1) as usize;
-        for cy in 0..max_y.min(CELLS_Y) {
-            for cx in 0..max_x.min(CELLS_X) {
-                let idx = cx + cy * CELLS_X;
+        for cy in 0..self.cells_h {
+            for cx in 0..self.cells_w {
+                let idx = cx + cy * self.cells_w;
                 if self.cells[idx] != self.cells_prev[idx] {
                     let r = RenRect {
                         x: cx as i32 * CELL_SIZE,
@@ -317,15 +344,18 @@ fn bytepack_i32x4(a: i32, b: i32, c: i32, d: i32) -> [u8; 16] {
     out
 }
 
-fn update_cells(cells: &mut [u32; CELLS_X * CELLS_Y], r: RenRect, h: u32) {
+fn update_cells(cells: &mut [u32], cells_w: usize, cells_h: usize, r: RenRect, h: u32) {
+    if cells_w == 0 || cells_h == 0 {
+        return;
+    }
     let x1 = (r.x / CELL_SIZE) as usize;
     let y1 = (r.y / CELL_SIZE) as usize;
     let x2 = ((r.x + r.w) / CELL_SIZE) as usize;
     let y2 = ((r.y + r.h) / CELL_SIZE) as usize;
     let h_bytes = h.to_ne_bytes();
-    for cy in y1..=y2.min(CELLS_Y - 1) {
-        for cx in x1..=x2.min(CELLS_X - 1) {
-            let idx = cx + cy * CELLS_X;
+    for cy in y1..=y2.min(cells_h - 1) {
+        for cx in x1..=x2.min(cells_w - 1) {
+            let idx = cx + cy * cells_w;
             fnv1a_update(&mut cells[idx], &h_bytes);
         }
     }
@@ -399,61 +429,80 @@ pub unsafe fn render_dirty_rects(
         return;
     }
 
-    let (fmt, pitch, pixels, surface_bounds) = unsafe {
+    // Honor SDL's surface-lock contract before touching raw pixels. The window
+    // surfaces this editor uses are lock-free on every shipped backend, so this
+    // is a no-op in practice, but a backend that sets SDL_MUSTLOCK would
+    // otherwise have us write through an invalid or stale pixel pointer. The
+    // pixel pointer is read only after the lock succeeds, since locking can
+    // (re)establish it.
+    let must_lock = unsafe { SDL_MUSTLOCK(surface) };
+    if must_lock && !unsafe { SDL_LockSurface(surface) } {
+        return;
+    }
+
+    let prepared = unsafe {
         let details = SDL_GetPixelFormatDetails((*surface).format);
         let fmt = PixFmt::from_sdl(details);
         let pitch = (*surface).pitch as usize;
         let pixels = (*surface).pixels as *mut u8;
         if pixels.is_null() {
-            return;
+            None
+        } else {
+            // SDL_GetWindowSizeInPixels (used for screen.h in begin_frame) can
+            // differ from the actual surface dimensions when the window manager
+            // hasn't yet applied a resize request.  Clamp all pixel access to
+            // the real surface bounds so we never walk off the end of the
+            // buffer.
+            let bounds = RenRect {
+                x: 0,
+                y: 0,
+                w: (*surface).w,
+                h: (*surface).h,
+            };
+            Some((fmt, pitch, pixels, bounds))
         }
-        // SDL_GetWindowSizeInPixels (used for screen.h in begin_frame) can
-        // differ from the actual surface dimensions when the window manager
-        // hasn't yet applied a resize request.  Clamp all pixel access to the
-        // real surface bounds so we never walk off the end of the buffer.
-        let bounds = RenRect {
-            x: 0,
-            y: 0,
-            w: (*surface).w,
-            h: (*surface).h,
-        };
-        (fmt, pitch, pixels, bounds)
     };
 
-    for &dirty_rect in dirty {
-        let dirty_rect = dirty_rect.intersect(surface_bounds);
-        if dirty_rect.is_empty() {
-            continue;
-        }
-        let sdl_clip = SDL_Rect {
-            x: dirty_rect.x,
-            y: dirty_rect.y,
-            w: dirty_rect.w,
-            h: dirty_rect.h,
-        };
-        unsafe { SDL_SetSurfaceClipRect(surface, &sdl_clip) };
+    if let Some((fmt, pitch, pixels, surface_bounds)) = prepared {
+        for &dirty_rect in dirty {
+            let dirty_rect = dirty_rect.intersect(surface_bounds);
+            if dirty_rect.is_empty() {
+                continue;
+            }
+            let sdl_clip = SDL_Rect {
+                x: dirty_rect.x,
+                y: dirty_rect.y,
+                w: dirty_rect.w,
+                h: dirty_rect.h,
+            };
+            unsafe { SDL_SetSurfaceClipRect(surface, &sdl_clip) };
 
-        let mut clip = dirty_rect;
+            let mut clip = dirty_rect;
 
-        for cmd in commands {
-            match cmd {
-                Command::SetClip(r) => {
-                    clip = r.intersect(dirty_rect);
-                }
-                Command::DrawRect { rect, color } => unsafe {
-                    draw_rect_surface(surface, pixels, pitch, &fmt, *rect, *color, clip);
-                },
-                Command::DrawText(dt) => {
-                    unsafe { draw_text_surface(pixels, pitch, &fmt, dt, clip) };
-                }
-                Command::DrawImage(di) => {
-                    unsafe { draw_image_surface(pixels, pitch, &fmt, di, clip) };
+            for cmd in commands {
+                match cmd {
+                    Command::SetClip(r) => {
+                        clip = r.intersect(dirty_rect);
+                    }
+                    Command::DrawRect { rect, color } => unsafe {
+                        draw_rect_surface(surface, pixels, pitch, &fmt, *rect, *color, clip);
+                    },
+                    Command::DrawText(dt) => {
+                        unsafe { draw_text_surface(pixels, pitch, &fmt, dt, clip) };
+                    }
+                    Command::DrawImage(di) => {
+                        unsafe { draw_image_surface(pixels, pitch, &fmt, di, clip) };
+                    }
                 }
             }
         }
+
+        unsafe { SDL_SetSurfaceClipRect(surface, std::ptr::null()) };
     }
 
-    unsafe { SDL_SetSurfaceClipRect(surface, std::ptr::null()) };
+    if must_lock {
+        unsafe { SDL_UnlockSurface(surface) };
+    }
 }
 
 /// Alpha-blend an RGBA image onto the surface.
@@ -572,6 +621,14 @@ unsafe fn draw_text_surface(
     let clip_y2 = clip.y + clip.h;
     let color = dt.color;
 
+    // The whole run shares one font for baseline/spacing metrics, so read them
+    // once under a single lock instead of re-locking per glyph and per
+    // whitespace character.
+    let (baseline, space_advance, tab_w) = {
+        let f = first_font.lock();
+        (f.baseline, f.space_advance, f.space_advance * f.tab_size as f32)
+    };
+
     // Group fonts: for each glyph, find which font has it.
     let mut pen_x = dt.x;
     let text_bytes = dt.text.as_bytes();
@@ -583,34 +640,34 @@ unsafe fn draw_text_surface(
         // Find glyph from font group (first font with a valid glyph wins).
         let (glyph, _font_height) = get_group_glyph(&dt.fonts, cp);
         let xadv = if cp == b'\t' as u32 {
-            let f = first_font.lock();
-            let tab_w = f.space_advance * f.tab_size as f32;
             let r = ((pen_x - dt.x) + dt.tab_offset).rem_euclid(tab_w);
             if r == 0.0 { tab_w } else { tab_w - r }
         } else if !is_whitespace(cp) && glyph.xadvance > 0.0 {
             glyph.xadvance
         } else {
-            first_font.lock().space_advance
+            space_advance
         };
 
         if let Some(ref bm) = glyph.bitmap {
             let start_x = pen_x.floor() as i32 + bm.left;
             let end_x = start_x + bm.width as i32;
             if start_x < clip_x2 && end_x > clip.x {
-                let baseline = first_font.lock().baseline;
+                // Clamp the column span to the clip rect once so the inner loop
+                // has no per-pixel branch and advances its source index
+                // linearly. dst_x = start_x + col, clipped to [clip.x, clip_x2).
+                let col_start = (clip.x - start_x).max(0);
+                let col_end = (clip_x2 - start_x).min(bm.width as i32);
+                let y_base = dt.y - bm.top + baseline;
                 for row in 0..bm.rows as i32 {
-                    let dst_y = row + dt.y - bm.top + baseline;
+                    let dst_y = row + y_base;
                     if dst_y < clip.y || dst_y >= clip_y2 {
                         continue;
                     }
                     let src_row = row as usize * bm.row_bytes as usize;
                     unsafe {
                         let row_ptr = pixels.add(dst_y as usize * pitch) as *mut u32;
-                        for col in 0..bm.width as i32 {
+                        for col in col_start..col_end {
                             let dst_x = start_x + col;
-                            if dst_x < clip.x || dst_x >= clip_x2 {
-                                continue;
-                            }
                             let dst_ptr = row_ptr.add(dst_x as usize);
                             let (dr, dg, db, da) = fmt.unpack(*dst_ptr);
                             let (nr, ng, nb) = if bm.subpixel {
@@ -687,27 +744,18 @@ fn get_group_glyph(fonts: &[FontRef], codepoint: u32) -> (GlyphInfo, i32) {
     })
 }
 
-/// Advance width of `codepoint` across the font group's fallback order. The
-/// group analog of `FontInner::glyph_advance`: it matches `get_group_glyph`'s
-/// font selection but yields only the f32 advance, so width measurement never
-/// clones a glyph bitmap. Precondition: `fonts` is non-empty.
-fn get_group_advance(fonts: &[FontRef], codepoint: u32) -> f32 {
-    // The advance and usability are read from the same locked reference, so
-    // the chosen font's `glyph_advance` is taken without an extra lookup.
-    let (advance, usable, size, aa, hinting) = {
-        let mut g = fonts[0].lock();
-        let info = g.get_glyph(codepoint);
-        (
-            info.xadvance,
-            glyph_usable(info),
-            g.size,
-            g.antialiasing,
-            g.hinting,
-        )
-    };
-    if is_whitespace(codepoint) || usable {
-        return advance;
-    }
+/// Advance width of `codepoint` when the primary font does not cover it: walk
+/// the fallback fonts, then the installed system fallbacks, mirroring
+/// `get_group_glyph`'s selection. `primary_advance` is the primary font's own
+/// advance, used as the last-resort width when nothing covers the codepoint.
+fn group_advance_fallback(
+    fonts: &[FontRef],
+    codepoint: u32,
+    primary_advance: f32,
+    size: f32,
+    aa: Antialiasing,
+    hinting: Hinting,
+) -> f32 {
     for font in &fonts[1..] {
         let mut g = font.lock();
         let info = g.get_glyph(codepoint);
@@ -719,7 +767,7 @@ fn get_group_advance(fonts: &[FontRef], codepoint: u32) -> f32 {
         Some((glyph, _)) => glyph.xadvance,
         None => {
             fallback::note_uncovered(codepoint);
-            advance
+            primary_advance
         }
     }
 }
@@ -730,11 +778,14 @@ pub(crate) fn group_text_width(fonts: &[FontRef], text: &str, tab_offset: f32) -
     let Some(first) = fonts.first() else {
         return 0.0;
     };
-    let (space_advance, tab_size) = {
-        let f = first.lock();
-        (f.space_advance, f.tab_size)
-    };
-    let tab_w = space_advance * tab_size as f32;
+    // Hold one lock on the primary font for the whole measurement run: it
+    // covers the common case (printable code), so every covered glyph resolves
+    // and bumps its LRU tick under this single guard instead of re-locking per
+    // character. Only an uncovered codepoint drops to the fallback fonts, which
+    // take their own locks.
+    let mut primary = first.lock();
+    let space_advance = primary.space_advance;
+    let tab_w = space_advance * primary.tab_size as f32;
     let mut w = 0.0f32;
     for ch in text.chars() {
         let cp = ch as u32;
@@ -747,7 +798,14 @@ pub(crate) fn group_text_width(fonts: &[FontRef], text: &str, tab_offset: f32) -
             w += space_advance;
             continue;
         }
-        let adv = get_group_advance(fonts, cp);
+        let info = primary.get_glyph(cp);
+        let adv = if glyph_usable(info) {
+            info.xadvance
+        } else {
+            let primary_advance = info.xadvance;
+            let (size, aa, hinting) = (primary.size, primary.antialiasing, primary.hinting);
+            group_advance_fallback(fonts, cp, primary_advance, size, aa, hinting)
+        };
         w += if adv > 0.0 { adv } else { space_advance };
     }
     w

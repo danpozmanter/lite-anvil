@@ -22,6 +22,10 @@ impl Cell {
 /// Default scrollback line limit.
 pub const DEFAULT_SCROLLBACK: usize = 2000;
 
+/// Maximum CSI parameters parsed into the stack buffer; extras are ignored, as
+/// real terminals (xterm) bound their parameter list rather than grow unboundedly.
+const MAX_CSI_PARAMS: usize = 32;
+
 pub struct TerminalBufferInner {
     cols: usize,
     rows: usize,
@@ -510,12 +514,28 @@ impl TerminalBufferInner {
         [c, c, c, 0xff]
     }
 
+    /// Parse a `;`-separated CSI parameter body into `out`, returning the count.
+    /// Caps at `out.len()`; when `skip_empty` is set, empty fields are dropped
+    /// instead of parsed as 0 (the query path treats a missing parameter as absent).
+    fn parse_csi_params(body: &str, out: &mut [i64], skip_empty: bool) -> usize {
+        let mut count = 0;
+        for item in body.split(';') {
+            if skip_empty && item.is_empty() {
+                continue;
+            }
+            if count >= out.len() {
+                break;
+            }
+            out[count] = item.parse::<i64>().unwrap_or(0);
+            count += 1;
+        }
+        count
+    }
+
     fn apply_sgr(&mut self, params: &[i64]) {
-        let params = if params.is_empty() {
-            vec![0]
-        } else {
-            params.to_vec()
-        };
+        // An empty SGR (ESC[m) is the reset form ESC[0m.
+        let reset = [0i64];
+        let params: &[i64] = if params.is_empty() { &reset } else { params };
         let mut i = 0usize;
         while i < params.len() {
             let code = params[i];
@@ -572,10 +592,9 @@ impl TerminalBufferInner {
             _ => '\0',
         };
         let param_body = if prefix == '\0' { body } else { &body[1..] };
-        let params = param_body
-            .split(';')
-            .map(|item| item.parse::<i64>().unwrap_or(0))
-            .collect::<Vec<_>>();
+        let mut params_buf = [0i64; MAX_CSI_PARAMS];
+        let count = Self::parse_csi_params(param_body, &mut params_buf, false);
+        let params = &params_buf[..count];
         let p1 = *params.first().unwrap_or(&0);
         let p2 = *params.get(1).unwrap_or(&0);
 
@@ -661,7 +680,7 @@ impl TerminalBufferInner {
                     }
                 }
             }
-            'm' => self.apply_sgr(&params),
+            'm' => self.apply_sgr(params),
             _ => {}
         }
     }
@@ -683,11 +702,9 @@ impl TerminalBufferInner {
             _ => '\0',
         };
         let param_body = if prefix == '\0' { body } else { &body[1..] };
-        let params = param_body
-            .split(';')
-            .filter(|item| !item.is_empty())
-            .map(|item| item.parse::<i64>().unwrap_or(0))
-            .collect::<Vec<_>>();
+        let mut params_buf = [0i64; MAX_CSI_PARAMS];
+        let count = Self::parse_csi_params(param_body, &mut params_buf, true);
+        let params = &params_buf[..count];
         match (prefix, final_char) {
             ('\0', 'n') if params.first().copied().unwrap_or(0) == 6 => {
                 Some(format!("\x1b[{};{}R", self.cursor_row, self.cursor_col))
@@ -819,11 +836,15 @@ impl TerminalBufferInner {
                 EscapeState::Csi => {
                     self.escape_buffer.push(b as char);
                     if (b'@'..=b'~').contains(&b) {
-                        let sequence = self.escape_buffer.clone();
+                        // Move the buffer out so the CSI handlers can borrow `self`
+                        // mutably without aliasing it; restoring it afterward reuses
+                        // the allocation for the next sequence.
+                        let sequence = std::mem::take(&mut self.escape_buffer);
                         if let Some(reply) = self.execute_csi_query(&sequence) {
                             replies.extend_from_slice(reply.as_bytes());
                         }
                         self.execute_csi(&sequence);
+                        self.escape_buffer = sequence;
                         self.escape_buffer.clear();
                         self.escape_state = EscapeState::None;
                     }

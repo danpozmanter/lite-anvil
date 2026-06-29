@@ -324,19 +324,21 @@ impl FontInner {
     /// Drop the least-recently-used glyph, preferring non-ASCII so the
     /// printable-ASCII working set stays resident as a floor.
     fn evict_lru(&mut self) {
-        let victim = self
-            .glyphs
-            .iter()
-            .filter(|&(&cp, _)| !(32..=126).contains(&cp))
-            .min_by_key(|(_, c)| c.last_used)
-            .map(|(&cp, _)| cp);
-        let victim = victim.or_else(|| {
-            self.glyphs
-                .iter()
-                .min_by_key(|(_, c)| c.last_used)
-                .map(|(&cp, _)| cp)
-        });
-        if let Some(cp) = victim {
+        // Single pass tracks two candidates: the lowest-tick non-pinned entry
+        // (the preferred victim) and the lowest-tick entry overall (the
+        // fallback when every entry is pinned ASCII).
+        let mut best_unpinned: Option<(u32, u64)> = None;
+        let mut best_any: Option<(u32, u64)> = None;
+        for (&cp, c) in &self.glyphs {
+            let tick = c.last_used;
+            if best_any.is_none_or(|(_, t)| tick < t) {
+                best_any = Some((cp, tick));
+            }
+            if !(32..=126).contains(&cp) && best_unpinned.is_none_or(|(_, t)| tick < t) {
+                best_unpinned = Some((cp, tick));
+            }
+        }
+        if let Some((cp, _)) = best_unpinned.or(best_any) {
             self.glyphs.remove(&cp);
         }
     }
@@ -416,12 +418,16 @@ unsafe fn copy_glyph_bitmap(slot: FT_GlyphSlot) -> Option<GlyphBitmap> {
         let row_bytes = width; // bytes per row (3*pixel_width for LCD)
         let total = bm.rows as usize * bm.pitch.unsigned_abs() as usize;
         let mut data = Vec::with_capacity(total);
+        // FreeType defines `pitch` as the signed offset to add to step down one
+        // row: positive for a down-flow bitmap, negative for an up-flow one
+        // (where `buffer` points at the top row, which is the highest address).
+        // Signed `.offset()` therefore walks rows top-to-bottom for either sign;
+        // the old `(row * pitch) as usize` + `.add()` overflowed to a wild
+        // pointer whenever pitch was negative.
+        let pitch = bm.pitch as isize;
         for row in 0..bm.rows as isize {
-            let offset = (row * bm.pitch as isize) as usize;
-            data.extend_from_slice(std::slice::from_raw_parts(
-                bm.buffer.add(offset),
-                row_bytes as usize,
-            ));
+            let row_ptr = bm.buffer.offset(row * pitch);
+            data.extend_from_slice(std::slice::from_raw_parts(row_ptr, row_bytes as usize));
         }
         Some(GlyphBitmap {
             data,

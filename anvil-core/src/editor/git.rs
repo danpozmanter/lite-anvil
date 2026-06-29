@@ -48,6 +48,40 @@ static STATUS_CACHE: LazyLock<Mutex<StatusCache>> = LazyLock::new(|| {
     })
 });
 
+// ── Path-root cache ──────────────────────────────────────────────────────────
+
+struct PathRootCache {
+    map: HashMap<String, Option<String>>,
+    order: VecDeque<String>,
+}
+
+impl PathRootCache {
+    const MAX: usize = 2_000;
+
+    fn get(&self, key: &str) -> Option<&Option<String>> {
+        self.map.get(key)
+    }
+
+    fn insert(&mut self, key: String, root: Option<String>) {
+        if !self.map.contains_key(&key) {
+            self.order.push_back(key.clone());
+            if self.order.len() > Self::MAX {
+                if let Some(evicted) = self.order.pop_front() {
+                    self.map.remove(&evicted);
+                }
+            }
+        }
+        self.map.insert(key, root);
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+        self.map.shrink_to_fit();
+        self.order.shrink_to_fit();
+    }
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /// A single file entry from `git status --porcelain`.
@@ -117,8 +151,12 @@ pub struct CommandResult {
 
 pub static REPOS: LazyLock<Mutex<HashMap<String, RepoState>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static PATH_ROOTS: LazyLock<Mutex<HashMap<String, Option<String>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static PATH_ROOTS: LazyLock<Mutex<PathRootCache>> = LazyLock::new(|| {
+    Mutex::new(PathRootCache {
+        map: HashMap::new(),
+        order: VecDeque::new(),
+    })
+});
 pub static PENDING: LazyLock<Mutex<VecDeque<(String, RefreshOutcome)>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
 pub static COMMANDS: LazyLock<Mutex<HashMap<u64, Option<CommandResult>>>> =

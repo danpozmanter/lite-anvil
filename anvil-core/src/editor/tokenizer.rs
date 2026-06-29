@@ -41,12 +41,15 @@ struct LineIndex {
     /// `char_to_byte[k]` = byte offset of the k-th character (0-based).
     /// Final entry equals `line.len()` so the helper can read one past
     /// the last character without a bounds check. Empty when `is_ascii`.
-    char_to_byte: Vec<usize>,
+    /// Offsets are stored as `u32`: a single line never exceeds 4 GiB,
+    /// which halves the table size on non-ASCII lines versus `usize`.
+    char_to_byte: Vec<u32>,
     /// `byte_to_char[b]` = char index whose byte range contains byte `b`.
     /// Length = `line.len() + 1`. Bytes inside a multi-byte sequence map
     /// to the index of the lead char. `byte_to_char[line.len()]` is the
-    /// total char count. Empty when `is_ascii`.
-    byte_to_char: Vec<usize>,
+    /// total char count. Empty when `is_ascii`. Stored as `u32` for the
+    /// same per-line size bound as `char_to_byte`.
+    byte_to_char: Vec<u32>,
 }
 
 impl LineIndex {
@@ -81,20 +84,20 @@ pub fn prime_utf8_line_index(line: &str) {
         let mut prev_byte = 0usize;
         let mut char_count = 0usize;
         for (char_idx, (byte_off, _)) in line.char_indices().enumerate() {
-            idx.char_to_byte.push(byte_off);
+            idx.char_to_byte.push(byte_off as u32);
             // Fill the bytes belonging to the *previous* char (mid-sequence
             // bytes for multi-byte UTF-8) with that char's index.
             for b in prev_byte..byte_off {
-                idx.byte_to_char[b] = char_idx.saturating_sub(1);
+                idx.byte_to_char[b] = char_idx.saturating_sub(1) as u32;
             }
             prev_byte = byte_off;
             char_count = char_idx + 1;
         }
-        idx.char_to_byte.push(line.len());
+        idx.char_to_byte.push(line.len() as u32);
         for b in prev_byte..line.len() {
-            idx.byte_to_char[b] = char_count.saturating_sub(1);
+            idx.byte_to_char[b] = char_count.saturating_sub(1) as u32;
         }
-        idx.byte_to_char[line.len()] = char_count;
+        idx.byte_to_char[line.len()] = char_count as u32;
     });
 }
 
@@ -145,8 +148,8 @@ pub fn usub(text: &str, start: usize, end: usize) -> &str {
         let max_char = idx.char_to_byte.len().saturating_sub(1);
         let s_idx = (start - 1).min(max_char);
         let e_idx = end.min(max_char);
-        let s_byte = idx.char_to_byte[s_idx];
-        let e_byte = idx.char_to_byte[e_idx];
+        let s_byte = idx.char_to_byte[s_idx] as usize;
+        let e_byte = idx.char_to_byte[e_idx] as usize;
         if s_byte >= e_byte {
             return "";
         }
@@ -188,7 +191,7 @@ pub fn prefix_ulen(text: &str, byte_count: usize) -> usize {
         if idx.is_ascii {
             clamped
         } else {
-            idx.byte_to_char[clamped]
+            idx.byte_to_char[clamped] as usize
         }
     }) {
         return n;
@@ -219,7 +222,7 @@ pub fn ucharpos(text: &str, char_idx: usize) -> Option<usize> {
         if char_idx > max_char {
             return None;
         }
-        Some(idx.char_to_byte[char_idx - 1] + 1)
+        Some(idx.char_to_byte[char_idx - 1] as usize + 1)
     }) {
         return r;
     }
@@ -564,7 +567,18 @@ fn analyze_char_class(bytes: &[u8], start: usize) -> Option<FirstByteSet> {
 #[derive(Clone)]
 pub enum MatcherKind {
     LuaPattern { code: String },
-    Regex { compiled: Arc<Regex> },
+    Regex {
+        compiled: Arc<Regex>,
+        /// `\G(?:...)`-anchored variant of the same pattern. PCRE2 treats a
+        /// leading `\G` as true anchoring to the match start offset, so an
+        /// open-matcher probe at a position that does not match returns in
+        /// O(pattern) instead of scanning forward to the next match and
+        /// discarding it. That collapses the per-line tokenize cost from
+        /// O(line_len^2) to O(line_len) on long/minified lines. `None` when
+        /// the anchored form failed to compile; the caller then falls back
+        /// to the non-anchored regex plus a start-offset equality check.
+        anchored: Option<Arc<Regex>>,
+    },
 }
 
 /// A single pattern matcher with its anchor state.
@@ -810,9 +824,19 @@ pub fn make_matcher(kind_name: &str, code: String) -> Result<MatcherDef, RegexEr
     // anyway, so the set is irrelevant there.
     let first_byte_set = analyze_first_byte_set(&regex_code);
     let kind = match compile_regex(&regex_code) {
-        Ok(compiled) => MatcherKind::Regex {
-            compiled: Arc::new(compiled),
-        },
+        Ok(compiled) => {
+            // Wrap in a non-capturing group so the `\G` anchor applies to the
+            // whole pattern (not just the first alternative of a top-level
+            // `a|b`). `(?:...)` and `\G` are both group-neutral, so capture
+            // numbering matches the non-anchored variant exactly.
+            let anchored = compile_regex(&format!("\\G(?:{regex_code})"))
+                .ok()
+                .map(Arc::new);
+            MatcherKind::Regex {
+                compiled: Arc::new(compiled),
+                anchored,
+            }
+        }
         Err(_) => {
             // Fall back to storing as LuaPattern if regex compilation fails.
             MatcherKind::LuaPattern { code: regex_code }
@@ -832,25 +856,46 @@ pub fn regex_find(
     next: usize,
     anchored: bool,
 ) -> Result<Vec<usize>, RegexError> {
-    let MatcherKind::Regex { compiled, .. } = &matcher.kind else {
+    let MatcherKind::Regex {
+        compiled,
+        anchored: anchored_variant,
+    } = &matcher.kind
+    else {
         return Ok(Vec::new());
     };
 
     let start_byte = ucharpos(text, next)
         .unwrap_or(text.len() + 1)
         .saturating_sub(1);
-    let mut locs = compiled.capture_locations();
-    match compiled.captures_read_at(&mut locs, text.as_bytes(), start_byte) {
+    // Use the `\G`-anchored regex when an anchored match is wanted: PCRE2 then
+    // tries only at `start_byte` and returns immediately on a non-match instead
+    // of scanning the rest of the line and having us discard it below.
+    let use_anchored = anchored && anchored_variant.is_some();
+    let re: &Regex = if use_anchored {
+        anchored_variant.as_ref().unwrap()
+    } else {
+        compiled
+    };
+    let mut locs = re.capture_locations();
+    match re.captures_read_at(&mut locs, text.as_bytes(), start_byte) {
         Ok(Some(_)) => {
             let Some((s, e)) = locs.get(0) else {
                 return Ok(Vec::new());
             };
-            if anchored && s != start_byte {
+            // The anchored regex guarantees `s == start_byte`; only the
+            // non-anchored fallback needs the explicit start-offset discard.
+            if anchored && !use_anchored && s != start_byte {
                 return Ok(Vec::new());
             }
 
-            let mut res = vec![s + 1, e];
-            for i in 1..=compiled.captures_len() {
+            // group0 (start + end) plus at most one position per remaining
+            // capture group; pre-size so the per-match push never reallocates
+            // on this hot per-pattern-per-column path.
+            let captures_len = compiled.captures_len();
+            let mut res = Vec::with_capacity(2 + captures_len);
+            res.push(s + 1);
+            res.push(e);
+            for i in 1..=captures_len {
                 if let Some((cs, ce)) = locs.get(i) {
                     if cs == ce {
                         res.push(cs + 1);
@@ -966,7 +1011,7 @@ struct SyntaxStateView<'a> {
     current_level: usize,
 }
 
-fn retrieve_syntax_state<'a>(base: &'a CompiledSyntax, state: &[u8]) -> SyntaxStateView<'a> {
+fn retrieve_syntax_state<'a>(base: &'a CompiledSyntax, state: &[u16]) -> SyntaxStateView<'a> {
     let mut current_syntax: &'a CompiledSyntax = base;
     let mut subsyntax_info: Option<(&'a CompiledSyntax, usize)> = None;
     let mut current_pattern_idx = state.first().copied().unwrap_or(0) as usize;
@@ -1009,12 +1054,38 @@ fn retrieve_syntax_state<'a>(base: &'a CompiledSyntax, state: &[u8]) -> SyntaxSt
     }
 }
 
+/// Decode the externally threaded `Vec<u8>` end-state into the internal
+/// per-level `u16` stack. Each level occupies two little-endian bytes, so a
+/// 1-based pattern index survives grammars with more than 255 patterns. A
+/// trailing odd byte (which the encoder never produces) is read as a low
+/// byte with a zero high byte.
+fn decode_state(bytes: &[u8]) -> Vec<u16> {
+    bytes
+        .chunks(2)
+        .map(|pair| u16::from(pair[0]) | (u16::from(pair.get(1).copied().unwrap_or(0)) << 8))
+        .collect()
+}
+
+/// Encode the internal per-level `u16` stack into the externally threaded
+/// `Vec<u8>` representation: two little-endian bytes per level. This keeps
+/// the cross-module `Vec<u8>` interface (`TokenCache::line_end_states`)
+/// stable while giving 16-bit pattern indices internally.
+fn encode_state(state: &[u16]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(state.len() * 2);
+    for &level in state {
+        out.push((level & 0xFF) as u8);
+        out.push((level >> 8) as u8);
+    }
+    out
+}
+
 /// Tokenize one line carrying multi-line state across calls. `in_state`
-/// is a byte stack: each level holds a 1-based pattern index, descending
-/// into sub-syntaxes as Pair patterns with `syntax_ref` are opened.
-/// Empty (or a single `0`) means "no carry-over". Callers thread the
-/// returned state into the next line so block comments, multi-line
-/// strings, and other paired constructs span line boundaries.
+/// is a byte stack: each level holds a 1-based pattern index encoded as two
+/// little-endian bytes, descending into sub-syntaxes as Pair patterns with
+/// `syntax_ref` are opened. Empty (or a single zero level) means "no
+/// carry-over". Callers thread the returned state into the next line so
+/// block comments, multi-line strings, and other paired constructs span
+/// line boundaries.
 pub fn tokenize_line_with_state(
     syntax: &CompiledSyntax,
     line: &str,
@@ -1027,7 +1098,7 @@ pub fn tokenize_line_with_state(
     let mut tokens = Vec::new();
     let line_len = char_len(line);
 
-    let mut state: Vec<u8> = in_state.to_vec();
+    let mut state: Vec<u16> = decode_state(in_state);
     if state.is_empty() {
         state.push(0);
     }
@@ -1176,9 +1247,9 @@ pub fn tokenize_line_with_state(
             if matches!(pattern.matcher, PatternMatcher::Pair { .. }) {
                 let level_idx = syn_state.current_level.saturating_sub(1);
                 if level_idx >= state.len() {
-                    state.push((n + 1) as u8);
+                    state.push((n + 1) as u16);
                 } else {
-                    state[level_idx] = (n + 1) as u8;
+                    state[level_idx] = (n + 1) as u16;
                 }
                 if let Some(SyntaxRef::Inline(sub)) = &pattern.syntax_ref {
                     syn_state.current_level += 1;
@@ -1204,14 +1275,15 @@ pub fn tokenize_line_with_state(
     (tokens, finalize_state(state))
 }
 
-/// Strip trailing zero levels (no carry-over) and return an empty vec
-/// when the entire stack is zero. Callers treat an empty state as
-/// "fresh".
-fn finalize_state(mut state: Vec<u8>) -> Vec<u8> {
+/// Strip trailing zero levels (no carry-over) and encode the surviving
+/// `u16` stack into the externally threaded `Vec<u8>` (two little-endian
+/// bytes per level). Returns an empty vec when the entire stack is zero;
+/// callers treat an empty state as "fresh".
+fn finalize_state(mut state: Vec<u16>) -> Vec<u8> {
     while state.last() == Some(&0) {
         state.pop();
     }
-    state
+    encode_state(&state)
 }
 
 /// Compile a `SyntaxDefinition` (from `native::syntax`) into a `CompiledSyntax`.
@@ -1448,6 +1520,20 @@ mod tests {
         assert!(!results.is_empty());
         assert_eq!(results[0], 5); // '1' is at char position 5
         assert_eq!(results[1], 7); // '3' is at char position 7
+    }
+
+    #[test]
+    fn state_codec_round_trips_index_above_u8() {
+        // A grammar with more than 255 patterns yields level indices that
+        // overflow a single byte; the two-byte little-endian threading must
+        // survive the external `Vec<u8>` interface without truncation.
+        let levels: Vec<u16> = vec![1, 255, 256, 300, 1000, 65535, 0, 42];
+        let encoded = encode_state(&levels);
+        assert_eq!(encoded.len(), levels.len() * 2);
+        assert_eq!(decode_state(&encoded), levels);
+
+        // A bare value above 255 must round-trip as itself, not its low byte.
+        assert_eq!(decode_state(&encode_state(&[300])), vec![300u16]);
     }
 
     #[test]
@@ -1712,7 +1798,7 @@ mod tests {
             return;
         };
         *checked += 1;
-        let MatcherKind::Regex { compiled } = &md.kind else {
+        let MatcherKind::Regex { compiled, .. } = &md.kind else {
             return;
         };
         for b in 1u8..=126 {

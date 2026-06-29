@@ -6,6 +6,17 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 #[cfg(windows)]
 use crossbeam_channel::{Receiver, Sender};
 
+/// Bytes drained from a child pipe per read; also the upper bound on one buffered chunk.
+#[cfg(windows)]
+const READER_CHUNK: usize = 4096;
+
+/// Buffered reader chunks before the reader thread blocks on `send`, capping the
+/// backlog near 8 MiB. A Windows pipe has no flow control, so this bound is what
+/// restores backpressure: once it fills, the reader stalls its pipe read and
+/// throttles a flooding child, mirroring Unix PTY semantics.
+#[cfg(windows)]
+const READER_BACKLOG: usize = (8 * 1024 * 1024) / READER_CHUNK;
+
 /// Terminal process inner state for Windows, using piped stdin/stdout.
 #[cfg(windows)]
 pub struct TerminalInner {
@@ -165,7 +176,8 @@ pub fn spawn_terminal(opts: &TerminalSpawnOptions) -> Result<TerminalInner, Stri
         .take()
         .ok_or_else(|| "failed to capture child stderr".to_string())?;
 
-    let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = crossbeam_channel::unbounded();
+    let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) =
+        crossbeam_channel::bounded(READER_BACKLOG);
 
     let stdout_tx = tx.clone();
     let stdout_handle = std::thread::Builder::new()
@@ -193,7 +205,7 @@ pub fn spawn_terminal(opts: &TerminalSpawnOptions) -> Result<TerminalInner, Stri
 /// Blocking read loop that sends chunks through a channel until EOF.
 #[cfg(windows)]
 fn reader_thread(mut stream: impl Read + Send + 'static, tx: Sender<Vec<u8>>) {
-    let mut buf = [0u8; 4096];
+    let mut buf = [0u8; READER_CHUNK];
     loop {
         match stream.read(&mut buf) {
             Ok(0) => break,

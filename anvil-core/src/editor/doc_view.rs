@@ -1106,6 +1106,12 @@ pub(crate) fn click_to_doc_pos(
     (click_line, click_col)
 }
 
+/// Token-cache line-count cap and the viewport margin kept when evicting. Once
+/// the cache exceeds the cap, lines outside the viewport plus this margin are
+/// dropped so a long scrolling session cannot retain the whole file's tokens.
+const TOKEN_CACHE_MAX_LINES: usize = 6000;
+const TOKEN_CACHE_MARGIN: usize = 1000;
+
 /// Build render lines from buffer for the visible range, with syntax highlighting.
 #[cfg(feature = "sdl")]
 #[allow(clippy::too_many_arguments)]
@@ -1140,16 +1146,30 @@ pub(crate) fn build_render_lines(
             .iter()
             .flat_map(|&(fs, fe)| fs + 1..=fe)
             .collect();
-        // Bulk-invalidate the per-line tokenize cache if the buffer has
-        // changed since we last populated it. This keeps the happy-path
-        // (pure scrolling) effectively free while still picking up real
-        // edits on the next frame.
+        // Invalidate the per-line tokenize cache from the lowest changed line
+        // downward when the buffer has changed since we last populated it.
+        // Lines above that watermark keep valid content, line-number keys, and
+        // carry-over state, so a keystroke deep in a large file no longer
+        // re-tokenizes from line 1. A line-count change shifts every lower key,
+        // so fall back to a full clear. Pure scrolling (no change_id change)
+        // stays free.
         if let Some(cache_cell) = token_cache {
             let mut cache = cache_cell.borrow_mut();
             if cache.change_id != b.change_id {
-                cache.lines.clear();
-                cache.line_end_states.clear();
+                let mut from = b.min_dirty_line.get();
+                if from == usize::MAX || cache.line_count != b.lines.len() {
+                    from = 1;
+                }
+                if from <= 1 {
+                    cache.lines.clear();
+                    cache.line_end_states.clear();
+                } else {
+                    cache.lines.retain(|&k, _| k < from);
+                    cache.line_end_states.retain(|&k, _| k < from);
+                }
                 cache.change_id = b.change_id;
+                cache.line_count = b.lines.len();
+                b.min_dirty_line.set(usize::MAX);
             }
         }
         // Walk every line from 1 up to `first` to compute the multi-line
@@ -1412,6 +1432,18 @@ pub(crate) fn build_render_lines(
                 });
             }
             i += 1;
+        }
+        // Bound the per-line token cache to the viewport plus a margin so
+        // scrolling through a large file does not retain tokens for every line
+        // ever shown. The tiny end-state map is left intact so incremental
+        // re-tokenization above the viewport stays cheap.
+        if let Some(cache_cell) = token_cache {
+            let mut cache = cache_cell.borrow_mut();
+            if cache.lines.len() > TOKEN_CACHE_MAX_LINES {
+                let lo = first.saturating_sub(TOKEN_CACHE_MARGIN);
+                let hi = last + TOKEN_CACHE_MARGIN;
+                cache.lines.retain(|&k, _| k >= lo && k <= hi);
+            }
         }
         Ok(render)
     })

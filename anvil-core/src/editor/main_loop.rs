@@ -91,6 +91,12 @@ struct SidebarEntry {
 /// Width of the sidebar in logical pixels.
 const DEFAULT_SIDEBAR_W: f64 = 200.0;
 const MIN_SIDEBAR_W: f64 = 100.0;
+/// Editor's share of the editor|markdown-preview split, as a fraction of the
+/// shared content area. Stored as a fraction (not pixels) so the split tracks
+/// the window width across resizes; persisted per app via the `session` store.
+const DEFAULT_PREVIEW_SPLIT: f64 = 0.5;
+const MIN_PREVIEW_SPLIT: f64 = 0.2;
+const MAX_PREVIEW_SPLIT: f64 = 0.8;
 /// Collapse redundant `.` segments in a path string. Preserves a single
 /// leading `./` for relative paths and leaves absolute paths intact.
 /// Does not touch `..` segments (we don't want to silently traverse symlinks).
@@ -936,6 +942,16 @@ pub fn run(
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(DEFAULT_SIDEBAR_W);
     let mut sidebar_dragging = false;
+    // Editor|markdown-preview split fraction, persisted per app. Loaded the
+    // same way the sidebar width is, then clamped so neither pane collapses.
+    let mut preview_split: f64 =
+        crate::editor::storage::load_text(userdir_path, "session", "preview_split")
+            .ok()
+            .flatten()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .unwrap_or(DEFAULT_PREVIEW_SPLIT)
+            .clamp(MIN_PREVIEW_SPLIT, MAX_PREVIEW_SPLIT);
+    let mut preview_dragging = false;
     // Held while the mouse is pressed on the editor's vertical
     // scrollbar; lets drag-scrolling track the cursor until release.
     // The drag offset is the pixel gap between the top of the thumb and
@@ -1087,6 +1103,13 @@ pub fn run(
     let mut quit = false;
     let mut window_title = String::new();
     let frame_interval = 1.0 / fps;
+    // When the UI is idle - nothing drawn recently, no terminal panel open, no
+    // background job running - the loop blocks this long between timer-driven
+    // wakeups instead of spinning at the frame interval. Input and pushed
+    // wake-up events still return from the blocked wait immediately, so this
+    // lowers idle CPU/battery without affecting responsiveness.
+    let idle_wait = 0.5_f64;
+    let mut last_draw = Instant::now();
     // Deferred render-line cache: written at the top of the next frame to
     // avoid borrow-checker conflicts with the immutable doc borrow during
     // rendering. Includes the tab index so we write to the correct doc even
@@ -4262,6 +4285,7 @@ pub fn run(
                                                 // its current value so the render cache
                                                 // doesn't hit on the stale lines.
                                                 b.change_id = b.change_id.wrapping_add(1).max(1);
+                                                b.min_dirty_line.set(1);
                                             }
                                             Ok(())
                                         });
@@ -6087,6 +6111,23 @@ pub fn run(
                         continue;
                     }
 
+                    // Markdown preview resize drag: click near the editor|preview
+                    // divider (the left edge of the preview pane).
+                    if *button == MouseButton::Left
+                        && docs
+                            .get(active_tab)
+                            .map(|d| {
+                                d.preview.enabled
+                                    && d.preview.rect.w > 0.0
+                                    && (*x - d.preview.rect.x).abs() < 5.0
+                            })
+                            .unwrap_or(false)
+                    {
+                        preview_dragging = true;
+                        redraw = true;
+                        continue;
+                    }
+
                     // When the inline new-file input is active, route left clicks:
                     // clicking into the editor commits the new file; clicking
                     // anywhere in the sidebar cancels it.
@@ -6763,6 +6804,7 @@ pub fn run(
                                                             &ch.to_string(),
                                                         );
                                                         b.change_id += 1;
+                                                        b.min_dirty_line.set(1);
                                                     }
                                                 }
                                                 Ok(())
@@ -7331,6 +7373,18 @@ pub fn run(
                         let max_sidebar = (ww as f64 * 0.9).max(MIN_SIDEBAR_W);
                         sidebar_width = x.clamp(MIN_SIDEBAR_W, max_sidebar);
                         redraw = true;
+                    } else if preview_dragging {
+                        // Recover the shared content area from the editor (left)
+                        // and preview (right) rects so the split is expressed as
+                        // a window-relative fraction that survives resizes.
+                        if let Some(doc) = docs.get(active_tab) {
+                            let content_x = doc.view.rect().x;
+                            let content_right = doc.preview.rect.x + doc.preview.rect.w;
+                            let content_w = (content_right - content_x).max(1.0);
+                            preview_split = ((*x - content_x) / content_w)
+                                .clamp(MIN_PREVIEW_SPLIT, MAX_PREVIEW_SPLIT);
+                        }
+                        redraw = true;
                     } else if editor_mouse_down {
                         // Drag selection: update cursor position while keeping anchor.
                         if let Some(doc) = docs.get_mut(active_tab) {
@@ -7374,14 +7428,24 @@ pub fn run(
                                     })
                             })
                             .unwrap_or(false);
+                    let hover_preview_divider = docs
+                        .get(active_tab)
+                        .map(|d| {
+                            d.preview.enabled
+                                && d.preview.rect.w > 0.0
+                                && (*x - d.preview.rect.x).abs() < 5.0
+                        })
+                        .unwrap_or(false);
                     if hover_link {
                         crate::window::set_cursor("hand");
-                    } else if subsystems.has_sidebar()
+                    } else if (subsystems.has_sidebar()
                         && sidebar_visible
-                        && (*x - sidebar_w).abs() < 5.0
+                        && (*x - sidebar_w).abs() < 5.0)
+                        || hover_preview_divider
+                        || preview_dragging
                     {
                         crate::window::set_cursor("sizeh");
-                    } else if !sidebar_dragging && !editor_mouse_down {
+                    } else if !sidebar_dragging && !editor_mouse_down && !preview_dragging {
                         crate::window::set_cursor("arrow");
                     } else if editor_mouse_down {
                         crate::window::set_cursor("ibeam");
@@ -7476,6 +7540,15 @@ pub fn run(
                             "session",
                             "sidebar_width",
                             &sidebar_width.to_string(),
+                        );
+                    }
+                    if preview_dragging {
+                        preview_dragging = false;
+                        let _ = crate::editor::storage::save_text(
+                            userdir_path,
+                            "session",
+                            "preview_split",
+                            &preview_split.to_string(),
                         );
                     }
                     editor_mouse_down = false;
@@ -7719,7 +7792,7 @@ pub fn run(
                         }
                     }
                 }
-                if let Ok(poll) = lsp::poll_transport(tid, 50) {
+                if let Ok(poll) = lsp::poll_transport(tid) {
                     for msg in &poll.messages {
                         // Handle initialize response.
                         if let Some(id) = msg.get("id").and_then(|v| v.as_i64()) {
@@ -8232,7 +8305,15 @@ pub fn run(
                                                 .collect()
                                         })
                                         .unwrap_or_default();
-                                    lsp_state.diagnostics.insert(path, diags);
+                                    // A cleared-diagnostics publish (empty list)
+                                    // drops the entry instead of leaving an empty
+                                    // vec behind, so the map does not grow with
+                                    // every file the server has ever reported on.
+                                    if diags.is_empty() {
+                                        lsp_state.diagnostics.remove(&path);
+                                    } else {
+                                        lsp_state.diagnostics.insert(path, diags);
+                                    }
                                     redraw = true;
                                 }
                             }
@@ -8377,12 +8458,24 @@ pub fn run(
                 inst.inner.poll();
                 if !inst.inner.running {
                     dead_indices.push(i);
-                } else if let Some(data) = inst.inner.read(4096)
-                    && !data.is_empty()
-                {
-                    inst.tbuf.process_output(&data);
-                    if terminal.visible {
-                        redraw = true;
+                } else {
+                    // Drain the pty up to a per-frame byte budget so a burst
+                    // (a build, `cat bigfile`) shows up in one frame instead of
+                    // trickling at 4 KiB/frame, while still yielding to the UI
+                    // within the budget. The pty back-pressures the child once
+                    // its kernel buffer fills, so nothing is lost.
+                    let mut remaining: usize = 256 * 1024;
+                    while remaining > 0 {
+                        match inst.inner.read(remaining.min(64 * 1024)) {
+                            Some(data) if !data.is_empty() => {
+                                remaining = remaining.saturating_sub(data.len());
+                                inst.tbuf.process_output(&data);
+                                if terminal.visible {
+                                    redraw = true;
+                                }
+                            }
+                            _ => break,
+                        }
                     }
                 }
             }
@@ -8494,6 +8587,7 @@ pub fn run(
                                 if buffer::load_file(&mut fresh, &doc.path).is_ok() {
                                     b.lines = fresh.lines;
                                     b.change_id += 1;
+                                    b.min_dirty_line.set(1);
                                 }
                                 Ok(())
                             });
@@ -8565,16 +8659,17 @@ pub fn run(
             }
             if let Some(doc) = docs.get_mut(active_tab) {
                 if doc.preview.enabled {
-                    // Split the content area into a 50/50 editor | preview
-                    // pane. The editor keeps float rects (its existing
-                    // wrap/click math has always tolerated them); the
-                    // preview rect is snapped to integer pixels so the
-                    // background fill and clip rect enclose every logical
-                    // pixel. Without snapping, `draw_rect`'s i32 cast
-                    // truncates the bottom of the fill, leaving a stale
-                    // pixel row that reads as a thin blue line from a
-                    // previously drawn heading rule.
-                    let half_w = (content_rect.w * 0.5).floor();
+                    // Split the content area into editor | preview panes at the
+                    // user-adjustable `preview_split` fraction (drag the divider
+                    // to resize; persisted per app). The editor keeps float
+                    // rects (its existing wrap/click math has always tolerated
+                    // them); the preview rect is snapped to integer pixels so
+                    // the background fill and clip rect enclose every logical
+                    // pixel. Without snapping, `draw_rect`'s i32 cast truncates
+                    // the bottom of the fill, leaving a stale pixel row that
+                    // reads as a thin blue line from a previously drawn heading
+                    // rule.
+                    let half_w = (content_rect.w * preview_split).floor();
                     let left = crate::editor::types::Rect {
                         x: content_rect.x,
                         y: content_rect.y,
@@ -8675,6 +8770,7 @@ pub fn run(
                             // Bump past the current value to invalidate every
                             // downstream cache.
                             b.change_id = b.change_id.wrapping_add(1).max(1);
+                            b.min_dirty_line.set(1);
                             Ok(())
                         });
                         // Force the render cache to rebuild next frame rather
@@ -11996,6 +12092,7 @@ pub fn run(
                 crate::renderer::native_end_frame();
 
                 redraw = false;
+                last_draw = Instant::now();
             }
         }
 
@@ -12003,8 +12100,19 @@ pub fn run(
             break;
         }
 
-        // Sleep until next event or frame interval.
-        crate::window::wait_event(Some(frame_interval));
+        // Block until the next event. While there is recent on-screen motion, a
+        // terminal panel open (its PTY is polled here), or a background job
+        // running, poll at the frame interval so output and animation stay
+        // smooth. Otherwise sleep longer: input and worker-pushed wake-up
+        // events return from the blocked wait immediately, so only idle CPU is
+        // affected, never responsiveness.
+        let busy = last_draw.elapsed().as_secs_f64() < 0.3
+            || terminal.visible
+            || load_job.is_some()
+            || replace_job.is_some()
+            || git_status_job.is_some();
+        let timeout = if busy { frame_interval } else { idle_wait };
+        crate::window::wait_event(Some(timeout));
     }
 
     // Persist recent files: add all currently open docs to recent_files.

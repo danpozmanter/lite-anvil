@@ -976,6 +976,7 @@ match cmd.as_str() {
             };
             b.selections = vec![final_line, final_col, final_line, final_col];
             b.change_id += 1;
+            b.min_dirty_line.set(1);
             Ok(())
         });
     }
@@ -992,6 +993,7 @@ match cmd.as_str() {
                     let _ = buffer::load_file(&mut fresh, &path);
                     b.lines = fresh.lines;
                     b.change_id = b.change_id.wrapping_add(1).max(1);
+                    b.min_dirty_line.set(1);
                     Ok(())
                 });
                 if let Ok((cid, sig)) = buffer::with_buffer(buf_id, |b| {
