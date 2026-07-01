@@ -31,7 +31,7 @@ pub(crate) fn with_cache<F: FnOnce(&mut RenCache)>(f: F) {
 #[allow(non_snake_case)]
 pub fn CACHE_DRAW_TEXT(
     fonts: std::sync::Arc<[FontRef]>,
-    text: Box<str>,
+    text: &str,
     x: f32,
     y: i32,
     color: RenColor,
@@ -70,10 +70,11 @@ pub fn native_end_frame() {
             return;
         }
         let commands = &cache.commands;
+        let arena = &cache.text_arena;
         crate::window::with_window_surface(|surface, window| {
             // SAFETY: surface is valid for this call; we're on the main thread.
             unsafe {
-                cache::render_dirty_rects(surface, commands, &dirty);
+                cache::render_dirty_rects(surface, commands, arena, &dirty);
             }
             let sdl_rects: Vec<SDL_Rect> = dirty
                 .iter()

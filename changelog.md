@@ -1,5 +1,46 @@
 # Change Log
 
+## [2.14.0] - 2026-07-01 - Editor and LSP features; correctness, stability, and performance.
+
+### Features
+
+* Format Document (`shift+alt+f`, or via the palette) formats the current file through the language server, and the `lsp.format_on_save` setting now actually formats on save (previously the setting existed but nothing formatted).
+* Rename Symbol (`f2`) renames a symbol project-wide via the language server, applying and saving the edits across every affected file.
+* Code Actions / quick fixes (`ctrl+shift+a`) request the language server's actions at the cursor (including for diagnostics on the line) and present them in a picker; the chosen action's edit is applied, and server commands and `workspace/applyEdit` requests are handled.
+* Signature help pops up while typing a call's arguments (triggered by `(` and `,`, dismissed by `)` or Escape), showing the active signature from the language server.
+* Save All (`ctrl+alt+s`) writes every modified open tab.
+* Reopen Last Closed Tab (palette) reopens recently closed files.
+* Jump to Matching Bracket (`ctrl+shift+m`) moves the cursor to the bracket matching the one at the caret.
+* Convert Indentation and Toggle Line Endings (palette) switch the current file between tabs and spaces, and between LF and CRLF.
+* Selecting a word highlights its other occurrences in the visible document with an outline box.
+
+### Correctness and stability
+
+* Project-wide find-and-replace now matches the literal text you typed, in the case you typed it. The search was always treated as a case-insensitive regular expression, so replacing text containing characters like `.` or `*` could rewrite unrelated text across the project and matches were replaced regardless of case; literal mode now escapes the pattern and case folding follows the toggle.
+* Regular-expression replace no longer deletes the character at a zero-width match (for example replacing a word boundary `\b`); the matched position is preserved.
+* The insert-list-item and insert-checkbox-item commands, and upper/lower-case on a multi-line selection, no longer embed a raw newline inside a single line (which corrupted the line count and dropped following keystrokes); they split into new lines correctly.
+* Syntax highlighting no longer duplicates a character when a token starts on a multi-byte character preceded by other non-ASCII text.
+* Nested lists in the markdown preview render in order and indented under their parent item instead of flattened and reordered.
+* Reloading a file that has become temporarily unreadable keeps the current contents instead of replacing them with an empty document, and a failed save reports the error instead of logging "Saved".
+* A pathological grammar or find pattern can no longer hang or crash the UI thread: PCRE2 match and recursion limits are enforced, the tokenizer's escaped-delimiter scan is iterative rather than recursive, and the markdown preview caps blockquote and list nesting depth.
+* `git blame`, `git log`, the git-status panel, and the update check run on a worker thread, so invoking them in a large repository or on a slow network no longer freezes the editor.
+* Terminal, subprocess, and language-server handles release their file descriptors and child processes on every teardown path, including a panic unwind.
+* Saves fsync the parent directory after the atomic rename, and session/state files are written atomically, so a crash immediately after saving cannot lose the file or leave a truncated session.
+
+### Performance
+
+* Test-runner "Run test" badges are rescanned only when the file or its content changes, instead of on every redraw. The previous scan cloned the whole document and probed the filesystem on every keystroke, scroll, and mouse move.
+* Draw-text commands share one per-frame text buffer instead of each allocating its own, removing hundreds of small allocations per full repaint.
+* The mouse cursor is set from cached system-cursor handles instead of creating and destroying one on every cursor change.
+* The status bar caches the detected language per file instead of re-scanning the syntax table on every redraw.
+* Undo and redo update the document byte count incrementally instead of rescanning every line.
+
+### Memory
+
+* Token-type names are interned and shared, so re-tokenising a line no longer allocates a string per token.
+* The full-document search buffer is released when the find bar closes.
+* The thread-local UTF-8 line index releases the capacity it grew for an oversized line instead of holding it for the process lifetime.
+
 ## [2.13.0] - 2026-06-29 - Resizable markdown preview, performance, and correctness.
 
 ### Features

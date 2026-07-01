@@ -9,7 +9,9 @@ use crate::editor::syntax::{PatternSpec, SubSyntaxSpec, SyntaxDefinition, TokenT
 /// A single token produced by the tokenizer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
-    pub token_type: String,
+    /// Interned name of the token's type. Shared via `Arc` so re-tokenizing a
+    /// line reuses one allocation per type across all its tokens.
+    pub token_type: Arc<str>,
     pub text: String,
 }
 
@@ -75,6 +77,18 @@ pub fn prime_utf8_line_index(line: &str) {
         idx.is_ascii = line.is_ascii();
         idx.char_to_byte.clear();
         idx.byte_to_char.clear();
+        // A single outsized line (e.g. a minified one-line file) would otherwise
+        // pin its peak capacity for the thread's lifetime; release it back
+        // toward a bounded reserve so steady-state lines keep the resident set
+        // small. `shrink_to` never drops below what the next line needs.
+        const LINE_INDEX_RETAIN: usize = 64 * 1024;
+        let want = (line.len() + 1).max(LINE_INDEX_RETAIN);
+        if idx.byte_to_char.capacity() > want {
+            idx.byte_to_char.shrink_to(want);
+        }
+        if idx.char_to_byte.capacity() > want {
+            idx.char_to_byte.shrink_to(want);
+        }
         if idx.is_ascii {
             // ASCII path skips the arrays entirely — byte index equals
             // char index, no table needed.
@@ -256,6 +270,28 @@ pub fn first_byte(value: &str) -> Option<u8> {
     value.as_bytes().first().copied()
 }
 
+thread_local! {
+    /// Interns the small, fixed set of token-type names so re-tokenizing a line
+    /// shares one heap allocation per type rather than allocating a fresh string
+    /// for every token. The set is bounded by the grammar's declared token
+    /// types, so the table cannot grow without bound.
+    static TOKEN_TYPE_INTERN: std::cell::RefCell<HashMap<Box<str>, Arc<str>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Return a shared `Arc<str>` for a token-type name, interning on first use.
+pub fn intern_token_type(name: &str) -> Arc<str> {
+    TOKEN_TYPE_INTERN.with(|cell| {
+        let mut map = cell.borrow_mut();
+        if let Some(existing) = map.get(name) {
+            return Arc::clone(existing);
+        }
+        let interned: Arc<str> = Arc::from(name);
+        map.insert(Box::from(name), Arc::clone(&interned));
+        interned
+    })
+}
+
 /// Append a token to a list, merging with the previous token if types match
 /// or the previous token is pure whitespace.
 pub fn push_token(tokens: &mut Vec<Token>, token_type: &str, text: &str) {
@@ -263,17 +299,16 @@ pub fn push_token(tokens: &mut Vec<Token>, token_type: &str, text: &str) {
         return;
     }
     if let Some(prev) = tokens.last_mut() {
-        if prev.token_type == token_type
+        if prev.token_type.as_ref() == token_type
             || (prev.text.chars().all(char::is_whitespace) && token_type != "incomplete")
         {
-            prev.token_type.clear();
-            prev.token_type.push_str(token_type);
+            prev.token_type = intern_token_type(token_type);
             prev.text.push_str(text);
             return;
         }
     }
     tokens.push(Token {
-        token_type: token_type.to_string(),
+        token_type: intern_token_type(token_type),
         text: text.to_string(),
     });
 }
@@ -566,7 +601,9 @@ fn analyze_char_class(bytes: &[u8], start: usize) -> Option<FirstByteSet> {
 /// How a single pattern matcher operates.
 #[derive(Clone)]
 pub enum MatcherKind {
-    LuaPattern { code: String },
+    LuaPattern {
+        code: String,
+    },
     Regex {
         compiled: Arc<Regex>,
         /// `\G(?:...)`-anchored variant of the same pattern. PCRE2 treats a
@@ -903,8 +940,11 @@ pub fn regex_find(
                 }
             }
 
+            // `res[0]` is a 1-based byte start; the char column is the number of
+            // chars before that byte, matching the capture conversion below, so
+            // a match starting on a multibyte char lands on a char boundary.
             let char_pos_1 = if res[0] > next {
-                prefix_ulen(text, res[0])
+                prefix_ulen(text, res[0].saturating_sub(1)) + 1
             } else {
                 next
             };
@@ -957,14 +997,21 @@ pub fn find_text(
         return Ok(Vec::new());
     }
     let anchored = at_start || matcher.whole_line;
-    let res = regex_find(matcher, line, offset, anchored)?;
-    if res.is_empty() {
-        return Ok(Vec::new());
-    }
+    // Skipping an escaped delimiter advances the search offset and retries; a
+    // loop keeps stack depth constant so a line full of escaped delimiters
+    // cannot overflow the stack.
+    let mut offset = offset;
+    loop {
+        let res = regex_find(matcher, line, offset, anchored)?;
+        if res.is_empty() {
+            return Ok(Vec::new());
+        }
 
-    if let Some(escape_byte) = escape_byte {
-        // Count preceding escape bytes; odd → the delimiter is escaped,
-        // skip it and look further. Mirrors legacy `find_text` semantics.
+        let Some(escape_byte) = escape_byte else {
+            return Ok(res);
+        };
+        // Count preceding escape bytes; odd count means the delimiter is
+        // escaped, so skip it and look further. Mirrors legacy `find_text`.
         let mut count = 0usize;
         let mut i = res[0].saturating_sub(1);
         while i >= 1 {
@@ -988,10 +1035,8 @@ pub fn find_text(
         if new_offset <= offset {
             return Ok(Vec::new());
         }
-        return find_text(line, pattern, new_offset, at_start, close);
+        offset = new_offset;
     }
-
-    Ok(res)
 }
 
 /// State derived from the byte-stack `state`: which compiled syntax is
@@ -1460,7 +1505,7 @@ mod tests {
         push_token(&mut tokens, "keyword", "if");
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].text, "  if");
-        assert_eq!(tokens[0].token_type, "keyword");
+        assert_eq!(tokens[0].token_type.as_ref(), "keyword");
     }
 
     #[test]
@@ -1588,7 +1633,7 @@ mod tests {
             .iter()
             .filter(|t| {
                 matches!(
-                    t.token_type.as_str(),
+                    t.token_type.as_ref(),
                     "markdown_bold" | "markdown_italic" | "markdown_bold_italic"
                 )
             })
@@ -1659,9 +1704,11 @@ mod tests {
             let (tokens, s2) = tokenize_line_with_state(&syntax, "plain next line", &s1);
             assert!(s2.is_empty(), "follow-up line should stay stateless");
             assert!(
-                tokens.iter().all(|t| t.token_type != "markdown_italic"
-                    && t.token_type != "markdown_bold"
-                    && t.token_type != "markdown_bold_italic"),
+                tokens
+                    .iter()
+                    .all(|t| t.token_type.as_ref() != "markdown_italic"
+                        && t.token_type.as_ref() != "markdown_bold"
+                        && t.token_type.as_ref() != "markdown_bold_italic"),
                 "follow-up line must not inherit emphasis, got {tokens:?}"
             );
         }
@@ -1680,7 +1727,9 @@ mod tests {
             line
         );
         assert!(
-            tokens.iter().any(|token| token.token_type != "normal"),
+            tokens
+                .iter()
+                .any(|token| token.token_type.as_ref() != "normal"),
             "expected Markdown syntax to apply a non-normal token to {line:?}"
         );
     }
@@ -1727,15 +1776,15 @@ mod tests {
         assert_eq!(joined, line, "every byte must round-trip");
         let has_for_keyword = tokens
             .iter()
-            .any(|t| t.text == "for" && t.token_type == "keyword");
+            .any(|t| t.text == "for" && t.token_type.as_ref() == "keyword");
         assert!(has_for_keyword, "`for` should be keyword, got {tokens:?}");
         let has_in_keyword = tokens
             .iter()
-            .any(|t| t.text == "in" && t.token_type == "keyword");
+            .any(|t| t.text == "in" && t.token_type.as_ref() == "keyword");
         assert!(has_in_keyword, "`in` should be keyword, got {tokens:?}");
         let has_cat_function = tokens
             .iter()
-            .any(|t| t.text == "cat" && t.token_type == "function");
+            .any(|t| t.text == "cat" && t.token_type.as_ref() == "function");
         assert!(has_cat_function, "`cat` should be function, got {tokens:?}");
     }
 
@@ -1750,7 +1799,7 @@ mod tests {
             "every byte should round-trip through the token stream"
         );
         let first = tokens.first().expect("at least one token");
-        assert_eq!(first.token_type, "keyword");
+        assert_eq!(first.token_type.as_ref(), "keyword");
         assert!(
             first
                 .text

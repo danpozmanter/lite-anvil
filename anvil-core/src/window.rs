@@ -73,8 +73,11 @@ impl SdlWindow {
 
 struct SdlState {
     window: Option<SdlWindow>,
-    /// Active mouse cursor — must be kept alive while in use.
-    cursor: Option<*mut SDL_Cursor>,
+    /// System cursors created lazily and cached by kind for the process
+    /// lifetime, so switching cursors never re-creates one via SDL.
+    cursor_cache: Vec<(u8, *mut SDL_Cursor)>,
+    /// Kind id of the currently applied cursor, to skip redundant sets.
+    active_cursor: Option<u8>,
     /// Buffered event saved during mouse-motion coalescing or focus-gained drain.
     pending_event: Option<SDL_Event>,
     /// Window kept alive across restarts.
@@ -188,7 +191,8 @@ pub fn init() -> Result<()> {
     SDL.with(|s| {
         *s.borrow_mut() = Some(SdlState {
             window: None,
-            cursor: None,
+            cursor_cache: Vec::new(),
+            active_cursor: None,
             pending_event: None,
             persistent: false,
             needs_invalidate: false,
@@ -205,8 +209,8 @@ pub fn shutdown() {
                 // SAFETY: w.raw is valid; ownership is consumed here.
                 unsafe { SDL_DestroyWindow(w.raw) };
             }
-            if let Some(c) = state.cursor.take() {
-                // SAFETY: cursor is valid; ownership is consumed here.
+            for (_, c) in state.cursor_cache.drain(..) {
+                // SAFETY: each cached cursor is valid; ownership is consumed here.
                 unsafe { SDL_DestroyCursor(c) };
             }
         }
@@ -667,26 +671,36 @@ pub fn get_screen_size() -> (i32, i32) {
 
 /// Map a cursor name to an SDL3 system cursor and activate it.
 pub fn set_cursor(name: &str) {
-    let id = match name {
-        "ibeam" => SDL_SystemCursor::TEXT,
-        "hand" => SDL_SystemCursor::POINTER,
-        "sizeh" => SDL_SystemCursor::EW_RESIZE,
-        "sizev" => SDL_SystemCursor::NS_RESIZE,
-        "sizeall" => SDL_SystemCursor::MOVE,
-        _ => SDL_SystemCursor::DEFAULT,
+    let (id, kind) = match name {
+        "ibeam" => (SDL_SystemCursor::TEXT, 1u8),
+        "hand" => (SDL_SystemCursor::POINTER, 2u8),
+        "sizeh" => (SDL_SystemCursor::EW_RESIZE, 3u8),
+        "sizev" => (SDL_SystemCursor::NS_RESIZE, 4u8),
+        "sizeall" => (SDL_SystemCursor::MOVE, 5u8),
+        _ => (SDL_SystemCursor::DEFAULT, 0u8),
     };
     SDL.with(|s| {
         if let Some(ref mut st) = *s.borrow_mut() {
-            // SAFETY: SDL is initialized; cursor lifecycle managed by SdlState.
-            unsafe {
-                let new_cur = SDL_CreateSystemCursor(id);
-                if !new_cur.is_null() {
-                    SDL_SetCursor(new_cur);
-                    if let Some(old) = st.cursor.replace(new_cur) {
-                        SDL_DestroyCursor(old);
-                    }
-                }
+            if st.active_cursor == Some(kind) {
+                return;
             }
+            // Reuse the cached cursor for this kind, creating it once on first
+            // use so a cursor change never churns an SDL create/destroy pair.
+            let cur = if let Some(&(_, c)) = st.cursor_cache.iter().find(|(k, _)| *k == kind) {
+                c
+            } else {
+                // SAFETY: SDL is initialized; the created cursor is cached and
+                // destroyed in `shutdown`.
+                let c = unsafe { SDL_CreateSystemCursor(id) };
+                if c.is_null() {
+                    return;
+                }
+                st.cursor_cache.push((kind, c));
+                c
+            };
+            // SAFETY: `cur` is a valid cursor owned by SdlState's cache.
+            unsafe { SDL_SetCursor(cur) };
+            st.active_cursor = Some(kind);
         }
     });
 }

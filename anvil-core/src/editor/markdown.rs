@@ -53,6 +53,9 @@ pub struct ListItem {
     /// Byte offset of the list-item start in the source markdown. Used by
     /// the preview to locate the checkbox on click so it can be toggled.
     pub source_start: Option<usize>,
+    /// Block-level children of this item (e.g. a nested list). Rendered
+    /// indented beneath the item's inline spans so nesting stays intact.
+    pub blocks: Vec<Block>,
 }
 
 /// Column alignment in a table.
@@ -140,6 +143,7 @@ enum Frame {
         spans: Vec<Span>,
         task: Option<bool>,
         source_start: Option<usize>,
+        blocks: Vec<Block>,
     },
 }
 
@@ -258,6 +262,7 @@ fn handle_start(
                 spans: vec![],
                 task: None,
                 source_start: Some(start_offset),
+                blocks: vec![],
             });
         }
         Tag::Table(alignments) => {
@@ -356,6 +361,7 @@ fn handle_end(
                 spans,
                 task,
                 source_start,
+                blocks,
             }) = stack.pop()
             {
                 for frame in stack.iter_mut().rev() {
@@ -364,6 +370,7 @@ fn handle_end(
                             spans,
                             task,
                             source_start,
+                            blocks,
                         });
                         break;
                     }
@@ -455,7 +462,7 @@ fn push_span(stack: &mut [Frame], table: &mut Option<TableState>, span: Span) {
 fn push_block(stack: &mut [Frame], block: Block) {
     for frame in stack.iter_mut().rev() {
         match frame {
-            Frame::Root { blocks } | Frame::Quote { blocks } => {
+            Frame::Root { blocks } | Frame::Quote { blocks } | Frame::Item { blocks, .. } => {
                 blocks.push(block);
                 return;
             }
@@ -583,5 +590,26 @@ mod tests {
     fn parses_rule() {
         let blocks = parse("---\n");
         assert!(matches!(blocks[0], Block::Rule));
+    }
+
+    #[test]
+    fn nested_list_stays_nested_and_ordered() {
+        let blocks = parse("- a\n    - b\n");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            Block::List { items, .. } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].spans[0].text, "a");
+                assert_eq!(items[0].blocks.len(), 1);
+                match &items[0].blocks[0] {
+                    Block::List { items: inner, .. } => {
+                        assert_eq!(inner.len(), 1);
+                        assert_eq!(inner[0].spans[0].text, "b");
+                    }
+                    _ => panic!("expected nested list"),
+                }
+            }
+            _ => panic!("expected list"),
+        }
     }
 }

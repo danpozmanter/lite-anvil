@@ -263,6 +263,87 @@ pub(crate) fn lsp_position_request(
     })
 }
 
+/// Build a `textDocument/formatting` request.
+pub(crate) fn lsp_formatting_request(
+    id: i64,
+    uri: &str,
+    tab_size: usize,
+    insert_spaces: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/formatting",
+        "params": {
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": tab_size, "insertSpaces": insert_spaces }
+        }
+    })
+}
+
+/// Build a `textDocument/rename` request.
+pub(crate) fn lsp_rename_request(
+    id: i64,
+    uri: &str,
+    line: usize,
+    character: usize,
+    new_name: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/rename",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "newName": new_name
+        }
+    })
+}
+
+/// Build a `textDocument/signatureHelp` request.
+pub(crate) fn lsp_signature_help_request(
+    id: i64,
+    uri: &str,
+    line: usize,
+    character: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/signatureHelp",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        }
+    })
+}
+
+/// Build a `textDocument/codeAction` request.
+pub(crate) fn lsp_code_action_request(
+    id: i64,
+    uri: &str,
+    start_line: usize,
+    start_char: usize,
+    end_line: usize,
+    end_char: usize,
+    diagnostics: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": start_line, "character": start_char },
+                "end": { "line": end_line, "character": end_char }
+            },
+            "context": { "diagnostics": diagnostics }
+        }
+    })
+}
+
 /// Map a file extension to an LSP filetype name.
 pub(crate) fn ext_to_lsp_filetype(ext: &str) -> Option<&'static str> {
     match ext {
@@ -346,6 +427,20 @@ pub(crate) fn lsp_initialize_request(id: i64, root_uri: &str) -> serde_json::Val
                     "references": {},
                     "inlayHint": {
                         "dynamicRegistration": false
+                    },
+                    "formatting": {},
+                    "rename": { "prepareSupport": false },
+                    "signatureHelp": {
+                        "signatureInformation": {
+                            "documentationFormat": ["plaintext"]
+                        }
+                    },
+                    "codeAction": {
+                        "codeActionLiteralSupport": {
+                            "codeActionKind": {
+                                "valueSet": ["quickfix", "refactor", "source"]
+                            }
+                        }
                     }
                 }
             }
@@ -637,6 +732,79 @@ mod tests {
         assert!(req["params"]["capabilities"]["textDocument"]["completion"].is_object());
         assert!(req["params"]["capabilities"]["textDocument"]["hover"].is_object());
         assert!(req["params"]["capabilities"]["textDocument"]["inlayHint"].is_object());
+    }
+
+    #[test]
+    fn lsp_initialize_request_advertises_new_features() {
+        let req = lsp_initialize_request(1, "file:///root");
+        let td = &req["params"]["capabilities"]["textDocument"];
+        assert!(td["formatting"].is_object());
+        assert!(td["rename"].is_object());
+        assert_eq!(
+            td["rename"]["prepareSupport"],
+            serde_json::Value::Bool(false)
+        );
+        assert!(td["signatureHelp"].is_object());
+        assert_eq!(
+            td["signatureHelp"]["signatureInformation"]["documentationFormat"][0],
+            "plaintext"
+        );
+        assert!(td["codeAction"].is_object());
+        assert_eq!(
+            td["codeAction"]["codeActionLiteralSupport"]["codeActionKind"]["valueSet"][0],
+            "quickfix"
+        );
+    }
+
+    #[test]
+    fn lsp_formatting_request_shape() {
+        let req = lsp_formatting_request(11, "file:///x.rs", 4, true);
+        assert_eq!(req["id"], 11);
+        assert_eq!(req["method"], "textDocument/formatting");
+        assert_eq!(req["params"]["textDocument"]["uri"], "file:///x.rs");
+        assert_eq!(req["params"]["options"]["tabSize"], 4);
+        assert_eq!(
+            req["params"]["options"]["insertSpaces"],
+            serde_json::Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn lsp_rename_request_shape() {
+        let req = lsp_rename_request(12, "file:///x.rs", 3, 7, "renamed");
+        assert_eq!(req["id"], 12);
+        assert_eq!(req["method"], "textDocument/rename");
+        assert_eq!(req["params"]["textDocument"]["uri"], "file:///x.rs");
+        assert_eq!(req["params"]["position"]["line"], 3);
+        assert_eq!(req["params"]["position"]["character"], 7);
+        assert_eq!(req["params"]["newName"], "renamed");
+    }
+
+    #[test]
+    fn lsp_signature_help_request_shape() {
+        let req = lsp_signature_help_request(13, "file:///x.rs", 9, 2);
+        assert_eq!(req["id"], 13);
+        assert_eq!(req["method"], "textDocument/signatureHelp");
+        assert_eq!(req["params"]["textDocument"]["uri"], "file:///x.rs");
+        assert_eq!(req["params"]["position"]["line"], 9);
+        assert_eq!(req["params"]["position"]["character"], 2);
+    }
+
+    #[test]
+    fn lsp_code_action_request_shape() {
+        let diags = serde_json::json!([{ "message": "unused" }]);
+        let req = lsp_code_action_request(14, "file:///x.rs", 1, 0, 1, 8, diags);
+        assert_eq!(req["id"], 14);
+        assert_eq!(req["method"], "textDocument/codeAction");
+        assert_eq!(req["params"]["textDocument"]["uri"], "file:///x.rs");
+        assert_eq!(req["params"]["range"]["start"]["line"], 1);
+        assert_eq!(req["params"]["range"]["start"]["character"], 0);
+        assert_eq!(req["params"]["range"]["end"]["line"], 1);
+        assert_eq!(req["params"]["range"]["end"]["character"], 8);
+        assert_eq!(
+            req["params"]["context"]["diagnostics"][0]["message"],
+            "unused"
+        );
     }
 
     #[test]

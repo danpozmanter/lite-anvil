@@ -99,6 +99,10 @@ const TABLE_CELL_PAD: f64 = 10.0;
 /// Link color — a readable sky-blue that stands out against the neutral
 /// theme text color.
 const LINK_COLOR: [u8; 4] = [88, 166, 255, 255];
+/// Cap on how deep the measure/draw recursion descends through nested
+/// blockquotes and lists. Content nested past this level renders nothing,
+/// bounding stack use against pathologically deep documents.
+const MAX_RENDER_DEPTH: usize = 64;
 
 /// Resolve (font, line_height) for a heading level. h1/h2/h3 use the
 /// dedicated scaled UI font slots loaded at startup (1.75x/1.45x/1.20x of
@@ -192,16 +196,11 @@ fn inlines_height(
         }
         let font = if span.code { code } else { base_font };
         let sw = ctx.font_width(font, " ");
-        let words: Vec<&str> = span.text.split_whitespace().collect();
-        if words.is_empty() {
-            if !span.text.is_empty() {
-                ws_pending = true;
-            }
-            continue;
-        }
         let leads_ws = span.text.starts_with(char::is_whitespace);
         let trails_ws = span.text.ends_with(char::is_whitespace);
-        for (i, word) in words.iter().enumerate() {
+        let mut placed_any = false;
+        for (i, word) in span.text.split_whitespace().enumerate() {
+            placed_any = true;
             let ww = ctx.font_width(font, word);
             let needs_space = if i == 0 {
                 last && (ws_pending || leads_ws)
@@ -209,7 +208,7 @@ fn inlines_height(
                 true
             };
             if needs_space {
-                if x + sw + ww > width {
+                if x + sw + ww > width && x > 0.0 {
                     x = 0.0;
                     lines += 1.0;
                 } else {
@@ -222,18 +221,36 @@ fn inlines_height(
             x += ww;
             last = true;
         }
+        if !placed_any {
+            if !span.text.is_empty() {
+                ws_pending = true;
+            }
+            continue;
+        }
         ws_pending = trails_ws;
     }
     lines * base_lh
 }
 
 fn code_block_line_count(text: &str) -> usize {
-    let with_newline = format!("{text}\n");
-    1.max(with_newline.matches('\n').count())
+    // The parser strips the trailing newline, so the split-count equals the
+    // rendered line count; an empty block yields one line.
+    text.split('\n').count()
 }
 
 /// Height of one block at `width` pixels. Callers add inter-block `GAP`.
-fn block_height(ctx: &dyn DrawContext, blk: &Block, width: f64, style: &StyleContext) -> f64 {
+/// `depth` tracks nesting through quotes/lists so recursion stops at
+/// `MAX_RENDER_DEPTH`.
+fn block_height(
+    ctx: &dyn DrawContext,
+    blk: &Block,
+    width: f64,
+    style: &StyleContext,
+    depth: usize,
+) -> f64 {
+    if depth >= MAX_RENDER_DEPTH {
+        return 0.0;
+    }
     let lh = style.font_height;
     let clh = style.code_font_height;
     let body = style.font;
@@ -269,7 +286,7 @@ fn block_height(ctx: &dyn DrawContext, blk: &Block, width: f64, style: &StyleCon
                 if !first {
                     h += GAP;
                 }
-                h += block_height(ctx, sub, inner_w, style);
+                h += block_height(ctx, sub, inner_w, style, depth + 1);
                 first = false;
             }
             (h + vpad).max(lh)
@@ -285,6 +302,10 @@ fn block_height(ctx: &dyn DrawContext, blk: &Block, width: f64, style: &StyleCon
                 }
                 let ih = inlines_height(ctx, &item.spans, inner_w, body, lh, style);
                 h += ih.max(lh);
+                for sub in &item.blocks {
+                    h += GAP;
+                    h += block_height(ctx, sub, inner_w, style, depth + 1);
+                }
                 first = false;
             }
             h.max(lh)
@@ -320,7 +341,7 @@ pub fn compute_layout(
     let mut layout = Vec::with_capacity(state.blocks.len());
     let mut y = PAD;
     for blk in &state.blocks {
-        let h = block_height(ctx, blk, inner, style);
+        let h = block_height(ctx, blk, inner, style, 0);
         layout.push(LayoutEntry { y, h });
         y += h + GAP;
     }
@@ -393,16 +414,11 @@ fn draw_inlines(
         let font = if span.code { code } else { base_font };
         let col = forced_color.unwrap_or_else(|| span_color(span, style));
         let sw = ctx.font_width(font, " ");
-        let words: Vec<&str> = span.text.split_whitespace().collect();
-        if words.is_empty() {
-            if !span.text.is_empty() {
-                ws_pending = true;
-            }
-            continue;
-        }
         let leads_ws = span.text.starts_with(char::is_whitespace);
         let trails_ws = span.text.ends_with(char::is_whitespace);
-        for (i, word) in words.iter().enumerate() {
+        let mut placed_any = false;
+        for (i, word) in span.text.split_whitespace().enumerate() {
+            placed_any = true;
             let ww = ctx.font_width(font, word);
             let needs_space = if i == 0 {
                 last && (ws_pending || leads_ws)
@@ -454,6 +470,12 @@ fn draw_inlines(
             }
             last = true;
         }
+        if !placed_any {
+            if !span.text.is_empty() {
+                ws_pending = true;
+            }
+            continue;
+        }
         ws_pending = trails_ws;
     }
     y + base_lh
@@ -470,7 +492,11 @@ fn draw_block(
     code_tokens: Option<&Vec<Vec<crate::editor::tokenizer::Token>>>,
     link_regions: &mut Vec<LinkRegion>,
     checkbox_regions: &mut Vec<CheckboxRegion>,
+    depth: usize,
 ) {
+    if depth >= MAX_RENDER_DEPTH {
+        return;
+    }
     let lh = style.font_height;
     let clh = style.code_font_height;
     let body = style.font;
@@ -600,8 +626,9 @@ fn draw_block(
                     None,
                     link_regions,
                     checkbox_regions,
+                    depth + 1,
                 );
-                cur_y += block_height(ctx, sub, max_x - inner_x, style);
+                cur_y += block_height(ctx, sub, max_x - inner_x, style, depth + 1);
                 first = false;
             }
             let total_h = (cur_y + vpad - y).max(lh);
@@ -622,6 +649,7 @@ fn draw_block(
             style,
             link_regions,
             checkbox_regions,
+            depth,
         ),
         Block::Table {
             alignments,
@@ -653,6 +681,7 @@ fn draw_list(
     style: &StyleContext,
     link_regions: &mut Vec<LinkRegion>,
     checkbox_regions: &mut Vec<CheckboxRegion>,
+    depth: usize,
 ) {
     let lh = style.font_height;
     let body = style.font;
@@ -738,6 +767,24 @@ fn draw_list(
             item_checked,
         );
         cur_y += ih.max(lh);
+        // Block children (e.g. a nested list) render in the item's text
+        // column, one level deeper so the recursion cap applies.
+        for sub in &item.blocks {
+            cur_y += GAP;
+            draw_block(
+                ctx,
+                sub,
+                content_x,
+                cur_y,
+                max_x,
+                style,
+                None,
+                link_regions,
+                checkbox_regions,
+                depth + 1,
+            );
+            cur_y += block_height(ctx, sub, max_x - content_x, style, depth + 1);
+        }
         first = false;
     }
 }
@@ -956,6 +1003,7 @@ pub fn draw(
             tokens,
             &mut state.link_regions,
             &mut state.checkbox_regions,
+            0,
         );
         // Re-apply the preview clip after every block. `draw_block` may
         // leave the clip narrowed (tables set per-cell clips for spill

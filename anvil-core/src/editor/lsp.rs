@@ -102,6 +102,18 @@ pub struct TransportHandle {
     pub exit_code: Arc<AtomicU64>,
 }
 
+impl Drop for TransportHandle {
+    /// Kill and reap the server on every drop path, including a panic-unwind.
+    /// `Child::drop` detaches without reaping, so without this a dropped handle
+    /// leaks the language server. Best-effort and idempotent: an already-exited
+    /// child (or a prior explicit kill/wait) makes both calls harmless no-ops,
+    /// since `Child::wait` returns the cached status without a second reap.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 static TRANSPORTS: LazyLock<Mutex<HashMap<u64, TransportHandle>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT_ID: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(1));

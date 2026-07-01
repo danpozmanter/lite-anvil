@@ -273,6 +273,7 @@ impl DocView {
         cursor_visible: bool,
         git_changes: &std::collections::HashMap<usize, crate::editor::git::LineChange>,
         extra_cursors: &[(usize, usize)],
+        occurrence: &str,
     ) {
         // Background
         ctx.draw_rect(
@@ -498,6 +499,66 @@ impl DocView {
                     );
                 let sel_w = (sel_end_x - sel_x).max(0.0);
                 ctx.draw_rect(sel_x, y, sel_w, line_h, style.selection.to_array());
+            }
+
+            // Highlight other occurrences of the selected word on this row.
+            if !occurrence.is_empty() {
+                let row_text: String = line
+                    .tokens
+                    .iter()
+                    .filter(|t| !t.is_inlay)
+                    .map(|t| t.text.trim_end_matches('\n'))
+                    .collect();
+                let hay: Vec<char> = row_text.chars().collect();
+                let needle: Vec<char> = occurrence.chars().collect();
+                if !needle.is_empty() && hay.len() >= needle.len() {
+                    let occ_base_x = text_x + style.padding_x - self.scroll_x;
+                    let mut ci = 0;
+                    while ci + needle.len() <= hay.len() {
+                        if hay[ci..ci + needle.len()] == needle[..] {
+                            // Skip the active selection's own occurrence.
+                            let is_selection = selections.len() == 1 && {
+                                let s = &selections[0];
+                                s.line1 == s.line2
+                                    && s.line1 == line.line_number
+                                    && s.col1.min(s.col2) == row_start + ci + 1
+                            };
+                            if !is_selection {
+                                let ox = occ_base_x
+                                    + self.prefix_pixel_width(
+                                        &*ctx,
+                                        style.code_font,
+                                        &mut tab_w,
+                                        i,
+                                        &line.tokens,
+                                        ci,
+                                    );
+                                let oex = occ_base_x
+                                    + self.prefix_pixel_width(
+                                        &*ctx,
+                                        style.code_font,
+                                        &mut tab_w,
+                                        i,
+                                        &line.tokens,
+                                        ci + needle.len(),
+                                    );
+                                // Outline box, not a fill: an accent border stays
+                                // visible over the current-line highlight and reads
+                                // distinctly from the filled selection.
+                                let ow = (oex - ox).max(0.0);
+                                let bw = 1.0;
+                                let col = style.accent.to_array();
+                                ctx.draw_rect(ox, y, ow, bw, col);
+                                ctx.draw_rect(ox, y + line_h - bw, ow, bw, col);
+                                ctx.draw_rect(ox, y, bw, line_h, col);
+                                ctx.draw_rect(ox + ow - bw, y, bw, line_h, col);
+                            }
+                            ci += needle.len();
+                        } else {
+                            ci += 1;
+                        }
+                    }
+                }
             }
 
             // Tokens
@@ -1141,11 +1202,8 @@ pub(crate) fn build_render_lines(
         let mut i = first;
         // Precompute a flat set of folded line numbers so the per-line check
         // below is O(1) instead of O(folds) per line.
-        let folded_lines: std::collections::HashSet<usize> = dv
-            .folds
-            .iter()
-            .flat_map(|&(fs, fe)| fs + 1..=fe)
-            .collect();
+        let folded_lines: std::collections::HashSet<usize> =
+            dv.folds.iter().flat_map(|&(fs, fe)| fs + 1..=fe).collect();
         // Invalidate the per-line tokenize cache from the lowest changed line
         // downward when the buffer has changed since we last populated it.
         // Lines above that watermark keep valid content, line-number keys, and
@@ -1238,10 +1296,11 @@ pub(crate) fn build_render_lines(
                     .map(|t| {
                         let trimmed = t.text.trim_end_matches('\n').to_string();
                         // Rust attributes (#[...]) should render as normal/white, not keyword blue.
-                        let tt = if t.token_type == "keyword" && trimmed.starts_with("#[") {
+                        let tt = if t.token_type.as_ref() == "keyword" && trimmed.starts_with("#[")
+                        {
                             "attribute"
                         } else {
-                            &t.token_type
+                            t.token_type.as_ref()
                         };
                         RenderToken {
                             text: trimmed,

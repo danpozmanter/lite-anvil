@@ -72,7 +72,7 @@ impl DrawContext for NativeDrawContext {
         with_cache(|c| {
             result_x = c.push_draw_text(
                 fonts,
-                Box::<str>::from(text),
+                text,
                 x as f32,
                 y as i32,
                 RenColor {

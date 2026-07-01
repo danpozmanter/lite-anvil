@@ -21,6 +21,7 @@ pub(crate) enum CmdViewMode {
     OpenRecent,
     SaveAs,
     Rename,
+    LspRename,
 }
 
 /// Shrink `text` from the LEFT until it fits inside `max_w` pixels,

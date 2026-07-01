@@ -32,7 +32,7 @@ pub fn save_text(base: &Path, module: &str, key: &str, text: &str) -> Result<(),
     let dir = module_dir(base, module);
     fs::create_dir_all(&dir)?;
     let path = key_path(base, module, key);
-    fs::write(path, text)
+    write_atomic(&path, text)
 }
 
 /// List all keys in a storage module, sorted alphabetically.
@@ -67,13 +67,35 @@ pub fn clear(base: &Path, module: &str, key: Option<&str>) -> Result<(), std::io
     }
 }
 
-/// Write content to a temporary file, flush, then rename over the target (crash-safe).
+/// Write content to a unique sibling temp, flush, then rename over the target
+/// (crash-safe). The temp name carries the pid and a counter so a pre-existing
+/// `<name>.tmp` is never clobbered and two concurrent writers cannot race one
+/// scratch file; the directory is fsync'd so the rename itself is durable.
 pub fn write_atomic(path: &Path, content: &str) -> Result<(), std::io::Error> {
-    let tmp = path.with_extension("tmp");
-    let mut f = fs::File::create(&tmp)?;
-    f.write_all(content.as_bytes())?;
-    f.sync_all()?;
-    fs::rename(&tmp, path)
+    static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let seq = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{base}.{}.{seq}.tmp", std::process::id()));
+    let result = (|| -> Result<(), std::io::Error> {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, path)?;
+        #[cfg(unix)]
+        if let Ok(dir_file) = fs::File::open(dir) {
+            let _ = dir_file.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Update a recent-items list: deduplicate, optionally add to front, truncate.

@@ -782,7 +782,10 @@ mod tests {
         // First line tokens should include the `/* hello` body as a comment.
         let joined: String = l1_toks.iter().map(|t| t.text.as_str()).collect();
         assert_eq!(joined, "/* hello");
-        let comment_count = l1_toks.iter().filter(|t| t.token_type == "comment").count();
+        let comment_count = l1_toks
+            .iter()
+            .filter(|t| t.token_type.as_ref() == "comment")
+            .count();
         assert!(
             comment_count >= 1,
             "line 1 should emit a comment token, got {l1_toks:?}"
@@ -794,7 +797,7 @@ mod tests {
         assert_eq!(l2_joined, " world */ x");
         // The leading ` world */` portion should be a single comment run.
         let first_tok = &l2_toks[0];
-        assert_eq!(first_tok.token_type, "comment");
+        assert_eq!(first_tok.token_type.as_ref(), "comment");
         assert!(
             first_tok.text.contains("*/"),
             "first token should reach `*/`, got {first_tok:?}"
@@ -865,7 +868,7 @@ mod tests {
         let toks = crate::editor::tokenizer::tokenize_line(&compiled, attr_line);
         assert!(
             toks.iter()
-                .any(|t| t.token_type == "keyword" && t.text.starts_with("#[")),
+                .any(|t| t.token_type.as_ref() == "keyword" && t.text.starts_with("#[")),
             "attribute should tokenize as keyword, got {toks:?}"
         );
         let joined: String = toks.iter().map(|t| t.text.as_str()).collect();
@@ -875,7 +878,7 @@ mod tests {
         // Leading whitespace folds into the following token's text.
         let strings: Vec<_> = toks
             .iter()
-            .filter(|t| t.token_type == "string")
+            .filter(|t| t.token_type.as_ref() == "string")
             .map(|t| t.text.trim_start())
             .collect();
         assert_eq!(
@@ -922,7 +925,7 @@ mod tests {
         let line = r#"  <PropertyGroup>"#;
         let toks = crate::editor::tokenizer::tokenize_line(&compiled, line);
         assert!(!toks.is_empty(), "should produce tokens for XML line");
-        let has_non_normal = toks.iter().any(|t| t.token_type != "normal");
+        let has_non_normal = toks.iter().any(|t| t.token_type.as_ref() != "normal");
         assert!(
             has_non_normal,
             "XML tokenizer should color at least one token in '{line}', got {toks:?}"
@@ -949,7 +952,7 @@ mod tests {
             let (toks, end) =
                 crate::editor::tokenizer::tokenize_line_with_state(&compiled, line, &state);
             for t in &toks {
-                all_types.insert(t.token_type.clone());
+                all_types.insert(t.token_type.to_string());
             }
             state = end;
         }
@@ -1010,7 +1013,7 @@ mod tests {
             let (toks, end) =
                 crate::editor::tokenizer::tokenize_line_with_state(&compiled, line, &state);
             for t in &toks {
-                all_types.insert(t.token_type.clone());
+                all_types.insert(t.token_type.to_string());
             }
             state = end;
         }

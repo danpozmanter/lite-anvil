@@ -143,6 +143,27 @@ impl TerminalInner {
     }
 }
 
+#[cfg(unix)]
+impl Drop for TerminalInner {
+    /// Reclaim the master fd and reap the child on every drop path, including a
+    /// panic-unwind. Idempotent with manual cleanup: `close_fd`'s `INVALID_FD`
+    /// sentinel prevents a double close, and the `running` guard skips a child
+    /// already reaped by `cleanup`/`poll`.
+    fn drop(&mut self) {
+        self.close_fd();
+        if self.running {
+            // SAFETY: -self.pid targets this struct's child process group; a
+            // best-effort SIGTERM whose failure (already-dead child) is ignored.
+            unsafe { libc::kill(-self.pid, libc::SIGTERM) };
+            let mut raw_status: c_int = 0;
+            // SAFETY: self.pid is this struct's child; WNOHANG returns at once
+            // rather than blocking the drop, reaping the child to avoid a zombie.
+            unsafe { libc::waitpid(self.pid, &mut raw_status, libc::WNOHANG) };
+            self.running = false;
+        }
+    }
+}
+
 /// Options for spawning a terminal.
 #[cfg(unix)]
 pub struct TerminalSpawnOptions {
