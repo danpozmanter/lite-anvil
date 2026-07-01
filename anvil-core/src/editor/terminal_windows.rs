@@ -176,8 +176,7 @@ pub fn spawn_terminal(opts: &TerminalSpawnOptions) -> Result<TerminalInner, Stri
         .take()
         .ok_or_else(|| "failed to capture child stderr".to_string())?;
 
-    let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) =
-        crossbeam_channel::bounded(READER_BACKLOG);
+    let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = crossbeam_channel::bounded(READER_BACKLOG);
 
     let stdout_tx = tx.clone();
     let stdout_handle = std::thread::Builder::new()

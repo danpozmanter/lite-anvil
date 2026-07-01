@@ -1102,6 +1102,9 @@ pub fn run(
     let mut redraw = true;
     let mut quit = false;
     let mut window_title = String::new();
+    // Cached (path, language-name) for the status bar so the syntax-entry glob
+    // scan is not repeated on every redraw while the same file stays active.
+    let mut status_lang_cache: (String, String) = (String::new(), String::new());
     let frame_interval = 1.0 / fps;
     // When the UI is idle - nothing drawn recently, no terminal panel open, no
     // background job running - the loop blocks this long between timer-driven
@@ -1276,6 +1279,9 @@ pub fn run(
         // Commands available in the palette without a keybinding.
         let palette_extras: &[&str] = &[
             "core:sort-lines",
+            "doc:reopen-closed-tab",
+            "doc:convert-indentation",
+            "doc:toggle-line-endings",
             "core:open-user-settings",
             "about:version",
             "core:force-quit",
@@ -1386,6 +1392,13 @@ pub fn run(
     let mut cmdview_suggestions: Vec<String> = Vec::new();
     let mut cmdview_selected: usize = 0;
     let mut cmdview_label = String::new();
+    // Pending LSP rename target: (uri, 0-based line, 0-based character). Set
+    // when the rename input opens; consumed when the new name is submitted.
+    let mut lsp_rename_pos: Option<(String, usize, usize)> = None;
+    // Code-action picker state: overlay of (title, action-json) awaiting choice.
+    let mut code_action_active = false;
+    let mut code_actions: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut code_action_selected: usize = 0;
 
     // Per-field undo/redo history for the dialog text inputs. Each input keeps
     // its own stack so the undo/redo shortcuts edit the focused field rather
@@ -1408,6 +1421,11 @@ pub fn run(
     let mut git_status_selected: usize = 0;
     // Background git-status refresh job, polled each frame.
     let mut git_status_job: Option<std::thread::JoinHandle<Vec<(String, String, String)>>> = None;
+    let mut git_blame_job: Option<std::thread::JoinHandle<Vec<String>>> = None;
+    let mut git_log_job: Option<std::thread::JoinHandle<Vec<(String, String, String)>>> = None;
+    let mut update_check_job: Option<std::thread::JoinHandle<String>> = None;
+    // Paths of recently closed tabs (most-recent last) for reopen-closed-tab.
+    let mut closed_tabs: Vec<String> = Vec::new();
 
     // Git blame: per-line annotations shown inline at the right edge.
     let mut git_blame_active = false;
@@ -1673,49 +1691,78 @@ pub fn run(
     }
 
     /// Execute project-wide find-and-replace using sed. Returns the number of
-    /// files modified.
-    fn execute_project_replace(root: &str, search: &str, replace: &str) -> usize {
+    /// files modified. In literal mode the search is escaped so every character
+    /// matches exactly, and case is folded only when `case_insensitive` is set,
+    /// so a replace matches exactly the text the user typed in the case they
+    /// typed it.
+    fn execute_project_replace(
+        root: &str,
+        search: &str,
+        replace: &str,
+        use_regex: bool,
+        case_insensitive: bool,
+    ) -> usize {
         if search.is_empty() {
             return 0;
         }
-        // Find matching files first.
-        let grep_out = std::process::Command::new("grep")
-            .args([
-                "-rl",
-                "-i",
-                "--include=*.rs",
-                "--include=*.toml",
-                "--include=*.json",
-                "--include=*.md",
-                "--include=*.txt",
-                "--include=*.js",
-                "--include=*.ts",
-                "--include=*.py",
-                "--include=*.go",
-                "--include=*.c",
-                "--include=*.h",
-                "--include=*.cpp",
-                "--include=*.java",
-                search,
-                root,
-            ])
-            .output();
+        // Find matching files first. `-F` keeps grep's selection literal in
+        // non-regex mode so it agrees with the literal sed expression below.
+        let mut grep_args: Vec<&str> = vec!["-rl"];
+        if case_insensitive {
+            grep_args.push("-i");
+        }
+        if !use_regex {
+            grep_args.push("-F");
+        }
+        for inc in [
+            "--include=*.rs",
+            "--include=*.toml",
+            "--include=*.json",
+            "--include=*.md",
+            "--include=*.txt",
+            "--include=*.js",
+            "--include=*.ts",
+            "--include=*.py",
+            "--include=*.go",
+            "--include=*.c",
+            "--include=*.h",
+            "--include=*.cpp",
+            "--include=*.java",
+        ] {
+            grep_args.push(inc);
+        }
+        grep_args.push(search);
+        grep_args.push(root);
+        let grep_out = std::process::Command::new("grep").args(&grep_args).output();
         let Ok(out) = grep_out else { return 0 };
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
         let files: Vec<&str> = stdout.lines().collect();
         if files.is_empty() {
             return 0;
         }
-        // Escape sed special characters in search and replace.
-        let sed_escape = |s: &str| -> String {
-            s.replace('\\', "\\\\")
-                .replace('/', "\\/")
-                .replace('&', "\\&")
-                .replace('\n', "\\n")
+        // sed matches with BRE. In literal mode escape the BRE metacharacters
+        // and the `/` delimiter so the search text is matched verbatim; in regex
+        // mode only the delimiter is escaped so the user's pattern is preserved.
+        let sed_search = if use_regex {
+            search.replace('/', "\\/")
+        } else {
+            let mut escaped = String::with_capacity(search.len() + 8);
+            for c in search.chars() {
+                if matches!(c, '\\' | '.' | '*' | '[' | ']' | '^' | '$' | '/') {
+                    escaped.push('\\');
+                }
+                escaped.push(c);
+            }
+            escaped
         };
-        let sed_search = sed_escape(search);
-        let sed_replace = sed_escape(replace);
-        let sed_expr = format!("s/{sed_search}/{sed_replace}/gi");
+        // In the replacement text only `\`, `&`, and the delimiter are special.
+        let sed_replace = replace
+            .replace('\\', "\\\\")
+            .replace('/', "\\/")
+            .replace('&', "\\&")
+            .replace('\n', "\\n");
+        let flags = if case_insensitive { "gi" } else { "g" };
+        let sed_expr = format!("s/{sed_search}/{sed_replace}/{flags}");
         let mut count = 0usize;
         for file in &files {
             let file = file.trim();
@@ -1751,6 +1798,10 @@ pub fn run(
     let mut active_tests: Vec<crate::editor::test_runner::DiscoveredTest> = Vec::new();
     // Per-frame badge rects for the active doc.
     let mut test_badges: Vec<crate::editor::test_runner::TestBadgeRegion> = Vec::new();
+    // (path, change_id) the badges were last scanned for, so the discovery scan
+    // (which clones the document and probes the filesystem) runs only when the
+    // file or its content changes, not on every redraw.
+    let mut test_scan_cache: (String, i64) = (String::new(), -1);
     // Sidebar entry targeted by the current context menu (path, is_dir).
     // Set when right-clicking a sidebar row; consumed by the rename flow.
     let mut sidebar_menu_target: Option<(String, bool)> = None;
@@ -1767,6 +1818,8 @@ pub fn run(
     // LSP completion, hover, and go-to-definition state.
     let mut completion = CompletionState::new();
     let mut hover = HoverState::new();
+    // Signature-help popup reuses the hover popup shape (text + visibility).
+    let mut signature_help = HoverState::new();
     // Mouse-tracked hover state: `mouse_doc_pos` is the (1-based line,
     // 1-based col) under the cursor when over the active doc, or None
     // otherwise. `mouse_idle_since` records when the cursor settled at
@@ -2299,6 +2352,12 @@ pub fn run(
                         hover.hide();
                         redraw = true;
                     }
+                    // Dismiss signature help on Escape; it persists while typing
+                    // arguments so the parameter hint stays visible.
+                    if key.as_str() == "escape" && signature_help.visible {
+                        signature_help.hide();
+                        redraw = true;
+                    }
 
                     // Inline new-file input in the sidebar intercepts keys.
                     if sidebar_new_file_dir.is_some() && matches!(nag, Nag::None) {
@@ -2712,6 +2771,32 @@ pub fn run(
                                 let path = path.trim_end_matches('/').to_string();
                                 let p = std::path::Path::new(&path);
                                 match cmdview_mode {
+                                    CmdViewMode::LspRename => {
+                                        // The typed text is the new symbol name, not
+                                        // a path, so use it directly.
+                                        let new_name = cmdview_text.trim().to_string();
+                                        if !new_name.is_empty()
+                                            && let Some((uri, line0, char0)) = lsp_rename_pos.take()
+                                            && subsystems.has_lsp()
+                                            && lsp_state.initialized
+                                            && let Some(tid) = lsp_state.transport_id
+                                        {
+                                            let req_id = lsp_state.next_id();
+                                            lsp_state
+                                                .pending_requests
+                                                .insert(req_id, "textDocument/rename".to_string());
+                                            let _ = lsp::send_message(
+                                                tid,
+                                                &lsp_rename_request(
+                                                    req_id, &uri, line0, char0, &new_name,
+                                                ),
+                                            );
+                                        }
+                                        lsp_rename_pos = None;
+                                        cmdview_active = false;
+                                        redraw = true;
+                                        continue;
+                                    }
                                     CmdViewMode::OpenFile => {
                                         // Support path:N to open at a specific line.
                                         let (file_path, goto_line) = split_path_line(&path);
@@ -3579,8 +3664,16 @@ pub fn run(
                                         let root = project_root.clone();
                                         let search = project_replace_search.clone();
                                         let with = project_replace_with.clone();
+                                        let use_regex = project_use_regex;
+                                        let case_insensitive = project_case_insensitive;
                                         replace_job = Some(std::thread::spawn(move || {
-                                            execute_project_replace(&root, &search, &with)
+                                            execute_project_replace(
+                                                &root,
+                                                &search,
+                                                &with,
+                                                use_regex,
+                                                case_insensitive,
+                                            )
                                         }));
                                         info_message = Some((
                                             "Replacing across project...".to_string(),
@@ -3640,6 +3733,84 @@ pub fn run(
                                     );
                                     project_replace_selected = 0;
                                 }
+                            }
+                            _ => {}
+                        }
+                        redraw = true;
+                        continue;
+                    }
+
+                    // Code-action picker intercepts keys.
+                    if code_action_active {
+                        match key.as_str() {
+                            "escape" => {
+                                code_action_active = false;
+                            }
+                            "up" => {
+                                code_action_selected = code_action_selected.saturating_sub(1);
+                            }
+                            "down" if !code_actions.is_empty() => {
+                                code_action_selected =
+                                    (code_action_selected + 1).min(code_actions.len() - 1);
+                            }
+                            "return" | "keypad enter" => {
+                                if let Some((_, action)) =
+                                    code_actions.get(code_action_selected).cloned()
+                                {
+                                    let atomic = config.files.atomic_save;
+                                    if let Some(edit) = action.get("edit") {
+                                        let n = apply_lsp_workspace_edit(
+                                            edit,
+                                            &mut docs,
+                                            use_git(),
+                                            atomic,
+                                        );
+                                        if n > 0 {
+                                            for d in &mut docs {
+                                                d.cached_change_id = -1;
+                                            }
+                                            crate::window::force_invalidate();
+                                        }
+                                    }
+                                    if let Some(tid) = lsp_state.transport_id {
+                                        let cmdv = action.get("command");
+                                        let (name, args) = if let Some(s) =
+                                            cmdv.and_then(|c| c.as_str())
+                                        {
+                                            (Some(s.to_string()), action.get("arguments").cloned())
+                                        } else if let Some(obj) = cmdv.filter(|c| c.is_object()) {
+                                            (
+                                                obj.get("command")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(String::from),
+                                                obj.get("arguments").cloned(),
+                                            )
+                                        } else {
+                                            (None, None)
+                                        };
+                                        if let Some(name) = name {
+                                            let req_id = lsp_state.next_id();
+                                            lsp_state.pending_requests.insert(
+                                                req_id,
+                                                "workspace/executeCommand".to_string(),
+                                            );
+                                            let _ = lsp::send_message(
+                                                tid,
+                                                &serde_json::json!({
+                                                    "jsonrpc": "2.0",
+                                                    "id": req_id,
+                                                    "method": "workspace/executeCommand",
+                                                    "params": {
+                                                        "command": name,
+                                                        "arguments":
+                                                            args.unwrap_or_else(|| serde_json::json!([]))
+                                                    }
+                                                }),
+                                            );
+                                        }
+                                    }
+                                }
+                                code_action_active = false;
                             }
                             _ => {}
                         }
@@ -4680,6 +4851,17 @@ pub fn run(
                                 find_active = false;
                                 replace_active = false;
                                 find_focus_on_replace = false;
+                                // Free the resident full-document search subject
+                                // now that the find bar is closed; it is rebuilt
+                                // lazily on the next search.
+                                if let Some(doc) = docs.get(active_tab) {
+                                    if let Some(buf_id) = doc.view.buffer_id {
+                                        let _ = buffer::with_buffer_mut(buf_id, |b| {
+                                            b.search_cache = None;
+                                            Ok(())
+                                        });
+                                    }
+                                }
                                 redraw = true;
                                 continue;
                             }
@@ -5427,6 +5609,36 @@ pub fn run(
                                     }
                                 }
                             }
+                            // Trigger signature help after '(' or ','; hide on ')'.
+                            if text == ")" {
+                                signature_help.hide();
+                            } else if (text == "(" || text == ",")
+                                && lsp_state.transport_id.is_some()
+                                && lsp_state.initialized
+                                && let Some(doc) = docs.get(active_tab)
+                                && let Some(buf_id) = doc.view.buffer_id
+                                && !doc.path.is_empty()
+                            {
+                                let tid = lsp_state.transport_id.unwrap();
+                                let (cl, cc) = buffer::with_buffer(buf_id, |b| {
+                                    Ok((
+                                        *b.selections.get(2).unwrap_or(&1),
+                                        *b.selections.get(3).unwrap_or(&1),
+                                    ))
+                                })
+                                .unwrap_or((1, 1));
+                                let uri = path_to_uri(&doc.path);
+                                let req_id = lsp_state.next_id();
+                                lsp_state
+                                    .pending_requests
+                                    .insert(req_id, "textDocument/signatureHelp".to_string());
+                                let _ = lsp::send_message(
+                                    tid,
+                                    &lsp_signature_help_request(req_id, &uri, cl - 1, cc - 1),
+                                );
+                                signature_help.line = cl;
+                                signature_help.col = cc;
+                            }
                         }
                     }
                     redraw = true;
@@ -5678,6 +5890,13 @@ pub fn run(
                                                 for i in indices {
                                                     if let Some(d) = docs.get(i) {
                                                         autoreload.unwatch(&d.path);
+                                                        if !d.path.is_empty() {
+                                                            closed_tabs.retain(|p| p != &d.path);
+                                                            closed_tabs.push(d.path.clone());
+                                                            if closed_tabs.len() > 25 {
+                                                                closed_tabs.remove(0);
+                                                            }
+                                                        }
                                                     }
                                                     docs.remove(i);
                                                 }
@@ -6547,6 +6766,13 @@ pub fn run(
                                         };
                                     } else {
                                         autoreload.unwatch(&doc.path);
+                                        if !doc.path.is_empty() {
+                                            closed_tabs.retain(|p| p != &doc.path);
+                                            closed_tabs.push(doc.path.clone());
+                                            if closed_tabs.len() > 25 {
+                                                closed_tabs.remove(0);
+                                            }
+                                        }
                                         docs.remove(i);
                                         if active_tab >= docs.len() && !docs.is_empty() {
                                             active_tab = docs.len() - 1;
@@ -7794,6 +8020,38 @@ pub fn run(
                 }
                 if let Ok(poll) = lsp::poll_transport(tid) {
                     for msg in &poll.messages {
+                        // Server-to-client `workspace/applyEdit` request: apply the
+                        // edit and acknowledge so the server does not block waiting.
+                        if msg.get("method").and_then(|m| m.as_str()) == Some("workspace/applyEdit")
+                        {
+                            let atomic = config.files.atomic_save;
+                            let applied = msg
+                                .get("params")
+                                .and_then(|p| p.get("edit"))
+                                .map(|e| apply_lsp_workspace_edit(e, &mut docs, use_git(), atomic))
+                                .unwrap_or(0);
+                            if applied > 0 {
+                                for d in &mut docs {
+                                    d.cached_change_id = -1;
+                                }
+                                crate::window::force_invalidate();
+                                redraw = true;
+                            }
+                            if let (Some(rid), Some(tid)) = (
+                                msg.get("id").and_then(|v| v.as_i64()),
+                                lsp_state.transport_id,
+                            ) {
+                                let _ = lsp::send_message(
+                                    tid,
+                                    &serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": rid,
+                                        "result": { "applied": applied > 0 }
+                                    }),
+                                );
+                            }
+                            continue;
+                        }
                         // Handle initialize response.
                         if let Some(id) = msg.get("id").and_then(|v| v.as_i64()) {
                             if lsp_state.pending_requests.get(&id).map(|s| s.as_str())
@@ -8172,6 +8430,153 @@ pub fn run(
                                             }
                                         }
                                     }
+                                }
+                                redraw = true;
+                            }
+
+                            // Handle document-formatting response (manual or on-save).
+                            {
+                                let fmt_method = lsp_state.pending_requests.get(&id).cloned();
+                                if matches!(
+                                    fmt_method.as_deref(),
+                                    Some(
+                                        "textDocument/formatting" | "textDocument/formatting@save"
+                                    )
+                                ) {
+                                    lsp_state.pending_requests.remove(&id);
+                                    let save_after = fmt_method.as_deref()
+                                        == Some("textDocument/formatting@save");
+                                    let req_uri = lsp_state
+                                        .pending_request_uris
+                                        .remove(&id)
+                                        .unwrap_or_default();
+                                    if let Some(edits) =
+                                        msg.get("result").and_then(|r| r.as_array())
+                                        && let Some(idx) = docs.iter().position(|d| {
+                                            !d.path.is_empty() && path_to_uri(&d.path) == req_uri
+                                        })
+                                        && let Some(buf_id) = docs[idx].view.buffer_id
+                                    {
+                                        let changed = buffer::with_buffer_mut(buf_id, |b| {
+                                            Ok(apply_lsp_text_edits(b, edits))
+                                        })
+                                        .unwrap_or(false);
+                                        if changed {
+                                            docs[idx].cached_change_id = -1;
+                                            docs[idx].cached_render =
+                                                std::sync::Arc::new(Vec::new());
+                                            if save_after {
+                                                let path = docs[idx].path.clone();
+                                                let atomic = config.files.atomic_save;
+                                                if let Ok(Ok(cid)) =
+                                                    buffer::with_buffer(buf_id, |b| {
+                                                        Ok(buffer::save_file(
+                                                            b, &path, b.crlf, atomic,
+                                                        )
+                                                        .map(|()| b.change_id))
+                                                    })
+                                                {
+                                                    docs[idx].saved_change_id = cid;
+                                                    docs[idx].saved_signature =
+                                                        buffer::with_buffer(buf_id, |b| {
+                                                            Ok(buffer::content_signature(&b.lines))
+                                                        })
+                                                        .unwrap_or(0);
+                                                }
+                                            }
+                                            redraw = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Handle rename response (WorkspaceEdit).
+                            if lsp_state.pending_requests.get(&id).map(|s| s.as_str())
+                                == Some("textDocument/rename")
+                            {
+                                lsp_state.pending_requests.remove(&id);
+                                if let Some(result) = msg.get("result").filter(|r| !r.is_null()) {
+                                    let atomic = config.files.atomic_save;
+                                    let n = apply_lsp_workspace_edit(
+                                        result,
+                                        &mut docs,
+                                        use_git(),
+                                        atomic,
+                                    );
+                                    info_message = Some((
+                                        format!("Renamed across {n} file(s)"),
+                                        Instant::now(),
+                                    ));
+                                    for d in &mut docs {
+                                        d.cached_change_id = -1;
+                                    }
+                                    crate::window::force_invalidate();
+                                } else {
+                                    info_message = Some((
+                                        "Rename produced no changes".to_string(),
+                                        Instant::now(),
+                                    ));
+                                }
+                                redraw = true;
+                            }
+
+                            // Handle code-action response: collect into the picker.
+                            if lsp_state.pending_requests.get(&id).map(|s| s.as_str())
+                                == Some("textDocument/codeAction")
+                            {
+                                lsp_state.pending_requests.remove(&id);
+                                code_actions.clear();
+                                if let Some(arr) = msg.get("result").and_then(|r| r.as_array()) {
+                                    for a in arr {
+                                        let title = a
+                                            .get("title")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        if !title.is_empty() {
+                                            code_actions.push((title, a.clone()));
+                                        }
+                                    }
+                                }
+                                if code_actions.is_empty() {
+                                    info_message = Some((
+                                        "No code actions available".to_string(),
+                                        Instant::now(),
+                                    ));
+                                    code_action_active = false;
+                                } else {
+                                    code_action_selected = 0;
+                                    code_action_active = true;
+                                }
+                                redraw = true;
+                            }
+
+                            // Handle signature-help response.
+                            if lsp_state.pending_requests.get(&id).map(|s| s.as_str())
+                                == Some("textDocument/signatureHelp")
+                            {
+                                lsp_state.pending_requests.remove(&id);
+                                let result = msg.get("result");
+                                let sig = result
+                                    .and_then(|r| r.get("signatures"))
+                                    .and_then(|s| s.as_array())
+                                    .and_then(|arr| {
+                                        let active = result
+                                            .and_then(|r| r.get("activeSignature"))
+                                            .and_then(|v| v.as_i64())
+                                            .unwrap_or(0)
+                                            as usize;
+                                        arr.get(active).or_else(|| arr.first())
+                                    })
+                                    .and_then(|s| s.get("label"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if sig.is_empty() {
+                                    signature_help.hide();
+                                } else {
+                                    signature_help.text = sig;
+                                    signature_help.visible = true;
                                 }
                                 redraw = true;
                             }
@@ -8613,6 +9018,44 @@ pub fn run(
             }
         }
 
+        // Git blame overlay: apply the background result if still wanted.
+        if let Some(job) = git_blame_job.take() {
+            if job.is_finished() {
+                let lines = job.join().unwrap_or_default();
+                if git_blame_active {
+                    git_blame_lines = lines;
+                }
+                redraw = true;
+            } else {
+                git_blame_job = Some(job);
+            }
+        }
+
+        // Git log panel: apply the background result.
+        if let Some(job) = git_log_job.take() {
+            if job.is_finished() {
+                git_log_entries = job.join().unwrap_or_default();
+                if git_log_selected >= git_log_entries.len() {
+                    git_log_selected = git_log_entries.len().saturating_sub(1);
+                }
+                redraw = true;
+            } else {
+                git_log_job = Some(job);
+            }
+        }
+
+        // Update check: surface the version comparison when curl returns.
+        if let Some(job) = update_check_job.take() {
+            if job.is_finished() {
+                if let Ok(msg) = job.join() {
+                    info_message = Some((msg, Instant::now()));
+                }
+                redraw = true;
+            } else {
+                update_check_job = Some(job);
+            }
+        }
+
         {
             // Layout + render.
             let (w, h, _, _) = crate::window::get_window_size();
@@ -8968,17 +9411,22 @@ pub fn run(
                     let ext = doc.path.rsplit('.').next().unwrap_or("");
                     let filename_for_lang =
                         doc.path.rsplit('/').next().unwrap_or(doc.path.as_str());
-                    let lang_owned: String =
-                        crate::editor::syntax::match_syntax_entry(filename_for_lang, &syntax_index)
-                            .map(|e| e.name.clone())
-                            .unwrap_or_else(|| {
-                                if ext.is_empty() {
-                                    "Plain Text".to_string()
-                                } else {
-                                    ext.to_string()
-                                }
-                            });
-                    let lang: &str = &lang_owned;
+                    if status_lang_cache.0 != doc.path {
+                        let name = crate::editor::syntax::match_syntax_entry(
+                            filename_for_lang,
+                            &syntax_index,
+                        )
+                        .map(|e| e.name.clone())
+                        .unwrap_or_else(|| {
+                            if ext.is_empty() {
+                                "Plain Text".to_string()
+                            } else {
+                                ext.to_string()
+                            }
+                        });
+                        status_lang_cache = (doc.path.clone(), name);
+                    }
+                    let lang: &str = &status_lang_cache.1;
                     let indent_label = if doc.indent_type == "hard" {
                         "Tabs".to_string()
                     } else {
@@ -9944,6 +10392,41 @@ pub fn run(
                         let elapsed_since_reset = cursor_blink_reset.elapsed().as_secs_f64();
                         let cursor_on = elapsed_since_reset < blink_period
                             || (elapsed_since_reset % (blink_period * 2.0)) < blink_period;
+                        // Highlight other occurrences of a compact, single-line,
+                        // whitespace-free selection (a "word").
+                        let occurrence: String = doc
+                            .view
+                            .buffer_id
+                            .and_then(|bid| {
+                                buffer::with_buffer(bid, |b| {
+                                    let s = &b.selections;
+                                    if s.len() == 4 && s[0] == s[2] && s[1] != s[3] {
+                                        let (cs, ce) = if s[1] < s[3] {
+                                            (s[1], s[3])
+                                        } else {
+                                            (s[3], s[1])
+                                        };
+                                        let text = b
+                                            .lines
+                                            .get(s[0].saturating_sub(1))
+                                            .map(|l| l.trim_end_matches('\n'))
+                                            .unwrap_or("");
+                                        let word: String = text
+                                            .chars()
+                                            .skip(cs.saturating_sub(1))
+                                            .take(ce - cs)
+                                            .collect();
+                                        let ok = !word.is_empty()
+                                            && word.chars().count() <= 100
+                                            && word.chars().all(|ch| !ch.is_whitespace());
+                                        Ok(if ok { word } else { String::new() })
+                                    } else {
+                                        Ok(String::new())
+                                    }
+                                })
+                                .ok()
+                            })
+                            .unwrap_or_default();
                         dv.draw_native(
                             &mut draw_ctx,
                             &style,
@@ -9954,6 +10437,7 @@ pub fn run(
                             cursor_on,
                             &doc.git_changes,
                             &all_cursors,
+                            &occurrence,
                         );
 
                         // Test-runner badges: scan the doc for recognised
@@ -9964,23 +10448,40 @@ pub fn run(
                         // offering the affordance if nothing can execute.
                         use crate::editor::view::DrawContext as _;
                         test_badges.clear();
-                        if !doc.path.is_empty()
-                            && crate::editor::test_runner::detect_runner_with_fallback(
-                                &project_root,
-                                &doc.path,
-                            )
-                            .is_some()
-                        {
-                            active_tests = {
-                                let text_lines = buffer::with_buffer(buf_id, |b| {
-                                    Ok(b.lines
-                                        .iter()
-                                        .map(|l| l.trim_end_matches('\n').to_string())
-                                        .collect::<Vec<_>>())
-                                })
-                                .unwrap_or_default();
-                                crate::editor::test_runner::discover_tests(&doc.path, &text_lines)
-                            };
+                        if !doc.path.is_empty() {
+                            // Rescan only when the file or its content changed;
+                            // detection probes the filesystem and discovery
+                            // clones the whole document, so neither can run on
+                            // every redraw (scroll, cursor blink, mouse move).
+                            if test_scan_cache.0 != doc.path
+                                || test_scan_cache.1 != current_change_id
+                            {
+                                let has_runner =
+                                    crate::editor::test_runner::detect_runner_with_fallback(
+                                        &project_root,
+                                        &doc.path,
+                                    )
+                                    .is_some();
+                                active_tests = if has_runner {
+                                    let text_lines = buffer::with_buffer(buf_id, |b| {
+                                        Ok(b.lines
+                                            .iter()
+                                            .map(|l| l.trim_end_matches('\n').to_string())
+                                            .collect::<Vec<_>>())
+                                    })
+                                    .unwrap_or_default();
+                                    crate::editor::test_runner::discover_tests(
+                                        &doc.path,
+                                        &text_lines,
+                                    )
+                                } else {
+                                    Vec::new()
+                                };
+                                test_scan_cache = (doc.path.clone(), current_change_id);
+                            }
+                            // Render loops over `active_tests`, which is empty
+                            // when no runner was detected, so this is a no-op in
+                            // that case without a second guard.
                             let line_h = style.code_font_height * 1.2;
                             let dv_rect = dv.rect();
                             // Plain ASCII text so no font has to carry a
@@ -11509,6 +12010,74 @@ pub fn run(
                 }
 
                 // Draw git log overlay.
+                if code_action_active && !code_actions.is_empty() {
+                    crate::editor::app_state::clip_init(width, height);
+                    use crate::editor::view::DrawContext as _;
+                    let ca_w = (width * 0.5).max(400.0).min(width - 20.0);
+                    let ca_x = (width - ca_w) / 2.0;
+                    let ca_y = style.padding_y * 2.0;
+                    let line_h = style.font_height + style.padding_y;
+                    let max_vis = 15usize;
+                    let vis = code_actions.len().min(max_vis);
+                    let ca_h = line_h * (vis as f64 + 1.0) + style.padding_y * 2.0;
+                    draw_ctx.draw_rect(
+                        ca_x - 1.0,
+                        ca_y - 1.0,
+                        ca_w + 2.0,
+                        ca_h + 2.0,
+                        style.divider.to_array(),
+                    );
+                    draw_ctx.draw_rect(ca_x, ca_y, ca_w, ca_h, style.background3.to_array());
+                    let input_y = ca_y + style.padding_y;
+                    let title = format!(
+                        "Code Actions  ({})  [Enter] apply  [Esc] close",
+                        code_actions.len()
+                    );
+                    draw_ctx.draw_text(
+                        style.font,
+                        &title,
+                        ca_x + style.padding_x,
+                        input_y,
+                        style.accent.to_array(),
+                    );
+                    draw_ctx.draw_rect(
+                        ca_x,
+                        input_y + line_h,
+                        ca_w,
+                        style.divider_size,
+                        style.divider.to_array(),
+                    );
+                    let scroll_off = if code_action_selected >= max_vis {
+                        code_action_selected - max_vis + 1
+                    } else {
+                        0
+                    };
+                    for (i, (action_title, _)) in code_actions
+                        .iter()
+                        .enumerate()
+                        .skip(scroll_off)
+                        .take(max_vis)
+                    {
+                        let di = i - scroll_off;
+                        let ry = input_y + line_h + style.divider_size + di as f64 * line_h;
+                        if i == code_action_selected {
+                            draw_ctx.draw_rect(ca_x, ry, ca_w, line_h, style.selection.to_array());
+                        }
+                        let color = if i == code_action_selected {
+                            style.accent.to_array()
+                        } else {
+                            style.dim.to_array()
+                        };
+                        draw_ctx.draw_text(
+                            style.font,
+                            action_title,
+                            ca_x + style.padding_x,
+                            ry + style.padding_y / 2.0,
+                            color,
+                        );
+                    }
+                }
+
                 if subsystems.has_git() && git_log_active {
                     crate::editor::app_state::clip_init(width, height);
                     use crate::editor::view::DrawContext as _;
@@ -11845,6 +12414,52 @@ pub fn run(
                 }
 
                 // Draw LSP hover tooltip.
+                if subsystems.has_lsp()
+                    && signature_help.visible
+                    && !signature_help.text.is_empty()
+                    && let Some(doc) = docs.get(active_tab)
+                {
+                    let dv = &doc.view;
+                    crate::editor::app_state::clip_init(width, height);
+                    use crate::editor::view::DrawContext as _;
+                    let line_h_sig = style.code_font_height * 1.2;
+                    let gutter_w = dv.gutter_width;
+                    let sig_x = dv.rect().x
+                        + gutter_w
+                        + style.padding_x
+                        + (signature_help.col as f64 - 1.0)
+                            * draw_ctx.font_width(style.code_font, "m")
+                        - dv.scroll_x;
+                    // Below the current line so the popup does not cover the call.
+                    let sig_y = dv.rect().y + signature_help.line as f64 * line_h_sig - dv.scroll_y
+                        + style.padding_y / 2.0;
+                    let text: String = signature_help
+                        .text
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(120)
+                        .collect();
+                    let w = draw_ctx.font_width(style.font, &text) + style.padding_x * 2.0;
+                    let h = style.font_height + style.padding_y * 2.0;
+                    draw_ctx.draw_rect(
+                        sig_x - 1.0,
+                        sig_y - 1.0,
+                        w + 2.0,
+                        h + 2.0,
+                        style.divider.to_array(),
+                    );
+                    draw_ctx.draw_rect(sig_x, sig_y, w, h, style.background3.to_array());
+                    draw_ctx.draw_text(
+                        style.font,
+                        &text,
+                        sig_x + style.padding_x,
+                        sig_y + style.padding_y,
+                        style.accent.to_array(),
+                    );
+                }
+
                 if subsystems.has_lsp() && hover.visible && !hover.text.is_empty() {
                     if let Some(doc) = docs.get(active_tab) {
                         let dv = &doc.view;
@@ -12110,7 +12725,10 @@ pub fn run(
             || terminal.visible
             || load_job.is_some()
             || replace_job.is_some()
-            || git_status_job.is_some();
+            || git_status_job.is_some()
+            || git_blame_job.is_some()
+            || git_log_job.is_some()
+            || update_check_job.is_some();
         let timeout = if busy { frame_interval } else { idle_wait };
         crate::window::wait_event(Some(timeout));
     }
@@ -12633,6 +13251,138 @@ fn insert_text_at_caret(b: &mut crate::editor::buffer::BufferState, text: &str) 
 /// Convert pasted text's leading whitespace to match the document's indent
 /// style. Detects whether the clipboard content uses tabs or spaces, then
 /// re-indents every line to the target style (preserving relative depth).
+/// Apply a list of LSP `TextEdit`s to a buffer as one undoable change.
+/// Edits are applied last-position-first so earlier offsets stay valid.
+/// LSP positions are 0-based; character is treated as a char column to match
+/// the rest of this editor's LSP handling. Returns true if any edit applied.
+fn apply_lsp_text_edits(
+    state: &mut crate::editor::buffer::BufferState,
+    edits: &[serde_json::Value],
+) -> bool {
+    use crate::editor::buffer::{self, EditRecord};
+    let mut parsed: Vec<(usize, usize, usize, usize, String)> = Vec::new();
+    for e in edits {
+        let range = e.get("range");
+        let pos = |key: &str, field: &str| -> usize {
+            range
+                .and_then(|r| r.get(key))
+                .and_then(|p| p.get(field))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as usize
+                + 1
+        };
+        let new_text = e
+            .get("newText")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        parsed.push((
+            pos("start", "line"),
+            pos("start", "character"),
+            pos("end", "line"),
+            pos("end", "character"),
+            new_text,
+        ));
+    }
+    if parsed.is_empty() {
+        return false;
+    }
+    parsed.sort_by_key(|e| std::cmp::Reverse((e.0, e.1)));
+    buffer::push_undo(state);
+    for (sl, sc, el, ec, nt) in parsed {
+        let remove = EditRecord {
+            kind: b'r',
+            line1: sl,
+            col1: sc,
+            line2: el,
+            col2: ec,
+            text: String::new(),
+        };
+        let _ = buffer::apply_single_edit(&mut state.lines, &mut state.selections, &remove);
+        if !nt.is_empty() {
+            let insert = EditRecord {
+                kind: b'i',
+                line1: sl,
+                col1: sc,
+                line2: sl,
+                col2: sc,
+                text: nt,
+            };
+            let _ = buffer::apply_single_edit(&mut state.lines, &mut state.selections, &insert);
+        }
+    }
+    state.total_bytes = state.lines.iter().map(|l| l.len() as u64).sum();
+    true
+}
+
+/// Apply an LSP `WorkspaceEdit` (`changes` or `documentChanges` form) across
+/// the affected files, opening any that are not already tabs, and save each so
+/// the edit takes effect on disk. Returns the number of files changed.
+fn apply_lsp_workspace_edit(
+    edit: &serde_json::Value,
+    docs: &mut Vec<crate::editor::open_doc::OpenDoc>,
+    use_git: bool,
+    atomic: bool,
+) -> usize {
+    let mut per_file: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+    if let Some(changes) = edit.get("changes").and_then(|c| c.as_object()) {
+        for (uri, edits) in changes {
+            if let Some(arr) = edits.as_array() {
+                per_file.push((uri.clone(), arr.clone()));
+            }
+        }
+    } else if let Some(dc) = edit.get("documentChanges").and_then(|d| d.as_array()) {
+        for change in dc {
+            let uri = change
+                .get("textDocument")
+                .and_then(|t| t.get("uri"))
+                .and_then(|v| v.as_str());
+            let edits = change.get("edits").and_then(|e| e.as_array());
+            if let (Some(uri), Some(edits)) = (uri, edits) {
+                per_file.push((uri.to_string(), edits.clone()));
+            }
+        }
+    }
+    let mut changed = 0;
+    for (uri, edits) in per_file {
+        let path = uri_to_path(&uri);
+        if path.is_empty() {
+            continue;
+        }
+        let idx = match docs.iter().position(|d| d.path == path) {
+            Some(i) => i,
+            None => {
+                if !std::path::Path::new(&path).exists()
+                    || !crate::editor::open_doc::open_file_into(&path, docs, use_git)
+                {
+                    continue;
+                }
+                docs.len() - 1
+            }
+        };
+        let Some(buf_id) = docs[idx].view.buffer_id else {
+            continue;
+        };
+        let applied = buffer::with_buffer_mut(buf_id, |b| Ok(apply_lsp_text_edits(b, &edits)))
+            .unwrap_or(false);
+        if applied {
+            docs[idx].cached_change_id = -1;
+            docs[idx].cached_render = std::sync::Arc::new(Vec::new());
+            let p = docs[idx].path.clone();
+            if let Ok(Ok(cid)) = buffer::with_buffer(buf_id, |b| {
+                Ok(buffer::save_file(b, &p, b.crlf, atomic).map(|()| b.change_id))
+            }) {
+                docs[idx].saved_change_id = cid;
+                docs[idx].saved_signature =
+                    buffer::with_buffer(buf_id, |b| Ok(buffer::content_signature(&b.lines)))
+                        .unwrap_or(0);
+            }
+            changed += 1;
+        }
+    }
+    changed
+}
+
 fn convert_paste_indent(text: &str, doc_indent_type: &str, doc_indent_size: usize) -> String {
     let size = doc_indent_size.max(1);
     // Detect the paste's dominant indent character: if any non-blank line

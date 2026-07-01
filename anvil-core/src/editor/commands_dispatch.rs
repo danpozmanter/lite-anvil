@@ -100,6 +100,139 @@ match cmd.as_str() {
         }
     }
 }
+"doc:save-all" => {
+    let atomic = config.files.atomic_save;
+    let mut saved = 0usize;
+    let mut failed = 0usize;
+    for doc in docs.iter_mut() {
+        if doc.path.is_empty() || !doc_is_modified(doc) {
+            continue;
+        }
+        let Some(buf_id) = doc.view.buffer_id else {
+            continue;
+        };
+        let path = doc.path.clone();
+        let outcome = buffer::with_buffer(buf_id, |b| {
+            Ok(buffer::save_file(b, &path, b.crlf, atomic).map(|()| b.change_id))
+        });
+        match outcome {
+            Ok(Ok(id)) => {
+                doc.saved_change_id = id;
+                doc.saved_signature =
+                    buffer::with_buffer(buf_id, |b| Ok(buffer::content_signature(&b.lines)))
+                        .unwrap_or(0);
+                if subsystems.has_git() {
+                    crate::editor::git::start_diff(&path);
+                }
+                saved += 1;
+            }
+            _ => failed += 1,
+        }
+    }
+    info_message = Some((
+        if failed > 0 {
+            format!("Saved {saved} file(s), {failed} failed")
+        } else {
+            format!("Saved {saved} file(s)")
+        },
+        Instant::now(),
+    ));
+}
+"doc:reopen-closed-tab" => {
+    // Pop toward the most recently closed file that is not already open and
+    // still exists on disk.
+    while let Some(path) = closed_tabs.pop() {
+        if docs.iter().any(|d| d.path == path) || !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        if open_file_into(&path, &mut docs, use_git()) {
+            active_tab = docs.len() - 1;
+            autoreload.watch(&path);
+            remember_recent_file(&mut recent_files, &path, userdir_path);
+        }
+        break;
+    }
+}
+"doc:match-bracket" => {
+    if let Some(doc) = docs.get(active_tab)
+        && let Some(buf_id) = doc.view.buffer_id
+    {
+        let _ = buffer::with_buffer_mut(buf_id, |b| {
+            let line = *b.selections.get(2).unwrap_or(&1);
+            let col = *b.selections.get(3).unwrap_or(&1);
+            if let Some((l1, c1, l2, c2)) =
+                crate::editor::picker::bracket_pair(&b.lines, line, col)
+            {
+                let (tl, tc) = if (line, col) == (l1, c1) {
+                    (l2, c2)
+                } else {
+                    (l1, c1)
+                };
+                b.selections = vec![tl, tc, tl, tc];
+            }
+            Ok(())
+        });
+    }
+}
+"doc:convert-indentation" => {
+    if let Some(doc) = docs.get_mut(active_tab) {
+        // Flip the document between tabs and spaces, rewriting existing
+        // leading indentation to match the new style.
+        let to_tabs = doc.indent_type != "hard";
+        doc.indent_type = if to_tabs { "hard" } else { "soft" }.to_string();
+        let size = doc.indent_size.max(1);
+        let buf_id = doc.view.buffer_id;
+        if let Some(buf_id) = buf_id {
+            let _ = buffer::with_buffer_mut(buf_id, |b| {
+                buffer::push_undo(b);
+                for line in b.lines.iter_mut() {
+                    let trimmed = line.trim_start_matches([' ', '\t']);
+                    let indent_len = line.len() - trimmed.len();
+                    let mut cols = 0usize;
+                    for ch in line[..indent_len].chars() {
+                        cols += if ch == '\t' { size } else { 1 };
+                    }
+                    let new_indent = if to_tabs {
+                        format!("{}{}", "\t".repeat(cols / size), " ".repeat(cols % size))
+                    } else {
+                        " ".repeat(cols)
+                    };
+                    *line = format!("{new_indent}{trimmed}");
+                }
+                b.change_id += 1;
+                b.min_dirty_line.set(1);
+                Ok(())
+            });
+        }
+        info_message = Some((
+            if to_tabs {
+                "Indentation: tabs".to_string()
+            } else {
+                "Indentation: spaces".to_string()
+            },
+            Instant::now(),
+        ));
+    }
+}
+"doc:toggle-line-endings" => {
+    if let Some(doc) = docs.get(active_tab)
+        && let Some(buf_id) = doc.view.buffer_id
+    {
+        let crlf = buffer::with_buffer_mut(buf_id, |b| {
+            b.crlf = !b.crlf;
+            Ok(b.crlf)
+        })
+        .unwrap_or(false);
+        info_message = Some((
+            if crlf {
+                "Line endings: CRLF (saved on next write)".to_string()
+            } else {
+                "Line endings: LF (saved on next write)".to_string()
+            },
+            Instant::now(),
+        ));
+    }
+}
 "core:new-doc" => {
     if subsystems.has_notes_mode() && !project_root.is_empty() {
         // Notes mode: create a new "Note N.md" on disk and open it,
@@ -470,36 +603,43 @@ match cmd.as_str() {
     }
 }
 "core:check-for-updates" => {
-    if subsystems.has_update_check() {
-        let current = env!("CARGO_PKG_VERSION");
-        match std::process::Command::new("curl")
-            .args(["-sL", "--max-time", "5",
-                   "https://api.github.com/repos/danpozmanter/lite-anvil/releases/latest"])
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                let body = String::from_utf8_lossy(&output.stdout);
-                // Parse the tag_name from the JSON response.
-                let latest = body
-                    .split("\"tag_name\"")
-                    .nth(1)
-                    .and_then(|s| s.split('"').nth(1))
-                    .map(|s| s.trim_start_matches('v'))
-                    .unwrap_or("");
-                if latest.is_empty() {
-                    info_message = Some(("Could not determine latest version".to_string(), Instant::now()));
-                } else if latest == current {
-                    info_message = Some((format!("Up to date (v{current})"), Instant::now()));
-                } else if semver_gt(latest, current) {
-                    info_message = Some((format!("New version available: v{latest} (current: v{current})"), Instant::now()));
-                } else {
-                    info_message = Some((format!("Up to date (v{current})"), Instant::now()));
+    if subsystems.has_update_check() && update_check_job.is_none() {
+        info_message = Some(("Checking for updates...".to_string(), Instant::now()));
+        // curl blocks until its --max-time; run it off the UI thread and
+        // surface the outcome from the per-frame poll.
+        update_check_job = Some(std::thread::spawn(|| {
+            let current = env!("CARGO_PKG_VERSION");
+            match std::process::Command::new("curl")
+                .args([
+                    "-sL",
+                    "--max-time",
+                    "5",
+                    "https://api.github.com/repos/danpozmanter/lite-anvil/releases/latest",
+                ])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let body = String::from_utf8_lossy(&output.stdout);
+                    // Parse the tag_name from the JSON response.
+                    let latest = body
+                        .split("\"tag_name\"")
+                        .nth(1)
+                        .and_then(|s| s.split('"').nth(1))
+                        .map(|s| s.trim_start_matches('v'))
+                        .unwrap_or("");
+                    if latest.is_empty() {
+                        "Could not determine latest version".to_string()
+                    } else if latest == current {
+                        format!("Up to date (v{current})")
+                    } else if semver_gt(latest, current) {
+                        format!("New version available: v{latest} (current: v{current})")
+                    } else {
+                        format!("Up to date (v{current})")
+                    }
                 }
+                _ => "Update check failed (no network or curl not found)".to_string(),
             }
-            _ => {
-                info_message = Some(("Update check failed (no network or curl not found)".to_string(), Instant::now()));
-            }
-        }
+        }));
     }
 }
 "core:cycle-theme" => {
@@ -553,8 +693,13 @@ match cmd.as_str() {
 "core:git-status" => {
     if subsystems.has_git() {
         git_status_active = true;
-        git_status_entries = run_git_status(&project_root);
         git_status_selected = 0;
+        // Run git off the UI thread; the result is applied from the per-frame
+        // poll so a large repo never freezes the editor.
+        if git_status_job.is_none() {
+            let root = project_root.clone();
+            git_status_job = Some(std::thread::spawn(move || run_git_status(&root)));
+        }
     }
 }
 "git:blame" => {
@@ -562,8 +707,11 @@ match cmd.as_str() {
         if let Some(doc) = docs.get(active_tab) {
             if !doc.path.is_empty() {
                 git_blame_active = !git_blame_active;
-                if git_blame_active {
-                    git_blame_lines = run_git_blame(&doc.path);
+                // Blame off the UI thread; the poll fills in the lines.
+                if git_blame_active && git_blame_job.is_none() {
+                    git_blame_lines.clear();
+                    let path = doc.path.clone();
+                    git_blame_job = Some(std::thread::spawn(move || run_git_blame(&path)));
                 }
             }
         }
@@ -574,8 +722,12 @@ match cmd.as_str() {
         if let Some(doc) = docs.get(active_tab) {
             if !doc.path.is_empty() {
                 git_log_active = true;
-                git_log_entries = run_git_log(&doc.path);
                 git_log_selected = 0;
+                // Log off the UI thread; the poll fills in the entries.
+                if git_log_job.is_none() {
+                    let path = doc.path.clone();
+                    git_log_job = Some(std::thread::spawn(move || run_git_log(&path)));
+                }
             }
         }
     }
@@ -777,22 +929,60 @@ match cmd.as_str() {
                     continue;
                 }
                 let atomic = config.files.atomic_save;
-                let saved_id = buffer::with_buffer(buf_id, |b| {
-                    buffer::save_file(b, &path, b.crlf, atomic)
-                        .map_err(|_| buffer::BufferError::UnknownBuffer)?;
-                    Ok(b.change_id)
+                // Carry the write result out through the inner `Result` so a
+                // failed save reports the real error instead of logging "Saved".
+                let saved = buffer::with_buffer(buf_id, |b| {
+                    Ok(buffer::save_file(b, &path, b.crlf, atomic).map(|()| b.change_id))
                 });
-                if let Ok(id) = saved_id {
-                    doc.saved_change_id = id;
-                    doc.saved_signature = buffer::with_buffer(buf_id, |b| Ok(buffer::content_signature(&b.lines))).unwrap_or(0);
+                let save_ok = matches!(saved, Ok(Ok(_)));
+                match saved {
+                    Ok(Ok(id)) => {
+                        doc.saved_change_id = id;
+                        doc.saved_signature = buffer::with_buffer(buf_id, |b| Ok(buffer::content_signature(&b.lines))).unwrap_or(0);
+                        log_to_file(userdir, &format!("Saved {path}"));
+                        // Format on save: the "@save" response re-applies edits
+                        // and re-saves the formatted result.
+                        if config.lsp.format_on_save
+                            && subsystems.has_lsp()
+                            && lsp_state.initialized
+                            && let Some(tid) = lsp_state.transport_id
+                        {
+                            let ext = path.rsplit('.').next().unwrap_or("");
+                            if ext_to_lsp_filetype(ext)
+                                .map(|ft| ft == lsp_state.filetype)
+                                .unwrap_or(false)
+                            {
+                                let uri = path_to_uri(&path);
+                                let tab_size = doc.indent_size.max(1);
+                                let insert_spaces = doc.indent_type != "hard";
+                                let req_id = lsp_state.next_id();
+                                lsp_state.pending_requests.insert(
+                                    req_id,
+                                    "textDocument/formatting@save".to_string(),
+                                );
+                                lsp_state.pending_request_uris.insert(req_id, uri.clone());
+                                let _ = lsp::send_message(
+                                    tid,
+                                    &lsp_formatting_request(req_id, &uri, tab_size, insert_spaces),
+                                );
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        info_message = Some((format!("Save failed: {e}"), Instant::now()));
+                        log_to_file(userdir, &format!("Save failed {path}: {e}"));
+                    }
+                    Err(_) => {
+                        info_message =
+                            Some(("Save failed: buffer unavailable".to_string(), Instant::now()));
+                    }
                 }
-                log_to_file(userdir, &format!("Saved {path}"));
-                if subsystems.has_git() {
+                if save_ok && subsystems.has_git() {
                     // Off the UI thread: the gutter is filled in when main_loop
                     // applies the result from git::drain_diffs by matching path.
                     crate::editor::git::start_diff(&path);
                 }
-                if subsystems.has_lsp() {
+                if save_ok && subsystems.has_lsp() {
                     let save_ext = path.rsplit('.').next().unwrap_or("");
                     if ext_to_lsp_filetype(save_ext).is_some() {
                         if let Some(tid) = lsp_state.transport_id {
@@ -883,31 +1073,6 @@ match cmd.as_str() {
         }
     }
 }
-"doc:upper-case" | "doc:lower-case" => {
-    if let Some(doc) = docs.get_mut(active_tab) {
-        if let Some(buf_id) = doc.view.buffer_id {
-            let is_upper = cmd == "doc:upper-case";
-            let _ = buffer::with_buffer_mut(buf_id, |b| {
-                let text = buffer::get_selected_text(b);
-                if !text.is_empty() {
-                    buffer::push_undo(b);
-                    buffer::delete_selection(b);
-                    let converted = if is_upper { text.to_uppercase() } else { text.to_lowercase() };
-                    let line = b.selections[0];
-                    let col = b.selections[1];
-                    if line <= b.lines.len() {
-                        let l = &mut b.lines[line - 1];
-                        let byte_pos = l.char_indices().nth(col - 1).map(|(i, _)| i).unwrap_or(l.len());
-                        l.insert_str(byte_pos, &converted);
-                        let new_col = col + converted.chars().count();
-                        b.selections = vec![line, col, line, new_col];
-                    }
-                }
-                Ok(())
-            });
-        }
-    }
-}
 "doc:insert-list-item" | "doc:insert-checkbox-item" => {
     // NoteSquirrel-style markdown helpers: insert a "- " or "- [ ] "
     // line, inheriting the indent of the previous line if it was
@@ -950,15 +1115,16 @@ match cmd.as_str() {
             } else {
                 format!("\n{prev_indent}{marker}")
             };
-            // Insert at cursor.
-            let line = &mut b.lines[line_idx];
-            // Find a UTF-8 boundary for the column position (chars).
-            let byte_pos = line
-                .char_indices()
-                .nth(col)
-                .map(|(i, _)| i)
-                .unwrap_or(line.len());
-            line.insert_str(byte_pos, &insert);
+            // Route through the multi-line insert primitive so a leading
+            // newline splits into a new line entry rather than embedding a raw
+            // '\n' inside one line's storage. Columns here are 1-based.
+            buffer::apply_insert_internal(
+                &mut b.lines,
+                &mut b.selections,
+                line_idx + 1,
+                col + 1,
+                &insert,
+            );
             // Move cursor to end of inserted marker.
             let new_col = col + insert.chars().count();
             let new_line = line_idx + insert.matches('\n').count() + 1;
@@ -990,10 +1156,14 @@ match cmd.as_str() {
                 let path = doc.path.clone();
                 let _ = buffer::with_buffer_mut(buf_id, |b| {
                     let mut fresh = buffer::default_buffer_state();
-                    let _ = buffer::load_file(&mut fresh, &path);
-                    b.lines = fresh.lines;
-                    b.change_id = b.change_id.wrapping_add(1).max(1);
-                    b.min_dirty_line.set(1);
+                    // Only replace the buffer when the reload actually read the
+                    // file; on error keep the current contents so a transient
+                    // read failure cannot wipe an unmodified document.
+                    if buffer::load_file(&mut fresh, &path).is_ok() {
+                        b.lines = fresh.lines;
+                        b.change_id = b.change_id.wrapping_add(1).max(1);
+                        b.min_dirty_line.set(1);
+                    }
                     Ok(())
                 });
                 if let Ok((cid, sig)) = buffer::with_buffer(buf_id, |b| {
@@ -1095,6 +1265,128 @@ match cmd.as_str() {
                     }
                 }
             }
+        }
+    }
+}
+"doc:format" => {
+    if subsystems.has_lsp()
+        && lsp_state.initialized
+        && let Some(doc) = docs.get(active_tab)
+        && let Some(tid) = lsp_state.transport_id
+        && !doc.path.is_empty()
+    {
+        let ext = doc.path.rsplit('.').next().unwrap_or("");
+        let is_lsp = ext_to_lsp_filetype(ext)
+            .map(|ft| ft == lsp_state.filetype)
+            .unwrap_or(false);
+        if is_lsp {
+            let uri = path_to_uri(&doc.path);
+            let tab_size = doc.indent_size.max(1);
+            let insert_spaces = doc.indent_type != "hard";
+            let req_id = lsp_state.next_id();
+            lsp_state
+                .pending_requests
+                .insert(req_id, "textDocument/formatting".to_string());
+            lsp_state.pending_request_uris.insert(req_id, uri.clone());
+            let _ = lsp::send_message(
+                tid,
+                &lsp_formatting_request(req_id, &uri, tab_size, insert_spaces),
+            );
+        }
+    }
+}
+"lsp:rename" => {
+    if subsystems.has_lsp()
+        && lsp_state.initialized
+        && let Some(doc) = docs.get(active_tab)
+        && let Some(buf_id) = doc.view.buffer_id
+        && lsp_state.transport_id.is_some()
+        && !doc.path.is_empty()
+    {
+        let ext = doc.path.rsplit('.').next().unwrap_or("");
+        let is_lsp = ext_to_lsp_filetype(ext)
+            .map(|ft| ft == lsp_state.filetype)
+            .unwrap_or(false);
+        if is_lsp {
+            let (cl, cc, word) = buffer::with_buffer(buf_id, |b| {
+                let line = *b.selections.get(2).unwrap_or(&1);
+                let col = *b.selections.get(3).unwrap_or(&1);
+                let word = crate::editor::picker::word_at(&b.lines, line, col);
+                Ok((line, col, word))
+            })
+            .unwrap_or((1, 1, String::new()));
+            lsp_rename_pos = Some((path_to_uri(&doc.path), cl - 1, cc - 1));
+            cmdview_active = true;
+            cmdview_mode = CmdViewMode::LspRename;
+            cmdview_label = "Rename to:".to_string();
+            cmdview_text = word;
+            cmdview_cursor = cmdview_text.len();
+            cmdview_suggestions.clear();
+            cmdview_selected = 0;
+            completion.hide();
+        }
+    }
+}
+"lsp:code-action" => {
+    if subsystems.has_lsp()
+        && lsp_state.initialized
+        && let Some(doc) = docs.get(active_tab)
+        && let Some(buf_id) = doc.view.buffer_id
+        && let Some(tid) = lsp_state.transport_id
+        && !doc.path.is_empty()
+    {
+        let ext = doc.path.rsplit('.').next().unwrap_or("");
+        let is_lsp = ext_to_lsp_filetype(ext)
+            .map(|ft| ft == lsp_state.filetype)
+            .unwrap_or(false);
+        if is_lsp {
+            let uri = path_to_uri(&doc.path);
+            let (l1, c1, l2, c2) = buffer::with_buffer(buf_id, |b| {
+                Ok((
+                    *b.selections.first().unwrap_or(&1),
+                    *b.selections.get(1).unwrap_or(&1),
+                    *b.selections.get(2).unwrap_or(&1),
+                    *b.selections.get(3).unwrap_or(&1),
+                ))
+            })
+            .unwrap_or((1, 1, 1, 1));
+            // Diagnostics overlapping the cursor line give the server context
+            // for quick fixes.
+            let diags: Vec<serde_json::Value> = lsp_state
+                .diagnostics
+                .get(&uri)
+                .map(|ds| {
+                    ds.iter()
+                        .filter(|d| d.start_line < l2 && d.end_line >= l1.saturating_sub(1))
+                        .map(|d| {
+                            serde_json::json!({
+                                "range": {
+                                    "start": {"line": d.start_line, "character": d.start_col},
+                                    "end": {"line": d.end_line, "character": d.end_col}
+                                },
+                                "severity": d.severity,
+                                "message": d.message
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let req_id = lsp_state.next_id();
+            lsp_state
+                .pending_requests
+                .insert(req_id, "textDocument/codeAction".to_string());
+            let _ = lsp::send_message(
+                tid,
+                &lsp_code_action_request(
+                    req_id,
+                    &uri,
+                    l1 - 1,
+                    c1 - 1,
+                    l2 - 1,
+                    c2 - 1,
+                    serde_json::Value::Array(diags),
+                ),
+            );
         }
     }
 }

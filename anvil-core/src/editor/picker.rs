@@ -149,6 +149,27 @@ pub fn next_visible_line(line: usize, folds: &[(usize, usize)]) -> usize {
 }
 
 /// Find matching bracket pair from a position (1-based).
+/// Return the identifier word around a 1-based (line, col) caret position,
+/// or an empty string when the caret is not on a word. Word characters are
+/// alphanumerics and underscore.
+pub fn word_at(lines: &[String], line: usize, col: usize) -> String {
+    let Some(text) = line.checked_sub(1).and_then(|i| lines.get(i)) else {
+        return String::new();
+    };
+    let chars: Vec<char> = text.trim_end_matches('\n').chars().collect();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let idx = col.saturating_sub(1).min(chars.len());
+    let mut start = idx;
+    while start > 0 && is_word(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = idx;
+    while end < chars.len() && is_word(chars[end]) {
+        end += 1;
+    }
+    chars[start..end].iter().collect()
+}
+
 pub fn bracket_pair(
     lines: &[String],
     start_line: usize,

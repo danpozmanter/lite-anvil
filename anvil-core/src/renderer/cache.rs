@@ -70,9 +70,10 @@ pub struct DrawTextCmd {
     /// `Vec<FontRef>` alloc the old shape required (thousands per
     /// frame on a code view) is gone.
     pub fonts: std::sync::Arc<[FontRef]>,
-    /// `Box<str>` rather than `String` so the cmd never carries the
-    /// 8-byte `capacity` field. The buffer is write-once.
-    pub text: Box<str>,
+    /// Byte range of this run's text inside the cache's per-frame arena, so a
+    /// command carries two integers instead of owning a heap allocation.
+    pub text_off: u32,
+    pub text_len: u32,
     pub x: f32,
     pub y: i32,
     pub color: RenColor,
@@ -102,6 +103,10 @@ pub enum Command {
 
 pub struct RenCache {
     pub commands: Vec<Command>,
+    /// Per-frame scratch holding every draw-text run's bytes; commands index
+    /// into it by (offset, len). Cleared each `begin_frame`, so one growable
+    /// buffer replaces a heap allocation per text run.
+    pub text_arena: String,
     /// Per-cell hash grid sized to the live surface, row-major over
     /// `cells_w` x `cells_h`. Indexed as `y * cells_w + x`.
     cells: Vec<u32>,
@@ -128,6 +133,7 @@ impl RenCache {
         // fully (the resize path forces a full invalidate).
         RenCache {
             commands: Vec::new(),
+            text_arena: String::new(),
             cells: Vec::new(),
             cells_prev: Vec::new(),
             cells_w: 0,
@@ -166,6 +172,7 @@ impl RenCache {
         }
         self.last_clip = self.screen;
         self.commands.clear();
+        self.text_arena.clear();
     }
 
     pub fn push_set_clip(&mut self, rect: RenRect) {
@@ -213,7 +220,7 @@ impl RenCache {
     pub fn push_draw_text(
         &mut self,
         fonts: std::sync::Arc<[FontRef]>,
-        text: Box<str>,
+        text: &str,
         x: f32,
         y: i32,
         color: RenColor,
@@ -222,7 +229,7 @@ impl RenCache {
         let Some(first) = fonts.first() else {
             return x;
         };
-        let width = group_text_width(&fonts, &text, tab_offset);
+        let width = group_text_width(&fonts, text, tab_offset);
         let height = first.lock().height;
         let bounding = RenRect {
             x: x as i32,
@@ -231,9 +238,13 @@ impl RenCache {
             h: height,
         };
         if self.last_clip.overlaps(bounding) {
+            let text_off = self.text_arena.len() as u32;
+            self.text_arena.push_str(text);
+            let text_len = text.len() as u32;
             self.commands.push(Command::DrawText(DrawTextCmd {
                 fonts,
-                text,
+                text_off,
+                text_len,
                 x,
                 y,
                 color,
@@ -248,7 +259,7 @@ impl RenCache {
     pub fn compute_dirty_rects(&mut self) -> Vec<RenRect> {
         // Accumulate hashes for each command into the overlapping cells.
         for cmd in &self.commands {
-            let (rect, h) = cmd_hash(cmd);
+            let (rect, h) = cmd_hash(cmd, &self.text_arena);
             if rect.is_empty() {
                 continue;
             }
@@ -294,7 +305,7 @@ fn fnv1a_update(h: &mut u32, data: &[u8]) {
 }
 
 /// Compute the (rect, hash) pair for a command — no heap allocation.
-fn cmd_hash(cmd: &Command) -> (RenRect, u32) {
+fn cmd_hash(cmd: &Command, arena: &str) -> (RenRect, u32) {
     let mut h = HASH_INITIAL;
     match cmd {
         Command::SetClip(r) => {
@@ -310,7 +321,10 @@ fn cmd_hash(cmd: &Command) -> (RenRect, u32) {
         }
         Command::DrawText(dt) => {
             let r = dt.bounding;
-            fnv1a_update(&mut h, dt.text.as_bytes());
+            let text = arena
+                .get(dt.text_off as usize..(dt.text_off as usize + dt.text_len as usize))
+                .unwrap_or("");
+            fnv1a_update(&mut h, text.as_bytes());
             fnv1a_update(&mut h, &dt.x.to_bits().to_ne_bytes());
             fnv1a_update(&mut h, &dt.y.to_ne_bytes());
             fnv1a_update(&mut h, &[dt.color.r, dt.color.g, dt.color.b, dt.color.a]);
@@ -423,6 +437,7 @@ impl PixFmt {
 pub unsafe fn render_dirty_rects(
     surface: *mut SDL_Surface,
     commands: &[Command],
+    arena: &str,
     dirty: &[RenRect],
 ) {
     if dirty.is_empty() {
@@ -488,7 +503,12 @@ pub unsafe fn render_dirty_rects(
                         draw_rect_surface(surface, pixels, pitch, &fmt, *rect, *color, clip);
                     },
                     Command::DrawText(dt) => {
-                        unsafe { draw_text_surface(pixels, pitch, &fmt, dt, clip) };
+                        let text = arena
+                            .get(
+                                dt.text_off as usize..(dt.text_off as usize + dt.text_len as usize),
+                            )
+                            .unwrap_or("");
+                        unsafe { draw_text_surface(pixels, pitch, &fmt, dt, text, clip) };
                     }
                     Command::DrawImage(di) => {
                         unsafe { draw_image_surface(pixels, pitch, &fmt, di, clip) };
@@ -609,6 +629,7 @@ unsafe fn draw_text_surface(
     pitch: usize,
     fmt: &PixFmt,
     dt: &DrawTextCmd,
+    text: &str,
     clip: RenRect,
 ) {
     if dt.color.a == 0 {
@@ -626,12 +647,16 @@ unsafe fn draw_text_surface(
     // whitespace character.
     let (baseline, space_advance, tab_w) = {
         let f = first_font.lock();
-        (f.baseline, f.space_advance, f.space_advance * f.tab_size as f32)
+        (
+            f.baseline,
+            f.space_advance,
+            f.space_advance * f.tab_size as f32,
+        )
     };
 
     // Group fonts: for each glyph, find which font has it.
     let mut pen_x = dt.x;
-    let text_bytes = dt.text.as_bytes();
+    let text_bytes = text.as_bytes();
     let mut byte_pos = 0;
     while byte_pos < text_bytes.len() {
         let ch = next_char(text_bytes, &mut byte_pos);
@@ -902,14 +927,7 @@ mod tests {
         let mut cache = RenCache::new();
         cache.begin_frame(800, 600);
         let fonts: Arc<[FontRef]> = Arc::from(Vec::<FontRef>::new());
-        let x = cache.push_draw_text(
-            fonts,
-            Box::<str>::from("hi"),
-            10.0,
-            20,
-            RenColor::default(),
-            0.0,
-        );
+        let x = cache.push_draw_text(fonts, "hi", 10.0, 20, RenColor::default(), 0.0);
         assert_eq!(x, 10.0);
         assert!(cache.commands.is_empty());
     }

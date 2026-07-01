@@ -712,12 +712,15 @@ pub fn apply_single_edit(
     lines: &mut Vec<String>,
     selections: &mut Vec<usize>,
     edit: &EditRecord,
-) -> EditRecord {
+) -> (EditRecord, i64) {
     // Records replayed from persisted history are not re-validated against the
     // current buffer, so clamp the edit's positions to valid lines and char
     // boundaries before indexing. A self-generated record is already valid, so
     // this is a no-op on the normal path; on a corrupted on-disk record it
     // keeps the byte-slicing in `apply_*_internal` from panicking.
+    //
+    // The second return value is the net byte change so callers can keep
+    // `total_bytes` current without rescanning every line.
     match edit.kind {
         b'i' => {
             let (line1, col1) = sanitize_position(lines, edit.line1, edit.col1);
@@ -725,29 +728,43 @@ pub fn apply_single_edit(
             sanitize_selections(lines, selections);
             let (end_line, end_col) =
                 position_offset(lines, line1, col1, edit.text.chars().count() as isize);
-            EditRecord {
-                kind: b'r',
-                line1,
-                col1,
-                line2: end_line,
-                col2: end_col,
-                text: String::new(),
-            }
+            (
+                EditRecord {
+                    kind: b'r',
+                    line1,
+                    col1,
+                    line2: end_line,
+                    col2: end_col,
+                    text: String::new(),
+                },
+                edit.text.len() as i64,
+            )
         }
         _ => {
             let (line1, col1, line2, col2) =
                 normalize_range(lines, edit.line1, edit.col1, edit.line2, edit.col2);
             let removed = get_text(lines, line1, col1, line2, col2, false);
+            // Removing a range collapses lines `line1..=line2` into the single
+            // line `line1`, so the byte change is that merged line's new length
+            // minus the affected lines' combined length before the edit.
+            let before: i64 = lines[(line1 - 1)..=(line2 - 1)]
+                .iter()
+                .map(|l| l.len() as i64)
+                .sum();
             apply_remove_internal(lines, selections, line1, col1, line2, col2);
             sanitize_selections(lines, selections);
-            EditRecord {
-                kind: b'i',
-                line1,
-                col1,
-                line2: line1,
-                col2: col1,
-                text: removed,
-            }
+            let after = lines[line1 - 1].len() as i64;
+            (
+                EditRecord {
+                    kind: b'i',
+                    line1,
+                    col1,
+                    line2: line1,
+                    col2: col1,
+                    text: removed,
+                },
+                after - before,
+            )
         }
     }
 }
@@ -1065,6 +1082,13 @@ fn save_file_atomic(state: &BufferState, filename: &str, crlf: bool) -> Result<(
         }
 
         fs::rename(&tmp, path)?;
+        // Persist the rename itself: fsync the directory so the new entry
+        // survives a crash right after the rename. Unix-only; Windows has no
+        // directory handle to sync and its rename is already durable.
+        #[cfg(unix)]
+        if let Ok(dir_file) = fs::File::open(dir) {
+            let _ = dir_file.sync_all();
+        }
         Ok(())
     })();
 
@@ -1376,12 +1400,11 @@ pub fn undo(state: &mut BufferState) {
     let redo_change_id = state.change_id;
     let redo_selections = state.selections.clone();
     let mut inverse = Vec::with_capacity(edits.len());
+    let mut byte_delta: i64 = 0;
     for edit in &edits {
-        inverse.push(apply_single_edit(
-            &mut state.lines,
-            &mut state.selections,
-            edit,
-        ));
+        let (inv, delta) = apply_single_edit(&mut state.lines, &mut state.selections, edit);
+        inverse.push(inv);
+        byte_delta += delta;
     }
     // Replay order reverses when stepping forward again.
     inverse.reverse();
@@ -1390,7 +1413,9 @@ pub fn undo(state: &mut BufferState) {
         .push(pack_undo_entry(redo_change_id, &redo_selections, &inverse));
     state.selections = restore_selections;
     state.change_id = restore_change_id;
-    state.total_bytes = state.lines.iter().map(|l| l.len() as u64).sum();
+    // `total_bytes` only gates the huge-file heuristic, so track the edits' net
+    // byte change instead of rescanning every line.
+    state.total_bytes = state.total_bytes.saturating_add_signed(byte_delta);
     state.last_edit = None;
 }
 
@@ -1407,12 +1432,11 @@ pub fn redo(state: &mut BufferState) {
     let undo_change_id = state.change_id;
     let undo_selections = state.selections.clone();
     let mut inverse = Vec::with_capacity(edits.len());
+    let mut byte_delta: i64 = 0;
     for edit in &edits {
-        inverse.push(apply_single_edit(
-            &mut state.lines,
-            &mut state.selections,
-            edit,
-        ));
+        let (inv, delta) = apply_single_edit(&mut state.lines, &mut state.selections, edit);
+        inverse.push(inv);
+        byte_delta += delta;
     }
     inverse.reverse();
     state
@@ -1420,7 +1444,9 @@ pub fn redo(state: &mut BufferState) {
         .push(pack_undo_entry(undo_change_id, &undo_selections, &inverse));
     state.selections = restore_selections;
     state.change_id = restore_change_id;
-    state.total_bytes = state.lines.iter().map(|l| l.len() as u64).sum();
+    // `total_bytes` only gates the huge-file heuristic, so track the edits' net
+    // byte change instead of rescanning every line.
+    state.total_bytes = state.total_bytes.saturating_add_signed(byte_delta);
     state.last_edit = None;
 }
 

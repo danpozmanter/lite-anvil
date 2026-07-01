@@ -16,6 +16,17 @@ pub const NOTEOL: u32 = 0x00000002;
 pub const NOTEMPTY: u32 = 0x00000004;
 pub const NOTEMPTY_ATSTART: u32 = 0x00000008;
 
+/// Upper bound on PCRE2 match steps for a single match attempt. PCRE2's default
+/// effort is effectively unbounded, so this caps catastrophic backtracking to a
+/// value generous for any whole-document scan yet small enough that a runaway
+/// pattern returns an error rather than stalling the caller. Enforced on both
+/// the interpreter and the JIT.
+const MATCH_LIMIT: u32 = 1_000_000;
+
+/// Upper bound on PCRE2 backtracking depth for a single match attempt, bounding
+/// deeply nested quantifiers on the interpreter path.
+const DEPTH_LIMIT: u32 = 1_000;
+
 /// Compile-time option flags.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CompileFlags {
@@ -73,8 +84,13 @@ impl NativeRegex {
         if flags.dotall {
             b.dotall(true);
         }
+        // The pcre2 0.2.11 safe API exposes no match/depth limit setter, so the
+        // bounds are conveyed to PCRE2 through its start-of-pattern option verbs.
+        // These consume no input and create no capture groups, so match offsets
+        // and group numbering are unchanged; a breach surfaces as a match error.
+        let bounded = format!("(*LIMIT_MATCH={MATCH_LIMIT})(*LIMIT_DEPTH={DEPTH_LIMIT}){pattern}");
         let re = b
-            .build(pattern)
+            .build(&bounded)
             .map_err(|e| RegexError::Compile(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(re),
@@ -180,10 +196,18 @@ impl NativeRegex {
                     result.extend_from_slice(&repl_buf);
                     count += 1;
                     if me == ms {
-                        if pos < subject.len() {
-                            result.push(subject[pos]);
+                        // A zero-width match consumes no input, so step over the
+                        // character at the match position to guarantee forward
+                        // progress. The subject[pos..ms] gap is already copied;
+                        // emit that stepped-over character here so it survives
+                        // the substitution instead of being skipped.
+                        if me < subject.len() {
+                            let end = (me + utf8_char_len(subject[me])).min(subject.len());
+                            result.extend_from_slice(&subject[me..end]);
+                            pos = end;
+                        } else {
+                            pos = me + 1;
                         }
-                        pos = me + 1;
                     } else {
                         pos = me;
                     }
@@ -250,13 +274,20 @@ impl Iterator for FindIter<'_> {
     }
 }
 
+/// Byte length of the UTF-8 character whose lead byte is `b`. Continuation and
+/// invalid lead bytes yield 1 so stepping always makes forward progress.
+fn utf8_char_len(b: u8) -> usize {
+    match b {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf7 => 4,
+        _ => 1,
+    }
+}
+
 /// Apply PCRE2 extended replacement into `out`: `$$` -> `$`, `$0`/`$n`/`${n}` -> group.
-fn apply_replacement_into(
-    repl: &[u8],
-    subject: &[u8],
-    locs: &CaptureLocations,
-    out: &mut Vec<u8>,
-) {
+fn apply_replacement_into(repl: &[u8], subject: &[u8], locs: &CaptureLocations, out: &mut Vec<u8>) {
     let mut i = 0;
     while i < repl.len() {
         if repl[i] != b'$' || i + 1 >= repl.len() {
@@ -377,5 +408,27 @@ mod tests {
         let (result, _) = re.gsub(b"x", b"$$", 0).unwrap();
         assert_eq!(result, b"$");
     }
-}
 
+    #[test]
+    fn gsub_zero_width_boundary_preserves_stepped_char() {
+        let re = NativeRegex::compile_with(r"\b", "").unwrap();
+        let (result, count) = re.gsub(b"  x y", b"|", 0).unwrap();
+        assert_eq!(result, b"  |x| |y|");
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn gsub_non_empty_match_still_replaces() {
+        let re = NativeRegex::compile_with(r"\d+", "").unwrap();
+        let (result, count) = re.gsub(b"a1b22c333", b"#", 0).unwrap();
+        assert_eq!(result, b"a#b#c#");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn pathological_pattern_errors_instead_of_hanging() {
+        let re = NativeRegex::compile_with(r"(a+)+$", "").unwrap();
+        let subject = "a".repeat(40) + "!";
+        assert!(re.captures_at(subject.as_bytes(), 0).is_err());
+    }
+}
