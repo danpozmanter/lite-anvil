@@ -76,3 +76,53 @@ fn baseline_web_ready() {
 fn baseline_changelog() {
     time_tokenize("/home/daniel/dev/lite-anvil/changelog.md", "changelog.md");
 }
+
+#[test]
+#[ignore]
+fn baseline_gossamer_changelog() {
+    time_tokenize(
+        "/home/daniel/dev/gossamer/CHANGELOG.md",
+        "gossamer CHANGELOG.md",
+    );
+    full_document_profile(
+        "/home/daniel/dev/gossamer/CHANGELOG.md",
+        "gossamer CHANGELOG.md",
+    );
+}
+
+/// One full-document tokenize pass, reporting total time and the slowest
+/// individual lines — the cost of tokenizing the whole file from a cold
+/// cache (e.g. first display) with the viewport deep in the file.
+fn full_document_profile(path: &str, label: &str) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let datadir = "/home/daniel/dev/lite-anvil/data";
+    let index = syntax::load_syntax_index(datadir);
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    let entry = syntax::match_syntax_entry(filename, &index).unwrap();
+    let def = entry.load_full().unwrap();
+    let compiled = tokenizer::compile_from_definition(&def).unwrap();
+
+    let lines = buffer::split_lines(&text);
+    let mut worst: Vec<(std::time::Duration, usize, usize)> = Vec::new();
+    let mut state: Vec<u8> = Vec::new();
+    let start = std::time::Instant::now();
+    for (i, line) in lines.iter().enumerate() {
+        let t0 = std::time::Instant::now();
+        let (_, end) = tokenizer::tokenize_line_with_state(&compiled, line, &state);
+        let dt = t0.elapsed();
+        state = end;
+        worst.push((dt, i + 1, line.len()));
+    }
+    let total = start.elapsed();
+    worst.sort_by_key(|b| std::cmp::Reverse(b.0));
+    eprintln!(
+        "{label}: full-document tokenize of {} lines = {:?}",
+        lines.len(),
+        total
+    );
+    for (dt, ln, len) in worst.iter().take(10) {
+        eprintln!("  line {ln} ({len} bytes): {dt:?}");
+    }
+}

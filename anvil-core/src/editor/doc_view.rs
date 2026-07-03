@@ -783,6 +783,181 @@ mod tests {
         assert!(v.focusable());
         assert!(v.buffer_id.is_none());
     }
+
+    use crate::editor::open_doc::TokenCache;
+    use crate::editor::syntax::{PatternRule, PatternSpec, SyntaxDefinition, TokenType};
+    use crate::editor::types::Rect;
+
+    fn test_syntax() -> crate::editor::tokenizer::CompiledSyntax {
+        let def = SyntaxDefinition {
+            patterns: vec![
+                PatternRule {
+                    pattern: Some(PatternSpec::Pair {
+                        open: "/%*".to_string(),
+                        close: "%*/".to_string(),
+                        escape: None,
+                    }),
+                    regex: None,
+                    token_type: TokenType::Single("comment".to_string()),
+                    syntax: None,
+                },
+                PatternRule {
+                    pattern: Some(PatternSpec::Single("%a+".to_string())),
+                    regex: None,
+                    token_type: TokenType::Single("keyword".to_string()),
+                    syntax: None,
+                },
+            ],
+            ..Default::default()
+        };
+        crate::editor::tokenizer::compile_from_definition(&def).unwrap()
+    }
+
+    fn test_doc(lines: &[&str]) -> (u64, DocView, StyleContext) {
+        let mut state = buffer::default_buffer_state();
+        state.lines = lines.iter().map(|s| s.to_string()).collect();
+        let buf_id = buffer::insert_buffer(state);
+        let mut dv = DocView::new();
+        dv.buffer_id = Some(buf_id);
+        dv.set_rect(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 800.0,
+            h: 120.0,
+        });
+        let style = StyleContext {
+            code_font_height: 10.0,
+            ..Default::default()
+        };
+        (buf_id, dv, style)
+    }
+
+    fn build(
+        buf_id: u64,
+        dv: &DocView,
+        style: &StyleContext,
+        syntax: &crate::editor::tokenizer::CompiledSyntax,
+        cache: &std::cell::RefCell<TokenCache>,
+    ) -> Vec<RenderLine> {
+        build_render_lines(buf_id, dv, style, "c", Some(syntax), None, &[], Some(cache))
+    }
+
+    #[test]
+    fn token_cache_reuses_unchanged_lines_after_edit() {
+        let syntax = test_syntax();
+        let (buf_id, dv, style) = test_doc(&["alpha\n", "bravo\n", "charlie\n", "delta\n"]);
+        let cache = std::cell::RefCell::new(TokenCache::default());
+        build(buf_id, &dv, &style, &syntax, &cache);
+        let line1_before = cache
+            .borrow()
+            .lines
+            .get(&1)
+            .unwrap()
+            .tokens
+            .clone()
+            .unwrap();
+        // Edit line 3 the way every command handler does: push_undo first,
+        // then mutate the line in place.
+        buffer::with_buffer_mut(buf_id, |b| {
+            buffer::push_undo(b);
+            b.lines[2] = "changed\n".to_string();
+            Ok(())
+        })
+        .unwrap();
+        build(buf_id, &dv, &style, &syntax, &cache);
+        let c = cache.borrow();
+        assert!(
+            std::sync::Arc::ptr_eq(
+                &line1_before,
+                &c.lines.get(&1).unwrap().tokens.clone().unwrap()
+            ),
+            "an edit on line 3 must not re-tokenize unchanged line 1"
+        );
+        assert_eq!(
+            c.lines.get(&3).unwrap().tokens.clone().unwrap()[0].text,
+            "changed"
+        );
+        buffer::remove_buffer(buf_id);
+    }
+
+    #[test]
+    fn token_cache_revalidates_downstream_when_state_changes() {
+        let syntax = test_syntax();
+        let (buf_id, dv, style) = test_doc(&["alpha\n", "bravo\n", "charlie\n"]);
+        let cache = std::cell::RefCell::new(TokenCache::default());
+        build(buf_id, &dv, &style, &syntax, &cache);
+        assert_eq!(
+            cache
+                .borrow()
+                .lines
+                .get(&2)
+                .unwrap()
+                .tokens
+                .clone()
+                .unwrap()[0]
+                .token_type
+                .as_ref(),
+            "keyword"
+        );
+        // Open an unterminated block comment on line 1: every later line's
+        // start state changes, so their cached tokens must be recomputed.
+        buffer::with_buffer_mut(buf_id, |b| {
+            buffer::push_undo(b);
+            b.lines[0] = "/* open\n".to_string();
+            Ok(())
+        })
+        .unwrap();
+        build(buf_id, &dv, &style, &syntax, &cache);
+        let c = cache.borrow();
+        assert_eq!(
+            c.lines.get(&2).unwrap().tokens.clone().unwrap()[0]
+                .token_type
+                .as_ref(),
+            "comment",
+            "line 2 must re-tokenize with the comment carry-over state"
+        );
+        buffer::remove_buffer(buf_id);
+    }
+
+    #[test]
+    fn token_cache_survives_line_insertion() {
+        let syntax = test_syntax();
+        let (buf_id, dv, style) = test_doc(&["alpha\n", "bravo\n", "charlie\n"]);
+        let cache = std::cell::RefCell::new(TokenCache::default());
+        build(buf_id, &dv, &style, &syntax, &cache);
+        let line1_before = cache
+            .borrow()
+            .lines
+            .get(&1)
+            .unwrap()
+            .tokens
+            .clone()
+            .unwrap();
+        buffer::with_buffer_mut(buf_id, |b| {
+            buffer::push_undo(b);
+            b.lines.insert(1, "inserted\n".to_string());
+            Ok(())
+        })
+        .unwrap();
+        build(buf_id, &dv, &style, &syntax, &cache);
+        let c = cache.borrow();
+        assert!(
+            std::sync::Arc::ptr_eq(
+                &line1_before,
+                &c.lines.get(&1).unwrap().tokens.clone().unwrap()
+            ),
+            "inserting a line below must not re-tokenize line 1"
+        );
+        assert_eq!(
+            c.lines.get(&2).unwrap().tokens.clone().unwrap()[0].text,
+            "inserted"
+        );
+        assert_eq!(
+            c.lines.get(&3).unwrap().tokens.clone().unwrap()[0].text,
+            "bravo"
+        );
+        buffer::remove_buffer(buf_id);
+    }
 }
 
 // ── Syntax color lookup and render-line builder ─────────────────────────
@@ -1204,57 +1379,62 @@ pub(crate) fn build_render_lines(
         // below is O(1) instead of O(folds) per line.
         let folded_lines: std::collections::HashSet<usize> =
             dv.folds.iter().flat_map(|&(fs, fe)| fs + 1..=fe).collect();
-        // Invalidate the per-line tokenize cache from the lowest changed line
-        // downward when the buffer has changed since we last populated it.
-        // Lines above that watermark keep valid content, line-number keys, and
-        // carry-over state, so a keystroke deep in a large file no longer
-        // re-tokenizes from line 1. A line-count change shifts every lower key,
-        // so fall back to a full clear. Pure scrolling (no change_id change)
-        // stays free.
-        if let Some(cache_cell) = token_cache {
-            let mut cache = cache_cell.borrow_mut();
-            if cache.change_id != b.change_id {
-                let mut from = b.min_dirty_line.get();
-                if from == usize::MAX || cache.line_count != b.lines.len() {
-                    from = 1;
+        // Resolve one line against the cache. An entry stamped with the
+        // buffer's current `change_id` is trusted as-is (pure scrolling does
+        // no hashing); an older entry is reused only when provably current —
+        // its content hash and the tokenizer state entering the line both
+        // match — and is then re-stamped. Anything else re-tokenizes with the
+        // running state and replaces the entry. This keeps an edit's cost
+        // proportional to the lines it actually affected instead of the whole
+        // document, and stays correct for entries first touched long after
+        // the edit (below the viewport, inside folds). `need_tokens` is false
+        // for the above-viewport state walk, which only threads the
+        // carry-over state and so accepts token-evicted entries.
+        let resolve_line = |ln: usize,
+                            state: &mut Vec<u8>,
+                            syntax: &CompiledSyntax,
+                            need_tokens: bool|
+         -> Option<std::sync::Arc<Vec<tokenizer::Token>>> {
+            let raw_line = b.lines.get(ln - 1).map(|s| s.as_str()).unwrap_or("");
+            if let Some(cache_cell) = token_cache {
+                {
+                    let mut cache = cache_cell.borrow_mut();
+                    if let Some(entry) = cache.lines.get_mut(&ln) {
+                        let valid = entry.change_id == b.change_id
+                            || (entry.content_hash == crate::editor::open_doc::line_hash(raw_line)
+                                && entry.start_state == *state);
+                        if valid && (!need_tokens || entry.tokens.is_some()) {
+                            entry.change_id = b.change_id;
+                            state.clone_from(&entry.end_state);
+                            return entry.tokens.clone();
+                        }
+                    }
                 }
-                if from <= 1 {
-                    cache.lines.clear();
-                    cache.line_end_states.clear();
-                } else {
-                    cache.lines.retain(|&k, _| k < from);
-                    cache.line_end_states.retain(|&k, _| k < from);
-                }
-                cache.change_id = b.change_id;
-                cache.line_count = b.lines.len();
-                b.min_dirty_line.set(usize::MAX);
+                let (computed, end) = tokenizer::tokenize_line_with_state(syntax, raw_line, state);
+                let arc = std::sync::Arc::new(computed);
+                let entry = crate::editor::open_doc::CachedLine {
+                    change_id: b.change_id,
+                    content_hash: crate::editor::open_doc::line_hash(raw_line),
+                    start_state: std::mem::replace(state, end),
+                    tokens: Some(std::sync::Arc::clone(&arc)),
+                    end_state: state.clone(),
+                };
+                cache_cell.borrow_mut().lines.insert(ln, entry);
+                Some(arc)
+            } else {
+                let (computed, end) = tokenizer::tokenize_line_with_state(syntax, raw_line, state);
+                *state = end;
+                Some(std::sync::Arc::new(computed))
             }
-        }
+        };
         // Walk every line from 1 up to `first` to compute the multi-line
         // tokenizer state that line `first` should start with — needed for
         // block comments / pair-strings that begin above the viewport.
-        // Cached states make this O(1) on the happy path (pure scroll).
+        // Cached states make this O(1) per line on the happy path.
         let mut state: Vec<u8> = Vec::new();
         if let Some(syntax) = compiled {
             for ln in 1..first.min(b.lines.len() + 1) {
-                let cached = if let Some(cache_cell) = token_cache {
-                    cache_cell.borrow().line_end_states.get(&ln).cloned()
-                } else {
-                    None
-                };
-                state = if let Some(end) = cached {
-                    end
-                } else {
-                    let line_text = b.lines.get(ln - 1).map(|s| s.as_str()).unwrap_or("");
-                    let (_, end) = tokenizer::tokenize_line_with_state(syntax, line_text, &state);
-                    if let Some(cache_cell) = token_cache {
-                        cache_cell
-                            .borrow_mut()
-                            .line_end_states
-                            .insert(ln, end.clone());
-                    }
-                    end
-                };
+                resolve_line(ln, &mut state, syntax, false);
             }
         }
         while i <= last && i <= b.lines.len() {
@@ -1265,32 +1445,10 @@ pub(crate) fn build_render_lines(
             let raw_line = &b.lines[i - 1];
             let text = raw_line.trim_end_matches('\n');
             let mut tokens: Vec<RenderToken> = if let Some(syntax) = compiled {
+                // `need_tokens` guarantees a Some return: a hit without tokens
+                // falls through to a fresh tokenize.
                 let toks_arc: std::sync::Arc<Vec<tokenizer::Token>> =
-                    if let Some(cache_cell) = token_cache {
-                        let mut cache = cache_cell.borrow_mut();
-                        if let Some(existing) = cache.lines.get(&i) {
-                            // Cache hit: advance state from the matching cached
-                            // end-state so the next line still sees the right
-                            // open-pair carryover.
-                            if let Some(end) = cache.line_end_states.get(&i).cloned() {
-                                state = end;
-                            }
-                            existing.clone()
-                        } else {
-                            let (computed, end) =
-                                tokenizer::tokenize_line_with_state(syntax, raw_line, &state);
-                            let arc = std::sync::Arc::new(computed);
-                            cache.lines.insert(i, arc.clone());
-                            cache.line_end_states.insert(i, end.clone());
-                            state = end;
-                            arc
-                        }
-                    } else {
-                        let (computed, end) =
-                            tokenizer::tokenize_line_with_state(syntax, raw_line, &state);
-                        state = end;
-                        std::sync::Arc::new(computed)
-                    };
+                    resolve_line(i, &mut state, syntax, true).unwrap_or_default();
                 toks_arc
                     .iter()
                     .map(|t| {
@@ -1492,16 +1650,20 @@ pub(crate) fn build_render_lines(
             }
             i += 1;
         }
-        // Bound the per-line token cache to the viewport plus a margin so
+        // Bound the heavy token lists to the viewport plus a margin so
         // scrolling through a large file does not retain tokens for every line
-        // ever shown. The tiny end-state map is left intact so incremental
-        // re-tokenization above the viewport stays cheap.
+        // ever shown. Only `tokens` is dropped — the cheap hash/state skeleton
+        // stays so the above-viewport state walk remains lookup-only.
         if let Some(cache_cell) = token_cache {
             let mut cache = cache_cell.borrow_mut();
             if cache.lines.len() > TOKEN_CACHE_MAX_LINES {
                 let lo = first.saturating_sub(TOKEN_CACHE_MARGIN);
                 let hi = last + TOKEN_CACHE_MARGIN;
-                cache.lines.retain(|&k, _| k >= lo && k <= hi);
+                for (&k, entry) in cache.lines.iter_mut() {
+                    if k < lo || k > hi {
+                        entry.tokens = None;
+                    }
+                }
             }
         }
         Ok(render)

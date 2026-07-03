@@ -1,5 +1,12 @@
 # Change Log
 
+## [2.14.1] - 2026-07-03 - Editing responsiveness in large files.
+
+### Performance
+
+* Editing deep in a large file no longer stalls the UI. The per-line token cache validates each line by content fingerprint and tokenizer carry-over state instead of relying on a dirty-line watermark, so a keystroke, backspace, newline, paste, or undo re-tokenizes only the lines it actually affected. Previously every non-merged edit cleared the whole cache and re-tokenized from line 1 to the viewport (locally ~100 ms per keystroke around line 1500 of a large markdown changelog); those edits now cost ~10 ms, and inserting or deleting lines - which always forced the full clear - costs the same as any other edit.
+* Size-cap eviction in the token cache now drops only the heavy token lists and keeps each line's fingerprint and tokenizer-state skeleton, so scrolling back through evicted regions of a very large file re-tokenizes only what is redisplayed.
+
 ## [2.14.0] - 2026-07-01 - Editor and LSP features; correctness, stability, and performance.
 
 ### Features

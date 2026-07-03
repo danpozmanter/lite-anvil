@@ -4456,7 +4456,6 @@ pub fn run(
                                                 // its current value so the render cache
                                                 // doesn't hit on the stale lines.
                                                 b.change_id = b.change_id.wrapping_add(1).max(1);
-                                                b.min_dirty_line.set(1);
                                             }
                                             Ok(())
                                         });
@@ -7030,7 +7029,6 @@ pub fn run(
                                                             &ch.to_string(),
                                                         );
                                                         b.change_id += 1;
-                                                        b.min_dirty_line.set(1);
                                                     }
                                                 }
                                                 Ok(())
@@ -8992,7 +8990,6 @@ pub fn run(
                                 if buffer::load_file(&mut fresh, &doc.path).is_ok() {
                                     b.lines = fresh.lines;
                                     b.change_id += 1;
-                                    b.min_dirty_line.set(1);
                                 }
                                 Ok(())
                             });
@@ -9213,7 +9210,6 @@ pub fn run(
                             // Bump past the current value to invalidate every
                             // downstream cache.
                             b.change_id = b.change_id.wrapping_add(1).max(1);
-                            b.min_dirty_line.set(1);
                             Ok(())
                         });
                         // Force the render cache to rebuild next frame rather

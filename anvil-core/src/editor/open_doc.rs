@@ -18,36 +18,54 @@ use crate::editor::storage;
 use crate::editor::tokenizer::Token;
 use crate::editor::view::View;
 
-/// Per-buffer tokenizer result cache. Stores `tokenize_line` output keyed
-/// by 1-based line index, invalidated in bulk when the buffer's
-/// `change_id` advances. Lets scrolling reuse tokens for lines that
-/// haven't changed instead of re-running the regex engine every frame.
-pub(crate) struct TokenCache {
+/// One line's cached tokenize result, self-describing enough to be
+/// validated against the buffer: an entry stamped with the buffer's
+/// current `change_id` is trusted as-is; an older entry is reusable only
+/// while the line's content hash and the tokenizer state entering the
+/// line both match what it was built from. Tokenization is deterministic
+/// over `(content, start_state)`, so a matching entry is always correct
+/// no matter what edits happened elsewhere in the buffer.
+pub(crate) struct CachedLine {
+    /// Buffer `change_id` when the entry was created or last validated.
     pub change_id: i64,
-    /// Buffer line count when the cache was last synced. A mismatch means
-    /// whole lines were inserted or removed, which shifts every lower
-    /// line-number key, so the cache falls back to a full rebuild.
-    pub line_count: usize,
-    pub lines: HashMap<usize, std::sync::Arc<Vec<Token>>>,
-    /// Tokenizer state at the END of each line. The byte stack mirrors
-    /// the legacy lite-xl format: each level holds a 1-based pattern
-    /// index for a pair pattern that is still open at that nesting
-    /// depth (e.g. an unterminated `/* …`). An empty vec means the
-    /// line finished outside any multi-line construct. Threaded into
-    /// the next line so block comments, multi-line strings, and other
-    /// paired constructs span line boundaries.
-    pub line_end_states: HashMap<usize, Vec<u8>>,
+    /// FNV-1a fingerprint of the line's raw content (see [`line_hash`]).
+    pub content_hash: u64,
+    /// Tokenizer state entering the line. The byte stack mirrors the
+    /// legacy lite-xl format: each level holds a 1-based pattern index
+    /// for a pair pattern still open at that nesting depth (e.g. an
+    /// unterminated `/* …`). Empty means outside any multi-line
+    /// construct.
+    pub start_state: Vec<u8>,
+    /// `None` after size-cap eviction: the heavy token list is dropped
+    /// while the cheap hash/state skeleton stays, so the above-viewport
+    /// state walk never re-tokenizes evicted lines.
+    pub tokens: Option<std::sync::Arc<Vec<Token>>>,
+    /// Tokenizer state at the end of the line, threaded into the next
+    /// line so block comments and other paired constructs span line
+    /// boundaries.
+    pub end_state: Vec<u8>,
 }
 
-impl Default for TokenCache {
-    fn default() -> Self {
-        Self {
-            change_id: -1,
-            line_count: 0,
-            lines: HashMap::new(),
-            line_end_states: HashMap::new(),
-        }
+/// FNV-1a 64-bit content fingerprint for cached-line validation.
+pub(crate) fn line_hash(text: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in text.as_bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
+    h
+}
+
+/// Per-buffer tokenizer result cache keyed by 1-based line index.
+///
+/// Entries validate themselves against the buffer (see [`CachedLine`]), so
+/// an edit anywhere re-tokenizes only the changed lines and any lines whose
+/// carry-over state actually shifted — never the whole document. Entries
+/// stamped with the buffer's current `change_id` are trusted without
+/// hashing, keeping pure scrolling free.
+#[derive(Default)]
+pub(crate) struct TokenCache {
+    pub lines: HashMap<usize, CachedLine>,
 }
 
 /// Everything the editor tracks per open tab: the view state, the path

@@ -155,23 +155,6 @@ pub struct BufferState {
     /// editable but not byte-preserving, so saving over the original would lose
     /// the invalid bytes; callers surface this so the rewrite is not silent.
     pub lossy_load: bool,
-    /// Lowest 1-based line whose content (or position) changed since a token
-    /// cache last consumed this buffer; `usize::MAX` means "nothing tracked".
-    /// Edits that know their exact line record it here so the per-line
-    /// tokenize cache can invalidate only from that line downward instead of
-    /// re-tokenizing from the top of the document on every keystroke. Edits
-    /// that touch an unknown or document-wide range record `1` (full
-    /// invalidation). Interior-mutable so the immutable render path can reset
-    /// it after syncing.
-    pub min_dirty_line: std::cell::Cell<usize>,
-}
-
-impl BufferState {
-    /// Record that line `line` (1-based) changed, lowering the dirty watermark.
-    pub fn mark_dirty_line(&self, line: usize) {
-        self.min_dirty_line
-            .set(self.min_dirty_line.get().min(line.max(1)));
-    }
 }
 
 impl BufferState {
@@ -212,7 +195,6 @@ pub fn default_buffer_state() -> BufferState {
         last_edit: None,
         search_cache: None,
         lossy_load: false,
-        min_dirty_line: std::cell::Cell::new(usize::MAX),
     }
 }
 
@@ -1332,10 +1314,6 @@ fn finalize_pending(state: &mut BufferState) {
 /// even capturing the base would lock up the editor. Callers don't need to
 /// special-case huge files; the function handles it.
 pub fn push_undo(state: &mut BufferState) {
-    // General edit entry point: the affected range is not known here, so fall
-    // back to full invalidation. The single-character typing path
-    // (`push_undo_mergeable`) records a precise line for the common case.
-    state.min_dirty_line.set(1);
     if state.is_huge() {
         state.pending = None;
         state.redo.clear();
@@ -1373,10 +1351,6 @@ pub fn push_undo_mergeable(
             if line == prev_line && col == prev_col + 1 && (now - prev_time) < UNDO_MERGE_TIMEOUT {
                 state.last_edit = Some((now, line, col, true, false));
                 state.change_id += 1;
-                // A merged keystroke only edits this one line, and it can only
-                // follow another single-char insert (so any earlier edit this
-                // frame already lowered the watermark): record just this line.
-                state.mark_dirty_line(line);
                 return true;
             }
         }
@@ -1389,7 +1363,6 @@ pub fn push_undo_mergeable(
 /// Undo the most recent edit by replaying its packed inverse record onto
 /// the buffer and pushing the corresponding forward record onto redo.
 pub fn undo(state: &mut BufferState) {
-    state.min_dirty_line.set(1);
     finalize_pending(state);
     let Some(entry) = state.undo.pop() else {
         return;
@@ -1421,7 +1394,6 @@ pub fn undo(state: &mut BufferState) {
 
 /// Redo the most recently undone edit, the mirror of `undo`.
 pub fn redo(state: &mut BufferState) {
-    state.min_dirty_line.set(1);
     finalize_pending(state);
     let Some(entry) = state.redo.pop() else {
         return;
@@ -2196,27 +2168,23 @@ mod tests {
     }
 
     #[test]
-    fn merge_typing_tracks_only_its_line_other_edits_full_invalidate() {
+    fn merge_typing_advances_change_id_per_keystroke() {
         let mut state = default_buffer_state();
         state.lines = vec!["x\n".to_string(); 100];
         state.selections = vec![50, 1, 50, 1];
 
-        // First keystroke can't merge (no prior insert): full invalidation.
+        // First keystroke can't merge (no prior insert).
+        let before = state.change_id;
         let merged = push_undo_mergeable(&mut state, 50, 1, false);
         assert!(!merged);
-        assert_eq!(state.min_dirty_line.get(), 1);
+        assert!(state.change_id > before);
 
-        // The render path resets the watermark once it has consumed it.
-        state.min_dirty_line.set(usize::MAX);
-
-        // Adjacent keystroke merges and records only its own line.
+        // Adjacent keystroke merges but still advances change_id so the
+        // token cache re-validates the edited line.
+        let before = state.change_id;
         let merged = push_undo_mergeable(&mut state, 50, 2, false);
         assert!(merged);
-        assert_eq!(state.min_dirty_line.get(), 50);
-
-        // Undo conservatively forces a full invalidation.
-        undo(&mut state);
-        assert_eq!(state.min_dirty_line.get(), 1);
+        assert!(state.change_id > before);
     }
 
     #[cfg(unix)]
