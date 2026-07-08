@@ -1842,6 +1842,83 @@ mod tests {
         }
     }
 
+    /// Regression: a bare `==` used as a comparison operator inside inline
+    /// code (e.g. `` `VmHWM == VmRSS` ``) must not open a `==text==`
+    /// highlighting pair that swallows the rest of the document as a
+    /// literal/string span. The opener requires non-whitespace immediately
+    /// after it, so ` == ` (spaces on both sides) does not match.
+    #[test]
+    fn markdown_equal_pair_does_not_span_lines_on_bare_eq() {
+        let defs = crate::editor::syntax::load_syntax_assets(&data_dir());
+        let md = defs.iter().find(|d| d.name == "Markdown").unwrap();
+        let compiled = compile_from_definition(md).unwrap();
+
+        // Line 1 has a bare ` == ` inside backticks; it must not open a pair.
+        let (t1, s1) = tokenize_line_with_state(&compiled, "measured `VmHWM == VmRSS` here", &[]);
+        // State must be empty (no open pair carried to the next line).
+        assert!(
+            s1.iter().all(|&v| v == 0),
+            "bare `==` opened a pair: state={:?} tokens={:?}",
+            s1,
+            t1
+        );
+
+        // The following line must tokenize independently, not as the body of
+        // an open `==` literal span.
+        let (t2, _s2) = tokenize_line_with_state(&compiled, "window (20720 == 20720 kB)", &s1);
+        assert!(
+            t2.iter()
+                .any(|tk| tk.token_type.as_ref() != "literal" && tk.text.trim() == "window"),
+            "second line swallowed into literal span: {:?}",
+            t2
+        );
+
+        // Genuine `==highlight==` still works on one line.
+        let (t3, s3) = tokenize_line_with_state(&compiled, "see ==important== note", &[]);
+        assert!(
+            s3.iter().all(|&v| v == 0),
+            "genuine highlight left an open pair: state={:?}",
+            s3
+        );
+        assert!(
+            t3.iter()
+                .any(|tk| tk.token_type.as_ref() == "literal" && tk.text.contains("important")),
+            "genuine `==highlight==` not highlighted: {:?}",
+            t3
+        );
+    }
+
+    /// Regression: `==` that opens a highlight run but has no closing `==`
+    /// on the same line must NOT carry pair state into the next line. The
+    /// prior Pair-shaped rule (`[open, close]` regexes) spanned line
+    /// boundaries like a block comment, so a stray opener turned `==` into
+    /// a multi-line quote that swallowed following lines as `literal`.
+    /// The single-regex form matches the whole `==text==` on one line only.
+    #[test]
+    fn markdown_equal_pair_does_not_span_lines_on_unclosed_opener() {
+        let defs = crate::editor::syntax::load_syntax_assets(&data_dir());
+        let md = defs.iter().find(|d| d.name == "Markdown").unwrap();
+        let compiled = compile_from_definition(md).unwrap();
+
+        // `==foo` opens but never closes on this line.
+        let (t1, s1) = tokenize_line_with_state(&compiled, "see ==foo bar baz", &[]);
+        assert!(
+            s1.iter().all(|&v| v == 0),
+            "unclosed `==` opener carried pair state to next line: state={:?} tokens={:?}",
+            s1,
+            t1
+        );
+
+        // The following line must tokenize as its own constructs, not as the
+        // body of an open `==` literal span.
+        let (t2, _s2) = tokenize_line_with_state(&compiled, "an entirely separate paragraph", &s1);
+        assert!(
+            t2.iter().all(|tk| tk.token_type.as_ref() != "literal"),
+            "second line swallowed into literal span: {:?}",
+            t2
+        );
+    }
+
     fn check_one(md: &MatcherDef, syntax_name: &str, slot: &str, checked: &mut usize) {
         let Some(set) = &md.first_byte_set else {
             return;

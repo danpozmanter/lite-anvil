@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.14.2] - 2026-07-07 - Markdown `==` highlighting fix.
+
+* Markdown `==` highlight spans no longer act as a multi-line quote. The `==text==` rule was a paired-delimiter (opener/closer) pattern, so an opening `==` with no closing `==` on the same line carried state into following lines and swallowed them as a `literal` span. It is now a single-line regex matching the whole `==text==` construct, like the other emphasis rules.
+
 ## [2.14.1] - 2026-07-03 - Editing responsiveness in large files.
 
 ### Performance
