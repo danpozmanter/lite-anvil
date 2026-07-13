@@ -580,6 +580,27 @@ fn truncate_tab_name(name: &str, max_chars: usize) -> String {
     format!("{prefix}...")
 }
 
+fn push_path_copy_items(items: &mut Vec<MenuItem>, copy_command: &str, relative_command: &str) {
+    items.push(MenuItem {
+        text: String::new(),
+        info: None,
+        command: None,
+        separator: true,
+    });
+    items.push(MenuItem {
+        text: "Copy Path".into(),
+        info: None,
+        command: Some(copy_command.into()),
+        separator: false,
+    });
+    items.push(MenuItem {
+        text: "Copy Relative Path".into(),
+        info: None,
+        command: Some(relative_command.into()),
+        separator: false,
+    });
+}
+
 /// Map a Markdown fenced-code `lang` tag (e.g. from ```` ```python ````) to
 /// the file extension our bundled syntax index keys on. Unknown or empty
 /// tags fall back to the tag itself so anything the index already matches
@@ -6042,24 +6063,11 @@ pub fn run(
                                 // true` is a divider row, not a label; the
                                 // real entries follow.
                                 if docs.get(i).is_some_and(|d| !d.path.is_empty()) {
-                                    items.push(MenuItem {
-                                        text: String::new(),
-                                        info: None,
-                                        command: None,
-                                        separator: true,
-                                    });
-                                    items.push(MenuItem {
-                                        text: "Copy Path".into(),
-                                        info: None,
-                                        command: Some("tab:copy-path".into()),
-                                        separator: false,
-                                    });
-                                    items.push(MenuItem {
-                                        text: "Copy Relative Path".into(),
-                                        info: None,
-                                        command: Some("tab:copy-relative-path".into()),
-                                        separator: false,
-                                    });
+                                    push_path_copy_items(
+                                        &mut items,
+                                        "tab:copy-path",
+                                        "tab:copy-relative-path",
+                                    );
                                 }
                                 // Estimate the menu size and clamp its origin so
                                 // it never renders off-screen. The context menu's
@@ -6152,24 +6160,11 @@ pub fn run(
                                         separator: false,
                                     });
                                 }
-                                items.push(MenuItem {
-                                    text: String::new(),
-                                    info: None,
-                                    command: None,
-                                    separator: true,
-                                });
-                                items.push(MenuItem {
-                                    text: "Copy Path".into(),
-                                    info: None,
-                                    command: Some("sidebar:copy-path".into()),
-                                    separator: false,
-                                });
-                                items.push(MenuItem {
-                                    text: "Copy Relative Path".into(),
-                                    info: None,
-                                    command: Some("sidebar:copy-relative-path".into()),
-                                    separator: false,
-                                });
+                                push_path_copy_items(
+                                    &mut items,
+                                    "sidebar:copy-path",
+                                    "sidebar:copy-relative-path",
+                                );
                                 context_menu.show(*x, *y, items);
                                 redraw = true;
                                 continue;
@@ -6225,6 +6220,15 @@ pub fn run(
                                 separator: false,
                             },
                         ];
+                        let active_doc_path =
+                            docs.get(active_tab).map(|d| d.path.as_str()).unwrap_or("");
+                        if !active_doc_path.is_empty() {
+                            push_path_copy_items(
+                                &mut items,
+                                "doc:copy-path",
+                                "doc:copy-relative-path",
+                            );
+                        }
                         if lsp_state.initialized {
                             items.push(MenuItem {
                                 text: String::new(),
@@ -6245,8 +6249,6 @@ pub fn run(
                                 separator: false,
                             });
                         }
-                        let active_doc_path =
-                            docs.get(active_tab).map(|d| d.path.as_str()).unwrap_or("");
                         if subsystems.has_terminal()
                             && crate::editor::test_runner::detect_runner_with_fallback(
                                 &project_root,
@@ -6273,7 +6275,25 @@ pub fn run(
                                 separator: false,
                             });
                         }
-                        context_menu.show(*x, *y, items);
+                        use crate::editor::view::DrawContext as _;
+                        let (ww_doc, wh_doc, _, _) = crate::window::get_window_size();
+                        let win_w_doc = ww_doc as f64;
+                        let win_h_doc = wh_doc as f64;
+                        let item_h = style.font_height + style.padding_y;
+                        let menu_h = item_h * items.len() as f64 + style.padding_y;
+                        let mut menu_w = 0.0_f64;
+                        for it in &items {
+                            let w = draw_ctx.font_width(style.font, &it.text);
+                            let total_w = if let Some(ref info) = it.info {
+                                w + draw_ctx.font_width(style.font, info) + style.padding_x * 3.0
+                            } else {
+                                w + style.padding_x * 2.0
+                            };
+                            menu_w = menu_w.max(total_w);
+                        }
+                        let menu_x = x.min(win_w_doc - menu_w - 2.0).max(0.0);
+                        let menu_y = y.min(win_h_doc - menu_h - 2.0).max(0.0);
+                        context_menu.show(menu_x, menu_y, items);
                         redraw = true;
                         continue;
                     }

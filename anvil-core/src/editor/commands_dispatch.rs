@@ -138,6 +138,24 @@ match cmd.as_str() {
         Instant::now(),
     ));
 }
+"doc:copy-path" => {
+    if let Some(doc) = docs.get(active_tab)
+        && !doc.path.is_empty()
+    {
+        crate::window::set_clipboard_text(&doc.path);
+    }
+}
+"doc:copy-relative-path" => {
+    if let Some(doc) = docs.get(active_tab)
+        && !doc.path.is_empty()
+    {
+        let rel = std::path::Path::new(&doc.path)
+            .strip_prefix(&project_root)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| doc.path.clone());
+        crate::window::set_clipboard_text(&rel);
+    }
+}
 "doc:reopen-closed-tab" => {
     // Pop toward the most recently closed file that is not already open and
     // still exists on disk.

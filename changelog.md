@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.14.3] - 2026-07-13 - File context menu path copying.
+
+* Right-clicking inside a saved file now offers Copy Path and Copy Relative Path, separated from the edit commands, so Nano-Anvil exposes the tab path-copy actions without a tab bar.
+
 ## [2.14.2] - 2026-07-07 - Markdown `==` highlighting fix.
 
 * Markdown `==` highlight spans no longer act as a multi-line quote. The `==text==` rule was a paired-delimiter (opener/closer) pattern, so an opening `==` with no closing `==` on the same line carried state into following lines and swallowed them as a `literal` span. It is now a single-line regex matching the whole `==text==` construct, like the other emphasis rules.
