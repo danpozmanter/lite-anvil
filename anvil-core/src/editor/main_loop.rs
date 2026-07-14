@@ -6542,7 +6542,11 @@ pub fn run(
                     }
 
                     // Sidebar click detection.
-                    if subsystems.has_sidebar() && sidebar_visible && *x < sidebar_w {
+                    if subsystems.has_sidebar()
+                        && sidebar_visible
+                        && *button == MouseButton::Left
+                        && *x < sidebar_w
+                    {
                         use crate::editor::view::DrawContext as _;
                         let ibf = style.icon_big_font;
                         let sidebar_toolbar_h = if subsystems.has_toolbar() {
@@ -6627,6 +6631,12 @@ pub fn run(
                             // Click outside the search row unfocuses it.
                             notes_search_focused = false;
                         }
+                        let sidebar_content_top =
+                            sidebar_toolbar_h + sidebar_dir_header_h + notes_ui_h;
+                        if *y < sidebar_content_top {
+                            redraw = true;
+                            continue;
+                        }
                         let notes_display_click: Vec<usize> = if subsystems.has_notes_mode() {
                             compute_notes_display_order(
                                 &sidebar_entries,
@@ -6636,11 +6646,8 @@ pub fn run(
                         } else {
                             (0..sidebar_entries.len()).collect()
                         };
-                        let disp_click_idx =
-                            ((*y - sidebar_toolbar_h - sidebar_dir_header_h - notes_ui_h
-                                + sidebar_scroll)
-                                / entry_h)
-                                .floor() as usize;
+                        let disp_click_idx = ((*y - sidebar_content_top + sidebar_scroll) / entry_h)
+                            .floor() as usize;
                         let click_idx = notes_display_click
                             .get(disp_click_idx)
                             .copied()
@@ -6700,7 +6707,11 @@ pub fn run(
                                         docs.clear();
                                         active_tab = 0;
                                     }
-                                    if open_file_into(&entry_path, &mut docs, use_git()) {
+                                    if crate::editor::open_doc::open_file_into_user_requested(
+                                        &entry_path,
+                                        &mut docs,
+                                        use_git(),
+                                    ) {
                                         autoreload.watch(&entry_path);
                                         active_tab = docs.len() - 1;
                                         remember_recent_file(

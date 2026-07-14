@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.14.5] - 2026-07-14 - Sidebar file open fix.
+
+* Sidebar file clicks now open the selected file again even when the bulk-open tab cap is reached, and header clicks no longer map to the first row.
+
 ## [2.14.4] - 2026-07-14 - Large-file and many-file responsiveness.
 
 * Deep syntax highlighting is now incremental, checkpointed, frame-budgeted, and memory-bounded. Text appears immediately while highlighting settles, tokenizer dispatch skips irrelevant grammar rules, and oversized generated lines fall back to plain text.

@@ -253,11 +253,14 @@ pub(crate) fn exceeds_soft_limit(doc: &OpenDoc, soft_limit_mb: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// Open a file and add it to the docs list. `use_git` controls whether
-/// per-line git status is computed at load time.
-pub(crate) fn open_file_into(path: &str, docs: &mut Vec<OpenDoc>, use_git: bool) -> bool {
+fn open_file_into_with_tab_limit(
+    path: &str,
+    docs: &mut Vec<OpenDoc>,
+    use_git: bool,
+    enforce_tab_limit: bool,
+) -> bool {
     let _perf = crate::editor::perf::span("open_file");
-    if !crate::editor::main_loop::can_open_another_tab(docs.len()) {
+    if enforce_tab_limit && !crate::editor::main_loop::can_open_another_tab(docs.len()) {
         eprintln!("Open tab limit reached");
         return false;
     }
@@ -319,6 +322,21 @@ pub(crate) fn open_file_into(path: &str, docs: &mut Vec<OpenDoc>, use_git: bool)
         preview: MarkdownPreviewState::default(),
     });
     true
+}
+
+/// Open a file and add it to the docs list. `use_git` controls whether
+/// per-line git status is computed at load time.
+pub(crate) fn open_file_into(path: &str, docs: &mut Vec<OpenDoc>, use_git: bool) -> bool {
+    open_file_into_with_tab_limit(path, docs, use_git, true)
+}
+
+/// Open a file from an explicit user action, bypassing the bulk-open tab cap.
+pub(crate) fn open_file_into_user_requested(
+    path: &str,
+    docs: &mut Vec<OpenDoc>,
+    use_git: bool,
+) -> bool {
+    open_file_into_with_tab_limit(path, docs, use_git, false)
 }
 
 /// Derive a storage-safe key from a project root path.
