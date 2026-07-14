@@ -680,6 +680,12 @@ impl PatternDef {
 pub struct CompiledSyntax {
     pub patterns: Vec<PatternDef>,
     pub symbols: HashMap<String, String>,
+    /// Pattern indices which can match for each possible leading byte. Each
+    /// bucket preserves definition order, so dispatch does not change syntax
+    /// priority. Patterns whose first byte cannot be proven are present in
+    /// every bucket.
+    pattern_dispatch: Vec<Vec<usize>>,
+    all_pattern_indices: Vec<usize>,
 }
 
 /// Compile a PCRE2 regex pattern for the tokenizer.
@@ -1266,12 +1272,11 @@ pub fn tokenize_line_with_state(
         // ~45k regex calls per line to a few thousand.
         let current_byte: Option<u8> =
             ucharpos(line, i).and_then(|bp| line.as_bytes().get(bp - 1).copied());
-        for (n, pattern) in current_syntax.patterns.iter().enumerate() {
-            if let (Some(b), Some(set)) = (current_byte, pattern.open_first_byte_set()) {
-                if !fbs_contains(set, b) {
-                    continue;
-                }
-            }
+        let candidate_indices = current_byte
+            .and_then(|byte| current_syntax.pattern_dispatch.get(byte as usize))
+            .unwrap_or(&current_syntax.all_pattern_indices);
+        for &n in candidate_indices {
+            let pattern = &current_syntax.patterns[n];
             let find_results = find_text(line, pattern, i, true, false).unwrap_or_default();
             if find_results.len() < 2 {
                 continue;
@@ -1390,9 +1395,27 @@ pub fn compile_from_definition(def: &SyntaxDefinition) -> Result<CompiledSyntax,
         });
     }
 
+    let all_pattern_indices: Vec<usize> = (0..patterns.len()).collect();
+    let mut pattern_dispatch = vec![Vec::new(); 256];
+    for (index, pattern) in patterns.iter().enumerate() {
+        if let Some(first_bytes) = pattern.open_first_byte_set() {
+            for byte in 0u16..=255 {
+                if fbs_contains(first_bytes, byte as u8) {
+                    pattern_dispatch[byte as usize].push(index);
+                }
+            }
+        } else {
+            for bucket in &mut pattern_dispatch {
+                bucket.push(index);
+            }
+        }
+    }
+
     Ok(CompiledSyntax {
         patterns,
         symbols: def.symbols.clone(),
+        pattern_dispatch,
+        all_pattern_indices,
     })
 }
 

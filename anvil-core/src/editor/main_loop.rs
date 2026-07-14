@@ -30,6 +30,8 @@ use notify::{Event, RecursiveMode, Watcher};
 // Module-level editor mode. Set once at startup, read by helper functions.
 thread_local! {
     static SINGLE_FILE_MODE: Cell<bool> = const { Cell::new(false) };
+    static MAX_OPEN_TABS: Cell<usize> = const { Cell::new(8) };
+    static HARD_FILE_LIMIT_MB: Cell<u32> = const { Cell::new(4096) };
 }
 
 /// Whether the editor is running in single-file mode (Nano-Anvil).
@@ -40,6 +42,48 @@ fn is_single_file() -> bool {
 /// Whether git integration is active (inverse of single-file mode).
 fn use_git() -> bool {
     !is_single_file()
+}
+
+pub(crate) fn can_open_another_tab(current: usize) -> bool {
+    MAX_OPEN_TABS.with(|limit| current < limit.get())
+}
+
+pub(crate) fn hard_file_limit_mb() -> u32 {
+    HARD_FILE_LIMIT_MB.with(Cell::get)
+}
+
+/// Commands which can change the active document's content or edit metadata.
+/// Used to enforce configured read-only behavior for large files at every
+/// command-dispatch entry point.
+fn is_document_mutation_command(command: &str) -> bool {
+    matches!(
+        command,
+        "doc:convert-indentation"
+            | "doc:toggle-line-endings"
+            | "doc:undo"
+            | "doc:redo"
+            | "doc:cut"
+            | "doc:paste"
+            | "doc:insert-list-item"
+            | "doc:insert-checkbox-item"
+            | "doc:format"
+            | "doc:newline"
+            | "doc:newline-below"
+            | "doc:newline-above"
+            | "doc:backspace"
+            | "doc:delete"
+            | "doc:delete-to-previous-word-start"
+            | "doc:delete-to-next-word-end"
+            | "doc:indent"
+            | "doc:unindent"
+            | "doc:toggle-line-comments"
+            | "doc:move-lines-up"
+            | "doc:move-lines-down"
+            | "doc:duplicate-lines"
+            | "doc:delete-lines"
+            | "doc:join-lines"
+            | "core:sort-lines"
+    )
 }
 
 use crate::editor::buffer;
@@ -638,6 +682,8 @@ pub fn run(
 ) -> bool {
     let single_file_mode = !subsystems.has_sidebar();
     SINGLE_FILE_MODE.with(|c| c.set(single_file_mode));
+    MAX_OPEN_TABS.with(|c| c.set(config.max_tabs.max(1) as usize));
+    HARD_FILE_LIMIT_MB.with(|c| c.set(config.large_file.hard_limit_mb));
     if single_file_mode {
         crate::renderer::font::set_glyph_cache_limit(1024);
         crate::renderer::font::set_skip_prewarm(true);
@@ -2846,7 +2892,21 @@ pub fn run(
                                                     info_message = Some((msg, Instant::now()));
                                                 }
                                                 Ok(sz) => {
-                                                    if sz > BG_LOAD_THRESHOLD && load_job.is_none() {
+                                                    let configured_bg_threshold = if config
+                                                        .large_file
+                                                        .soft_limit_mb
+                                                        == 0
+                                                    {
+                                                        BG_LOAD_THRESHOLD
+                                                    } else {
+                                                        u64::from(
+                                                            config.large_file.soft_limit_mb,
+                                                        ) * 1024
+                                                            * 1024
+                                                    };
+                                                    if sz > configured_bg_threshold
+                                                        && load_job.is_none()
+                                                    {
                                                         load_job = Some(spawn_load(&actual, sz));
                                                     } else if open_file_into(&actual, &mut docs, use_git()) {
                                                         active_tab = docs.len() - 1;
@@ -5503,6 +5563,24 @@ pub fn run(
                         redraw = true;
                         continue;
                     }
+                    if config.large_file.read_only
+                        && docs
+                            .get(active_tab)
+                            .map(|doc| {
+                                crate::editor::open_doc::exceeds_soft_limit(
+                                    doc,
+                                    config.large_file.soft_limit_mb,
+                                )
+                            })
+                            .unwrap_or(false)
+                    {
+                        info_message = Some((
+                            "Large file is read-only by configuration".to_string(),
+                            Instant::now(),
+                        ));
+                        redraw = true;
+                        continue;
+                    }
                     if let Some(doc) = docs.get_mut(active_tab) {
                         let dv = &mut doc.view;
                         if let Some(buf_id) = dv.buffer_id {
@@ -5511,7 +5589,11 @@ pub fn run(
                                 let has_sel = b.selections.len() >= 4
                                     && (b.selections[0] != b.selections[2]
                                         || b.selections[1] != b.selections[3]);
-                                if is_single_char && !has_sel {
+                                if is_single_char
+                                    && !has_sel
+                                    && !overwrite_mode
+                                    && buffer::cursor_count(b) == 1
+                                {
                                     let line = *b.selections.first().unwrap_or(&1);
                                     let col = *b.selections.get(1).unwrap_or(&1);
                                     buffer::push_undo_mergeable(b, line, col, false);
@@ -5596,6 +5678,16 @@ pub fn run(
                             if (trigger || word_char)
                                 && lsp_state.transport_id.is_some()
                                 && lsp_state.initialized
+                                && docs
+                                    .get(active_tab)
+                                    .map(|doc| {
+                                        !(config.large_file.disable_autocomplete
+                                            && crate::editor::open_doc::exceeds_soft_limit(
+                                                doc,
+                                                config.large_file.soft_limit_mb,
+                                            ))
+                                    })
+                                    .unwrap_or(false)
                             {
                                 if let Some(doc) = docs.get(active_tab) {
                                     if let Some(buf_id) = doc.view.buffer_id {
@@ -7027,7 +7119,17 @@ pub fn run(
                                     .find(|r| *x >= r.x1 && *x <= r.x2 && *y >= r.y1 && *y <= r.y2)
                                     .cloned();
                                 if let Some(cb) = cb {
-                                    if let Some(buf_id) = doc.view.buffer_id {
+                                    let large_read_only = config.large_file.read_only
+                                        && crate::editor::open_doc::exceeds_soft_limit(
+                                            doc,
+                                            config.large_file.soft_limit_mb,
+                                        );
+                                    if large_read_only {
+                                        info_message = Some((
+                                            "Large file is read-only by configuration".to_string(),
+                                            Instant::now(),
+                                        ));
+                                    } else if let Some(buf_id) = doc.view.buffer_id {
                                         let src =
                                             buffer::with_buffer(buf_id, |b| Ok(b.lines.join("")))
                                                 .unwrap_or_default();
@@ -7232,7 +7334,12 @@ pub fn run(
                                     && *x < dvr.x + dvr.w
                                     && *y >= dvr.y
                                     && *y < dvr.y + dvr.h;
-                                if in_editor {
+                                let large_read_only = config.large_file.read_only
+                                    && crate::editor::open_doc::exceeds_soft_limit(
+                                        doc,
+                                        config.large_file.soft_limit_mb,
+                                    );
+                                if in_editor && !large_read_only {
                                     let line_h = style.code_font_height * 1.2;
                                     let gutter_w = dv.gutter_width;
                                     let text_x_start =
@@ -7267,6 +7374,11 @@ pub fn run(
                                         insert_text_at_caret(b, &text);
                                         Ok(())
                                     });
+                                } else if in_editor {
+                                    info_message = Some((
+                                        "Large file is read-only by configuration".to_string(),
+                                        Instant::now(),
+                                    ));
                                 }
                             }
                         }
@@ -7893,6 +8005,11 @@ pub fn run(
             && lsp_state.should_attempt_spawn()
             && let Some(doc) = docs.get(active_tab)
             && !doc.path.is_empty()
+            && !(config.large_file.disable_lsp
+                && crate::editor::open_doc::exceeds_soft_limit(
+                    doc,
+                    config.large_file.soft_limit_mb,
+                ))
         {
             try_start_lsp(
                 &doc.path,
@@ -8761,7 +8878,12 @@ pub fn run(
         // place.
         if subsystems.has_lsp() && lsp_state.transport_id.is_some() && lsp_state.initialized {
             if let Some(doc) = docs.get(active_tab) {
-                if !doc.path.is_empty() {
+                let lsp_allowed = !(config.large_file.disable_lsp
+                    && crate::editor::open_doc::exceeds_soft_limit(
+                        doc,
+                        config.large_file.soft_limit_mb,
+                    ));
+                if !doc.path.is_empty() && lsp_allowed {
                     let ext = doc.path.rsplit('.').next().unwrap_or("");
                     let is_lsp_file = ext_to_lsp_filetype(ext)
                         .map(|ft| ft == lsp_state.filetype)
@@ -8801,9 +8923,14 @@ pub fn run(
                             let file_path = uri_to_path(&uri);
                             if let Some(doc) = docs.iter().find(|d| d.path == file_path) {
                                 let ext = doc.path.rsplit('.').next().unwrap_or("");
-                                let is_lsp_file = ext_to_lsp_filetype(ext)
-                                    .map(|ft| ft == lsp_state.filetype)
-                                    .unwrap_or(false);
+                                let is_lsp_file = !(config.large_file.disable_lsp
+                                    && crate::editor::open_doc::exceeds_soft_limit(
+                                        doc,
+                                        config.large_file.soft_limit_mb,
+                                    ))
+                                    && ext_to_lsp_filetype(ext)
+                                        .map(|ft| ft == lsp_state.filetype)
+                                        .unwrap_or(false);
                                 if is_lsp_file {
                                     if let Some(buf_id) = doc.view.buffer_id {
                                         let text =
@@ -9199,6 +9326,18 @@ pub fn run(
                         break;
                     };
                     let path = doc.path.clone();
+                    if crate::editor::open_doc::exceeds_soft_limit(
+                        doc,
+                        config.large_file.soft_limit_mb,
+                    ) {
+                        // Avoid an unsolicited full read, decode, and hash on
+                        // the UI thread for large files. The existing reload
+                        // prompt leaves the choice with the user and performs
+                        // the work only when explicitly accepted.
+                        nag = Nag::ReloadFromDisk { path };
+                        redraw = true;
+                        break;
+                    }
                     // We watch the parent directory, so our own writes --
                     // notably notes-mode autosave -- echo back as change
                     // events too. A watcher event is only a hint to check;
@@ -9343,6 +9482,10 @@ pub fn run(
                 }
             }
 
+            // A cold/deep syntax walk can yield after its per-frame budget.
+            // The render pass sets this when another frame is needed to
+            // continue from the saved lexical frontier.
+            let mut syntax_pending_after_frame = false;
             if redraw && window_hidden {
                 // Consume the redraw flag but skip the actual render pass.
                 // The compositor would throw away our frames anyway while
@@ -10270,45 +10413,56 @@ pub fn run(
                     let dv = &doc.view;
                     if let Some(buf_id) = dv.buffer_id {
                         let ext = doc.path.rsplit('.').next().unwrap_or("");
+                        let exceeds_soft_limit = crate::editor::open_doc::exceeds_soft_limit(
+                            doc,
+                            config.large_file.soft_limit_mb,
+                        );
                         // Compile-on-demand and bump MRU. Evict the LRU
                         // entry once the cache exceeds SYNTAX_CACHE_CAP
                         // so memory doesn't grow unbounded on sessions
                         // that touch many file types.
-                        let ext_owned = ext.to_string();
-                        compiled_syntax_mru.retain(|e| e != &ext_owned);
-                        compiled_syntax_mru.insert(0, ext_owned.clone());
-                        while compiled_syntax_mru.len() > SYNTAX_CACHE_CAP {
-                            if let Some(drop_ext) = compiled_syntax_mru.pop() {
-                                compiled_syntax_cache.remove(&drop_ext);
-                            }
-                        }
-                        let compiled_opt =
-                            compiled_syntax_cache.entry(ext_owned).or_insert_with(|| {
-                                let filename = doc.path.rsplit('/').next().unwrap_or(&doc.path);
-                                let entry = crate::editor::syntax::match_syntax_entry(
-                                    filename,
-                                    &syntax_index,
-                                )?;
-                                let def = entry.load_full()?;
-                                match tokenizer::compile_from_definition(&def) {
-                                    Ok(cs) => Some(cs),
-                                    Err(e) => {
-                                        log_to_file(
-                                            userdir,
-                                            &format!("Syntax compile error: {e:?}"),
-                                        );
-                                        None
-                                    }
+                        let compiled_opt = if exceeds_soft_limit && config.large_file.plain_text {
+                            None
+                        } else {
+                            let ext_owned = ext.to_string();
+                            compiled_syntax_mru.retain(|e| e != &ext_owned);
+                            compiled_syntax_mru.insert(0, ext_owned.clone());
+                            while compiled_syntax_mru.len() > SYNTAX_CACHE_CAP {
+                                if let Some(drop_ext) = compiled_syntax_mru.pop() {
+                                    compiled_syntax_cache.remove(&drop_ext);
                                 }
-                            });
+                            }
+                            compiled_syntax_cache
+                                .entry(ext_owned)
+                                .or_insert_with(|| {
+                                    let filename = doc.path.rsplit('/').next().unwrap_or(&doc.path);
+                                    let entry = crate::editor::syntax::match_syntax_entry(
+                                        filename,
+                                        &syntax_index,
+                                    )?;
+                                    let def = entry.load_full()?;
+                                    match tokenizer::compile_from_definition(&def) {
+                                        Ok(cs) => Some(cs),
+                                        Err(e) => {
+                                            log_to_file(
+                                                userdir,
+                                                &format!("Syntax compile error: {e:?}"),
+                                            );
+                                            None
+                                        }
+                                    }
+                                })
+                                .as_ref()
+                        };
                         let wrap_w = if line_wrapping {
                             Some(dv.rect().w - dv.gutter_width - style.padding_x * 2.0)
                         } else {
                             None
                         };
-                        let is_lsp_file = ext_to_lsp_filetype(ext)
-                            .map(|ft| ft == lsp_state.filetype)
-                            .unwrap_or(false);
+                        let is_lsp_file = !(exceeds_soft_limit && config.large_file.disable_lsp)
+                            && ext_to_lsp_filetype(ext)
+                                .map(|ft| ft == lsp_state.filetype)
+                                .unwrap_or(false);
                         let active_uri = if doc.path.is_empty() {
                             String::new()
                         } else {
@@ -10346,6 +10500,7 @@ pub fn run(
                                     && (doc.cached_rect_w - dv.rect().w).abs() < 0.5
                                     && (doc.cached_rect_h - dv.rect().h).abs() < 0.5
                                     && !doc.cached_render.is_empty()
+                                    && !doc.token_cache.borrow().pending
                                 {
                                     std::sync::Arc::clone(&doc.cached_render)
                                 } else {
@@ -10354,7 +10509,7 @@ pub fn run(
                                         dv,
                                         &style,
                                         ext,
-                                        compiled_opt.as_ref(),
+                                        compiled_opt,
                                         wrap_w,
                                         hints,
                                         Some(&doc.token_cache),
@@ -10366,7 +10521,7 @@ pub fn run(
                                     dv,
                                     &style,
                                     ext,
-                                    compiled_opt.as_ref(),
+                                    compiled_opt,
                                     wrap_w,
                                     hints,
                                     Some(&doc.token_cache),
@@ -10464,7 +10619,14 @@ pub fn run(
                         // offering the affordance if nothing can execute.
                         use crate::editor::view::DrawContext as _;
                         test_badges.clear();
-                        if !doc.path.is_empty() {
+                        if !doc.path.is_empty()
+                            && crate::editor::test_runner::supports_test_discovery(&doc.path)
+                            && !(config.large_file.plain_text
+                                && crate::editor::open_doc::exceeds_soft_limit(
+                                    doc,
+                                    config.large_file.soft_limit_mb,
+                                ))
+                        {
                             // Rescan only when the file or its content changed;
                             // detection probes the filesystem and discovery
                             // clones the whole document, so neither can run on
@@ -10479,17 +10641,12 @@ pub fn run(
                                     )
                                     .is_some();
                                 active_tests = if has_runner {
-                                    let text_lines = buffer::with_buffer(buf_id, |b| {
-                                        Ok(b.lines
-                                            .iter()
-                                            .map(|l| l.trim_end_matches('\n').to_string())
-                                            .collect::<Vec<_>>())
+                                    buffer::with_buffer(buf_id, |b| {
+                                        Ok(crate::editor::test_runner::discover_tests(
+                                            &doc.path, &b.lines,
+                                        ))
                                     })
-                                    .unwrap_or_default();
-                                    crate::editor::test_runner::discover_tests(
-                                        &doc.path,
-                                        &text_lines,
-                                    )
+                                    .unwrap_or_default()
                                 } else {
                                     Vec::new()
                                 };
@@ -10545,6 +10702,7 @@ pub fn run(
                             }
                         } else {
                             active_tests.clear();
+                            test_scan_cache = (doc.path.clone(), current_change_id);
                         }
 
                         pending_render_cache = Some((
@@ -10557,8 +10715,15 @@ pub fn run(
                             dv.rect().w,
                             dv.rect().h,
                         ));
+                        syntax_pending_after_frame = doc.token_cache.borrow().pending;
                         // Draw bracket match underlines at cursor position.
-                        if let Some(buf_id) = dv.buffer_id {
+                        if let Some(buf_id) = dv.buffer_id
+                            && !(config.large_file.plain_text
+                                && crate::editor::open_doc::exceeds_soft_limit(
+                                    doc,
+                                    config.large_file.soft_limit_mb,
+                                ))
+                        {
                             let bracket = buffer::with_buffer(buf_id, |b| {
                                 Ok(crate::editor::picker::bracket_pair(
                                     &b.lines,
@@ -10700,10 +10865,6 @@ pub fn run(
                             };
                             let minimap_end = (minimap_start + lines_that_fit).min(total_lines + 1);
 
-                            // Get compiled syntax for this file.
-                            let ext = doc.path.rsplit('.').next().unwrap_or("");
-                            let compiled = compiled_syntax_cache.get(ext).and_then(|o| o.as_ref());
-
                             // Draw colored blocks for each line.
                             let _ = buffer::with_buffer(dv.buffer_id.unwrap_or(0), |b| {
                                 for line_idx in minimap_start..minimap_end {
@@ -10719,10 +10880,23 @@ pub fn run(
                                         continue;
                                     }
 
-                                    if let Some(syntax) = compiled {
-                                        let toks = tokenizer::tokenize_line(syntax, raw);
+                                    // Reuse tokens already produced for the
+                                    // editor viewport. A cache miss draws a
+                                    // neutral block instead of synchronously
+                                    // tokenizing minimap lines on every frame.
+                                    let cached_tokens = doc
+                                        .token_cache
+                                        .borrow()
+                                        .lines
+                                        .get(&line_idx)
+                                        .filter(|entry| {
+                                            entry.content_hash
+                                                == crate::editor::open_doc::line_hash(raw)
+                                        })
+                                        .and_then(|entry| entry.tokens.clone());
+                                    if let Some(toks) = cached_tokens {
                                         let mut x_off = 0.0;
-                                        for t in &toks {
+                                        for t in toks.iter() {
                                             let text_len = t.text.len();
                                             if text_len > 0 {
                                                 let draw_len = if t.text.ends_with('\n') {
@@ -10802,16 +10976,35 @@ pub fn run(
                 // editor view when enabled on the active doc). Runs after
                 // the normal doc draw so it renders into its own rect.
                 if let Some(doc) = docs.get_mut(active_tab) {
-                    if doc.preview.enabled && doc.preview.rect.w > 0.0 {
+                    let preview_suppressed = config.large_file.plain_text
+                        && crate::editor::open_doc::exceeds_soft_limit(
+                            doc,
+                            config.large_file.soft_limit_mb,
+                        );
+                    if !preview_suppressed && doc.preview.enabled && doc.preview.rect.w > 0.0 {
                         if let Some(buf_id) = doc.view.buffer_id {
                             // Reparse the source when the buffer changes.
                             let cur_change_id =
                                 buffer::with_buffer(buf_id, |b| Ok(b.change_id)).unwrap_or(0);
-                            if cur_change_id != doc.preview.cached_change_id {
+                            if cur_change_id != doc.preview.cached_change_id
+                                && cur_change_id != doc.preview.pending_change_id
+                            {
+                                doc.preview.pending_change_id = cur_change_id;
+                                doc.preview.reparse_at =
+                                    Some(Instant::now() + std::time::Duration::from_millis(150));
+                            }
+                            let preview_reparse_ready = doc
+                                .preview
+                                .reparse_at
+                                .map(|deadline| Instant::now() >= deadline)
+                                .unwrap_or(false);
+                            if preview_reparse_ready {
+                                let _perf = crate::editor::perf::span("markdown_preview_reparse");
                                 let text = buffer::with_buffer(buf_id, |b| Ok(b.lines.join("")))
                                     .unwrap_or_default();
                                 doc.preview.blocks = crate::editor::markdown::parse(&text);
-                                doc.preview.cached_change_id = cur_change_id;
+                                doc.preview.cached_change_id = doc.preview.pending_change_id;
+                                doc.preview.reparse_at = None;
                                 doc.preview.layout.clear();
                                 // Pre-tokenize every fenced code block with a
                                 // resolvable `lang` so the preview can render
@@ -10849,16 +11042,30 @@ pub fn run(
                                         // don't immediately get evicted.
                                         compiled_syntax_mru.retain(|e| e != &ext_owned);
                                         compiled_syntax_mru.insert(0, ext_owned);
-                                        Some(
-                                            code_text
-                                                .split('\n')
-                                                .map(|line| {
-                                                    tokenizer::tokenize_line(compiled_opt, line)
-                                                })
-                                                .collect(),
-                                        )
+                                        // Keep preview highlighting bounded for
+                                        // generated or accidentally huge code
+                                        // fences. The code still renders, using
+                                        // the normal preview text color.
+                                        if code_text.len() > 512 * 1024
+                                            || code_text.lines().count() > 2000
+                                        {
+                                            None
+                                        } else {
+                                            Some(
+                                                code_text
+                                                    .split('\n')
+                                                    .map(|line| {
+                                                        tokenizer::tokenize_line(compiled_opt, line)
+                                                    })
+                                                    .collect(),
+                                            )
+                                        }
                                     })
                                     .collect();
+                            } else if doc.preview.reparse_at.is_some() {
+                                // Continue drawing the last complete preview
+                                // while the debounce timer is active.
+                                syntax_pending_after_frame = true;
                             }
                             let rect = doc.preview.rect;
                             // No smooth scroll: track the target directly so
@@ -12722,7 +12929,7 @@ pub fn run(
 
                 crate::renderer::native_end_frame();
 
-                redraw = false;
+                redraw = syntax_pending_after_frame;
                 last_draw = Instant::now();
             }
         }

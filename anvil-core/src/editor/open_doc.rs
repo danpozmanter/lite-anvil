@@ -5,7 +5,7 @@
 //! Most functions here take a `use_git: bool` (or similar) argument
 //! rather than reaching back into main_loop for the mode, so this
 //! module is self-contained and unit-testable.
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::editor::buffer;
@@ -36,9 +36,7 @@ pub(crate) struct CachedLine {
     /// unterminated `/* …`). Empty means outside any multi-line
     /// construct.
     pub start_state: Vec<u8>,
-    /// `None` after size-cap eviction: the heavy token list is dropped
-    /// while the cheap hash/state skeleton stays, so the above-viewport
-    /// state walk never re-tokenizes evicted lines.
+    /// Present while this line remains in the viewport token cache.
     pub tokens: Option<std::sync::Arc<Vec<Token>>>,
     /// Tokenizer state at the end of the line, threaded into the next
     /// line so block comments and other paired constructs span line
@@ -56,16 +54,37 @@ pub(crate) fn line_hash(text: &str) -> u64 {
     h
 }
 
-/// Per-buffer tokenizer result cache keyed by 1-based line index.
+/// Per-buffer tokenizer state and viewport-token cache.
 ///
-/// Entries validate themselves against the buffer (see [`CachedLine`]), so
-/// an edit anywhere re-tokenizes only the changed lines and any lines whose
-/// carry-over state actually shifted — never the whole document. Entries
-/// stamped with the buffer's current `change_id` are trusted without
-/// hashing, keeping pure scrolling free.
-#[derive(Default)]
+/// `content_hashes` finds the first changed line without relying on every edit
+/// command to maintain a dirty watermark. Sparse `checkpoints` reconstruct the
+/// state before a viewport without retaining one cache allocation per source
+/// line. `lines` holds only token-heavy entries near recently visible ranges.
 pub(crate) struct TokenCache {
     pub lines: HashMap<usize, CachedLine>,
+    pub content_hashes: Vec<u64>,
+    /// Tokenizer end-state after a 1-based source line.
+    pub checkpoints: BTreeMap<usize, Vec<u8>>,
+    /// Furthest line reached by the current time-budgeted forward walk.
+    pub frontier_line: usize,
+    pub frontier_state: Vec<u8>,
+    pub change_id: i64,
+    /// True when a cold/deep syntax walk yielded and another frame is needed.
+    pub pending: bool,
+}
+
+impl Default for TokenCache {
+    fn default() -> Self {
+        Self {
+            lines: HashMap::new(),
+            content_hashes: Vec::new(),
+            checkpoints: BTreeMap::new(),
+            frontier_line: 0,
+            frontier_state: Vec::new(),
+            change_id: -1,
+            pending: false,
+        }
+    }
 }
 
 /// Everything the editor tracks per open tab: the view state, the path
@@ -220,9 +239,28 @@ pub(crate) fn check_file_size_limit(path: &str, hard_limit_mb: u32) -> Result<u6
     }
 }
 
+/// Whether a document exceeds the configured large-file soft limit.
+/// A zero limit disables soft-limit behavior.
+pub(crate) fn exceeds_soft_limit(doc: &OpenDoc, soft_limit_mb: u32) -> bool {
+    if soft_limit_mb == 0 {
+        return false;
+    }
+    let limit = u64::from(soft_limit_mb) * 1024 * 1024;
+    doc.view
+        .buffer_id
+        .and_then(|id| buffer::with_buffer(id, |b| Ok(b.total_bytes)).ok())
+        .map(|bytes| bytes > limit)
+        .unwrap_or(false)
+}
+
 /// Open a file and add it to the docs list. `use_git` controls whether
 /// per-line git status is computed at load time.
 pub(crate) fn open_file_into(path: &str, docs: &mut Vec<OpenDoc>, use_git: bool) -> bool {
+    let _perf = crate::editor::perf::span("open_file");
+    if !crate::editor::main_loop::can_open_another_tab(docs.len()) {
+        eprintln!("Open tab limit reached");
+        return false;
+    }
     // Resolve to an absolute path so doc.path round-trips through session
     // save/load even if the cwd changes between runs. `std::path::absolute`
     // does NOT touch the filesystem (preserves symlinks, works for missing
@@ -232,6 +270,12 @@ pub(crate) fn open_file_into(path: &str, docs: &mut Vec<OpenDoc>, use_git: bool)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| normalize_path(path));
     let path = resolved.as_str();
+    if let Err(message) =
+        check_file_size_limit(path, crate::editor::main_loop::hard_file_limit_mb())
+    {
+        eprintln!("{message}");
+        return false;
+    }
     let mut buf_state = buffer::default_buffer_state();
     if let Err(e) = buffer::load_file(&mut buf_state, path) {
         eprintln!("Failed to open {path}: {e}");

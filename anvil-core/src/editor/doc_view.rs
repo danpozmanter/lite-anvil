@@ -859,6 +859,7 @@ mod tests {
         // Edit line 3 the way every command handler does: push_undo first,
         // then mutate the line in place.
         buffer::with_buffer_mut(buf_id, |b| {
+            b.selections = vec![3, 1, 3, 1];
             buffer::push_undo(b);
             b.lines[2] = "changed\n".to_string();
             Ok(())
@@ -902,6 +903,7 @@ mod tests {
         // Open an unterminated block comment on line 1: every later line's
         // start state changes, so their cached tokens must be recomputed.
         buffer::with_buffer_mut(buf_id, |b| {
+            b.selections = vec![1, 1, 1, 1];
             buffer::push_undo(b);
             b.lines[0] = "/* open\n".to_string();
             Ok(())
@@ -934,6 +936,7 @@ mod tests {
             .clone()
             .unwrap();
         buffer::with_buffer_mut(buf_id, |b| {
+            b.selections = vec![2, 1, 2, 1];
             buffer::push_undo(b);
             b.lines.insert(1, "inserted\n".to_string());
             Ok(())
@@ -1347,6 +1350,17 @@ pub(crate) fn click_to_doc_pos(
 /// dropped so a long scrolling session cannot retain the whole file's tokens.
 const TOKEN_CACHE_MAX_LINES: usize = 6000;
 const TOKEN_CACHE_MARGIN: usize = 1000;
+/// Sparse lexical state checkpoints keep deep-view reconstruction bounded
+/// without retaining a heap-backed token record for every source line.
+const TOKEN_CHECKPOINT_INTERVAL: usize = 128;
+/// Individual lines above this size render as plain text. This prevents one
+/// minified or generated line from consuming an entire input frame inside a
+/// single regex call which cannot be preempted by the frame budget.
+const TOKENIZE_MAX_LINE_BYTES: usize = 64 * 1024;
+/// Maximum syntax work performed by one render-line build. Cold/deep walks
+/// yield after this budget and continue on the next frame while plain text is
+/// displayed immediately.
+const TOKENIZE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(4);
 
 /// Build render lines from buffer for the visible range, with syntax highlighting.
 #[cfg(feature = "sdl")]
@@ -1361,6 +1375,7 @@ pub(crate) fn build_render_lines(
     inlay_hints: &[InlayHint],
     token_cache: Option<&std::cell::RefCell<crate::editor::open_doc::TokenCache>>,
 ) -> Vec<RenderLine> {
+    let _perf = crate::editor::perf::span("build_render_lines");
     let line_h = style.code_font_height * 1.2;
     let visible_lines = ((dv.rect().h / line_h).ceil() as usize).max(1);
     let hint_color = SYNTAX_COLORS.with(|s| {
@@ -1379,76 +1394,174 @@ pub(crate) fn build_render_lines(
         // below is O(1) instead of O(folds) per line.
         let folded_lines: std::collections::HashSet<usize> =
             dv.folds.iter().flat_map(|&(fs, fe)| fs + 1..=fe).collect();
-        // Resolve one line against the cache. An entry stamped with the
-        // buffer's current `change_id` is trusted as-is (pure scrolling does
-        // no hashing); an older entry is reused only when provably current —
-        // its content hash and the tokenizer state entering the line both
-        // match — and is then re-stamped. Anything else re-tokenizes with the
-        // running state and replaces the entry. This keeps an edit's cost
-        // proportional to the lines it actually affected instead of the whole
-        // document, and stays correct for entries first touched long after
-        // the edit (below the viewport, inside folds). `need_tokens` is false
-        // for the above-viewport state walk, which only threads the
-        // carry-over state and so accepts token-evicted entries.
-        let resolve_line = |ln: usize,
-                            state: &mut Vec<u8>,
-                            syntax: &CompiledSyntax,
-                            need_tokens: bool|
-         -> Option<std::sync::Arc<Vec<tokenizer::Token>>> {
-            let raw_line = b.lines.get(ln - 1).map(|s| s.as_str()).unwrap_or("");
-            if let Some(cache_cell) = token_cache {
-                {
-                    let mut cache = cache_cell.borrow_mut();
-                    if let Some(entry) = cache.lines.get_mut(&ln) {
-                        let valid = entry.change_id == b.change_id
-                            || (entry.content_hash == crate::editor::open_doc::line_hash(raw_line)
-                                && entry.start_state == *state);
-                        if valid && (!need_tokens || entry.tokens.is_some()) {
-                            entry.change_id = b.change_id;
-                            state.clone_from(&entry.end_state);
-                            return entry.tokens.clone();
-                        }
+        // Synchronize cache identity by comparing compact per-line hashes. This
+        // detects insertions, deletions, and edits without trusting every edit
+        // command to maintain a dirty watermark. Cache state strictly before
+        // the first changed line remains valid; state at and after it is
+        // discarded and rebuilt from the nearest sparse checkpoint.
+        if let Some(cache_cell) = token_cache {
+            let mut cache = cache_cell.borrow_mut();
+            if cache.change_id != b.change_id {
+                let declared_dirty = (b.syntax_dirty_change_id == b.change_id)
+                    .then_some(b.syntax_dirty_from.saturating_sub(1));
+                let mut replacement_hashes = None;
+                let first_diff = if declared_dirty.is_some() {
+                    declared_dirty
+                } else {
+                    let hashes: Vec<u64> = b
+                        .lines
+                        .iter()
+                        .map(|line| crate::editor::open_doc::line_hash(line))
+                        .collect();
+                    let shared = cache.content_hashes.len().min(hashes.len());
+                    let diff = (0..shared)
+                        .find(|&idx| cache.content_hashes[idx] != hashes[idx])
+                        .or_else(|| (cache.content_hashes.len() != hashes.len()).then_some(shared));
+                    replacement_hashes = Some(hashes);
+                    diff
+                };
+                if let Some(dirty_idx) = first_diff {
+                    let dirty_line = dirty_idx + 1;
+                    cache.lines.retain(|&line, _| line < dirty_line);
+                    cache.checkpoints.retain(|&line, _| line < dirty_line);
+                    if cache.frontier_line >= dirty_line {
+                        let reset = cache
+                            .checkpoints
+                            .range(..dirty_line)
+                            .next_back()
+                            .map(|(&line, state)| (line, state.clone()))
+                            .unwrap_or((0, Vec::new()));
+                        cache.frontier_line = reset.0;
+                        cache.frontier_state = reset.1;
                     }
                 }
-                let (computed, end) = tokenizer::tokenize_line_with_state(syntax, raw_line, state);
-                let arc = std::sync::Arc::new(computed);
-                let entry = crate::editor::open_doc::CachedLine {
-                    change_id: b.change_id,
-                    content_hash: crate::editor::open_doc::line_hash(raw_line),
-                    start_state: std::mem::replace(state, end),
-                    tokens: Some(std::sync::Arc::clone(&arc)),
-                    end_state: state.clone(),
-                };
-                cache_cell.borrow_mut().lines.insert(ln, entry);
-                Some(arc)
-            } else {
-                let (computed, end) = tokenizer::tokenize_line_with_state(syntax, raw_line, state);
-                *state = end;
-                Some(std::sync::Arc::new(computed))
+                if let Some(hashes) = replacement_hashes {
+                    cache.content_hashes = hashes;
+                }
+                cache.change_id = b.change_id;
             }
-        };
-        // Walk every line from 1 up to `first` to compute the multi-line
-        // tokenizer state that line `first` should start with — needed for
-        // block comments / pair-strings that begin above the viewport.
-        // Cached states make this O(1) per line on the happy path.
+            cache.pending = false;
+        }
+
+        // Reconstruct the state entering the viewport from the nearest sparse
+        // checkpoint. A cold jump advances for at most four milliseconds in
+        // this frame. If it cannot reach the viewport, visible text is emitted
+        // without syntax and the next frame resumes from `frontier_state`.
         let mut state: Vec<u8> = Vec::new();
+        let syntax_started = std::time::Instant::now();
+        let mut prefix_ready = true;
         if let Some(syntax) = compiled {
-            for ln in 1..first.min(b.lines.len() + 1) {
-                resolve_line(ln, &mut state, syntax, false);
+            let target = first.saturating_sub(1).min(b.lines.len());
+            let mut start_line = 0usize;
+            if let Some(cache_cell) = token_cache {
+                let cache = cache_cell.borrow();
+                if cache.frontier_line <= target {
+                    start_line = cache.frontier_line;
+                    state.clone_from(&cache.frontier_state);
+                } else if let Some((&line, checkpoint)) =
+                    cache.checkpoints.range(..=target).next_back()
+                {
+                    start_line = line;
+                    state.clone_from(checkpoint);
+                }
+            }
+            for ln in start_line + 1..=target {
+                if token_cache.is_some()
+                    && ln > start_line + 1
+                    && syntax_started.elapsed() >= TOKENIZE_FRAME_BUDGET
+                {
+                    prefix_ready = false;
+                    if let Some(cache_cell) = token_cache {
+                        cache_cell.borrow_mut().pending = true;
+                    }
+                    break;
+                }
+                let raw = b.lines.get(ln - 1).map(String::as_str).unwrap_or("");
+                if raw.len() <= TOKENIZE_MAX_LINE_BYTES {
+                    let (_, end) = tokenizer::tokenize_line_with_state(syntax, raw, &state);
+                    state = end;
+                }
+                if let Some(cache_cell) = token_cache {
+                    let mut cache = cache_cell.borrow_mut();
+                    if ln % TOKEN_CHECKPOINT_INTERVAL == 0 {
+                        cache.checkpoints.insert(ln, state.clone());
+                    }
+                    if ln == cache.frontier_line + 1 {
+                        cache.frontier_line = ln;
+                        cache.frontier_state.clone_from(&state);
+                    }
+                }
             }
         }
         while i <= last && i <= b.lines.len() {
+            let raw_line = &b.lines[i - 1];
+            let text = raw_line.trim_end_matches('\n');
+            let mut syntax_tokens: Option<std::sync::Arc<Vec<tokenizer::Token>>> = None;
+            if prefix_ready && let Some(syntax) = compiled {
+                if let Some(cache_cell) = token_cache {
+                    let cached = {
+                        let mut cache = cache_cell.borrow_mut();
+                        cache.lines.get_mut(&i).and_then(|entry| {
+                            let valid = entry.content_hash
+                                == crate::editor::open_doc::line_hash(raw_line)
+                                && entry.start_state == state;
+                            if valid {
+                                entry.change_id = b.change_id;
+                                state.clone_from(&entry.end_state);
+                                entry.tokens.clone()
+                            } else {
+                                None
+                            }
+                        })
+                    };
+                    if let Some(cached) = cached {
+                        syntax_tokens = Some(cached);
+                    } else if raw_line.len() <= TOKENIZE_MAX_LINE_BYTES
+                        && syntax_started.elapsed() < TOKENIZE_FRAME_BUDGET
+                    {
+                        let start_state = state.clone();
+                        let (computed, end) =
+                            tokenizer::tokenize_line_with_state(syntax, raw_line, &state);
+                        let arc = std::sync::Arc::new(computed);
+                        state = end.clone();
+                        let mut cache = cache_cell.borrow_mut();
+                        cache.lines.insert(
+                            i,
+                            crate::editor::open_doc::CachedLine {
+                                change_id: b.change_id,
+                                content_hash: crate::editor::open_doc::line_hash(raw_line),
+                                start_state,
+                                tokens: Some(std::sync::Arc::clone(&arc)),
+                                end_state: end,
+                            },
+                        );
+                        if i % TOKEN_CHECKPOINT_INTERVAL == 0 {
+                            cache.checkpoints.insert(i, state.clone());
+                        }
+                        if i == cache.frontier_line + 1 {
+                            cache.frontier_line = i;
+                            cache.frontier_state.clone_from(&state);
+                        }
+                        syntax_tokens = Some(arc);
+                    } else if raw_line.len() <= TOKENIZE_MAX_LINE_BYTES {
+                        cache_cell.borrow_mut().pending = true;
+                    }
+                } else if raw_line.len() <= TOKENIZE_MAX_LINE_BYTES {
+                    let (computed, end) =
+                        tokenizer::tokenize_line_with_state(syntax, raw_line, &state);
+                    state = end;
+                    syntax_tokens = Some(std::sync::Arc::new(computed));
+                }
+            }
+
+            // Folded lines still participate in lexical state propagation, but
+            // do not produce a visual row.
             if folded_lines.contains(&i) {
                 i += 1;
                 continue;
             }
-            let raw_line = &b.lines[i - 1];
-            let text = raw_line.trim_end_matches('\n');
-            let mut tokens: Vec<RenderToken> = if let Some(syntax) = compiled {
-                // `need_tokens` guarantees a Some return: a hit without tokens
-                // falls through to a fresh tokenize.
-                let toks_arc: std::sync::Arc<Vec<tokenizer::Token>> =
-                    resolve_line(i, &mut state, syntax, true).unwrap_or_default();
+
+            let mut tokens: Vec<RenderToken> = if let Some(toks_arc) = syntax_tokens {
                 toks_arc
                     .iter()
                     .map(|t| {
@@ -1650,20 +1763,16 @@ pub(crate) fn build_render_lines(
             }
             i += 1;
         }
-        // Bound the heavy token lists to the viewport plus a margin so
-        // scrolling through a large file does not retain tokens for every line
-        // ever shown. Only `tokens` is dropped — the cheap hash/state skeleton
-        // stays so the above-viewport state walk remains lookup-only.
+        // Bound token-heavy line entries to the viewport plus a margin. Sparse
+        // checkpoints and compact content hashes retain enough information to
+        // reconstruct state, so entries can be removed rather than leaving an
+        // unbounded per-line skeleton behind.
         if let Some(cache_cell) = token_cache {
             let mut cache = cache_cell.borrow_mut();
             if cache.lines.len() > TOKEN_CACHE_MAX_LINES {
                 let lo = first.saturating_sub(TOKEN_CACHE_MARGIN);
                 let hi = last + TOKEN_CACHE_MARGIN;
-                for (&k, entry) in cache.lines.iter_mut() {
-                    if k < lo || k > hi {
-                        entry.tokens = None;
-                    }
-                }
+                cache.lines.retain(|&line, _| line >= lo && line <= hi);
             }
         }
         Ok(render)

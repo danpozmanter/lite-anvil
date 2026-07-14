@@ -1,5 +1,11 @@
 # Change Log
 
+## [2.14.4] - 2026-07-14 - Large-file and many-file responsiveness.
+
+* Deep syntax highlighting is now incremental, checkpointed, frame-budgeted, and memory-bounded. Text appears immediately while highlighting settles, tokenizer dispatch skips irrelevant grammar rules, and oversized generated lines fall back to plain text.
+* Normal typing records compact inverse edits instead of snapshotting the document, syntax invalidation starts at the changed line, and test discovery and bracket matching avoid unnecessary document-wide allocation.
+* Large-file settings now govern plain-text mode, editing, LSP, autocomplete, loading, and reload behavior. Minimap and markdown preview work is bounded, the configured tab limit is enforced, and opt-in performance diagnostics are available through `ANVIL_PERF=1`.
+
 ## [2.14.3] - 2026-07-13 - File context menu path copying.
 
 * Right-clicking inside a saved file now offers Copy Path and Copy Relative Path, separated from the edit commands, so Nano-Anvil exposes the tab path-copy actions without a tab bar.

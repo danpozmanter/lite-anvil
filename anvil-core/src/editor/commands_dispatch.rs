@@ -10,6 +10,21 @@
 //
 // Add a new command by editing exactly one match arm here.
 
+{
+let block_large_file_edit = is_document_mutation_command(&cmd)
+    && config.large_file.read_only
+    && docs
+        .get(active_tab)
+        .map(|doc| {
+            crate::editor::open_doc::exceeds_soft_limit(doc, config.large_file.soft_limit_mb)
+        })
+        .unwrap_or(false);
+if block_large_file_edit {
+    info_message = Some((
+        "Large file is read-only by configuration".to_string(),
+        Instant::now(),
+    ));
+} else {
 match cmd.as_str() {
 "core:quit" => {
     if single_file_mode && docs.iter().any(doc_is_modified) {
@@ -251,7 +266,9 @@ match cmd.as_str() {
     }
 }
 "core:new-doc" => {
-    if subsystems.has_notes_mode() && !project_root.is_empty() {
+    if !crate::editor::main_loop::can_open_another_tab(docs.len()) {
+        info_message = Some(("Open tab limit reached".to_string(), Instant::now()));
+    } else if subsystems.has_notes_mode() && !project_root.is_empty() {
         // Notes mode: create a new "Note N.md" on disk and open it,
         // matching NoteSquirrel's lifecycle. The number is the smallest
         // integer >= existing-note-count + 1 that doesn't collide.
@@ -1445,5 +1462,7 @@ _ => {
             }
         }
     }
+}
+}
 }
 }

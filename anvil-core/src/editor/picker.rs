@@ -178,9 +178,8 @@ pub fn bracket_pair(
     const LIMIT: usize = 2000;
     let line_idx = start_line.checked_sub(1)?;
     let text = lines.get(line_idx)?;
-    let chars: Vec<char> = text.chars().collect();
     let col_idx = start_col.checked_sub(1)?;
-    let ch = *chars.get(col_idx)?;
+    let ch = text.chars().nth(col_idx)?;
     let (open, close, dir) = match ch {
         '(' => ('(', ')', 1isize),
         ')' => ('(', ')', -1isize),
@@ -194,10 +193,9 @@ pub fn bracket_pair(
     if dir > 0 {
         let end = (start_line + LIMIT).min(lines.len());
         for line in start_line..=end {
-            let chars: Vec<char> = lines[line - 1].chars().collect();
             let start = if line == start_line { start_col + 1 } else { 1 };
-            for col in start..=chars.len() {
-                let cur = chars[col - 1];
+            for (index, cur) in lines[line - 1].chars().enumerate().skip(start - 1) {
+                let col = index + 1;
                 if cur == open {
                     depth += 1;
                 } else if cur == close {
@@ -211,14 +209,18 @@ pub fn bracket_pair(
     } else {
         let start = start_line.saturating_sub(LIMIT);
         for line in (start.max(1)..=start_line).rev() {
-            let chars: Vec<char> = lines[line - 1].chars().collect();
+            let text = &lines[line - 1];
             let end_col = if line == start_line {
-                start_col.saturating_sub(1).min(chars.len())
+                start_col.saturating_sub(1).min(text.chars().count())
             } else {
-                chars.len().saturating_sub(1)
+                text.chars().count().saturating_sub(1)
             };
-            for col in (1..=end_col).rev() {
-                let cur = chars[col - 1];
+            let mut col = text.chars().count();
+            for cur in text.chars().rev() {
+                if col > end_col {
+                    col -= 1;
+                    continue;
+                }
                 if cur == close {
                     depth += 1;
                 } else if cur == open {
@@ -227,6 +229,7 @@ pub fn bracket_pair(
                         return Some((start_line, start_col, line, col));
                     }
                 }
+                col -= 1;
             }
         }
     }

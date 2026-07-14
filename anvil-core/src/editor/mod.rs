@@ -22,6 +22,7 @@ pub mod markdown_preview;
 pub mod nag_view;
 pub mod node_view;
 pub mod open_doc;
+pub(crate) mod perf;
 pub mod picker;
 #[cfg(unix)]
 pub mod process;

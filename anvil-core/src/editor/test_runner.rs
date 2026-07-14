@@ -555,6 +555,50 @@ pub struct DiscoveredTest {
     pub name: String,
 }
 
+/// Whether this file type has a lexical test-discovery implementation.
+/// Callers use this cheap gate before probing the project for a runner or
+/// scanning the document.
+pub fn supports_test_discovery(file_path: &str) -> bool {
+    let ext = file_path
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "rs" | "py"
+            | "go"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "mjs"
+            | "cjs"
+            | "cs"
+            | "fs"
+            | "java"
+            | "kt"
+            | "kts"
+            | "scala"
+            | "sc"
+            | "php"
+            | "rb"
+            | "clj"
+            | "cljs"
+            | "cljc"
+            | "dart"
+            | "zig"
+            | "c"
+            | "cc"
+            | "cpp"
+            | "cxx"
+            | "c++"
+            | "h"
+            | "hpp"
+            | "hxx"
+    )
+}
+
 /// Scan the document text for test definitions. The language is inferred
 /// from the file extension — unknown extensions return an empty vec.
 ///

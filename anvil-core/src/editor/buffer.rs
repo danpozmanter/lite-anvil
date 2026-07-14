@@ -114,15 +114,21 @@ pub const HUGE_FILE_THRESHOLD: u64 = 50 * 1024 * 1024;
 /// files just under `HUGE_FILE_THRESHOLD` that still get edited heavily.
 pub const UNDO_MEMORY_BUDGET: usize = 64 * 1024 * 1024;
 
-/// Buffer content captured at the start of an undo group. The group is
-/// finalized into a compact inverse record (the byte-level diff of this
-/// base against the post-edit buffer) at the next group boundary or on the
-/// first undo, so an edit stores work proportional to its own size rather
-/// than the whole document.
-pub struct PendingUndo {
-    base_text: String,
-    base_selections: Vec<usize>,
-    base_change_id: i64,
+/// An undo group waiting for its next boundary. Ordinary commands retain a
+/// compatibility snapshot because their mutations are not yet expressed as
+/// edits. The common typing path records its inverse directly, so a single
+/// keystroke does not clone and later diff the whole document.
+pub enum PendingUndo {
+    Snapshot {
+        base_text: String,
+        base_selections: Vec<usize>,
+        base_change_id: i64,
+    },
+    Direct {
+        base_selections: Vec<usize>,
+        base_change_id: i64,
+        edit: EditRecord,
+    },
 }
 
 /// Document buffer state: lines, selections, undo/redo, and metadata
@@ -137,6 +143,11 @@ pub struct BufferState {
     /// at the next group boundary, on undo, or on redo.
     pub pending: Option<PendingUndo>,
     pub change_id: i64,
+    /// Earliest line affected by the mutation which produced
+    /// `syntax_dirty_change_id`. Render caches use this watermark to avoid a
+    /// whole-document hash pass after normal editor commands.
+    pub syntax_dirty_from: usize,
+    pub syntax_dirty_change_id: i64,
     /// Sum of the byte lengths of every line. Computed on load and refreshed
     /// after undo/redo restores. Drives `is_huge()` which gates `push_undo`
     /// into no-op mode on multi-GB files. Not maintained incrementally on
@@ -188,6 +199,8 @@ pub fn default_buffer_state() -> BufferState {
         redo: Vec::new(),
         pending: None,
         change_id: 1,
+        syntax_dirty_from: 1,
+        syntax_dirty_change_id: -1,
         total_bytes: 1,
         crlf: false,
         bom: BomType::None,
@@ -1295,8 +1308,21 @@ fn finalize_pending(state: &mut BufferState) {
     let Some(pending) = state.pending.take() else {
         return;
     };
-    let edits = diff_to_undo_edits(&pending.base_text, &state.lines);
-    let entry = pack_undo_entry(pending.base_change_id, &pending.base_selections, &edits);
+    let entry = match pending {
+        PendingUndo::Snapshot {
+            base_text,
+            base_selections,
+            base_change_id,
+        } => {
+            let edits = diff_to_undo_edits(&base_text, &state.lines);
+            pack_undo_entry(base_change_id, &base_selections, &edits)
+        }
+        PendingUndo::Direct {
+            base_selections,
+            base_change_id,
+            edit,
+        } => pack_undo_entry(base_change_id, &base_selections, &[edit]),
+    };
     state.undo.push(entry);
     clamp_history(&mut state.undo);
     trim_history_to_budget(state);
@@ -1314,21 +1340,32 @@ fn finalize_pending(state: &mut BufferState) {
 /// even capturing the base would lock up the editor. Callers don't need to
 /// special-case huge files; the function handles it.
 pub fn push_undo(state: &mut BufferState) {
+    let dirty_line = state
+        .selections
+        .chunks_exact(4)
+        .map(|selection| selection[0].min(selection[2]))
+        .min()
+        .unwrap_or(1)
+        .max(1);
     if state.is_huge() {
         state.pending = None;
         state.redo.clear();
         state.change_id += 1;
+        state.syntax_dirty_from = dirty_line;
+        state.syntax_dirty_change_id = state.change_id;
         state.last_edit = None;
         return;
     }
     finalize_pending(state);
-    state.pending = Some(PendingUndo {
+    state.pending = Some(PendingUndo::Snapshot {
         base_text: state.lines.concat(),
         base_selections: state.selections.clone(),
         base_change_id: state.change_id,
     });
     state.redo.clear();
     state.change_id += 1;
+    state.syntax_dirty_from = dirty_line;
+    state.syntax_dirty_change_id = state.change_id;
     state.last_edit = None;
 }
 
@@ -1349,13 +1386,48 @@ pub fn push_undo_mergeable(
     if !has_selection {
         if let Some((prev_time, prev_line, prev_col, true, false)) = state.last_edit {
             if line == prev_line && col == prev_col + 1 && (now - prev_time) < UNDO_MERGE_TIMEOUT {
+                if let Some(PendingUndo::Direct { edit, .. }) = state.pending.as_mut() {
+                    edit.col2 = col + 1;
+                }
                 state.last_edit = Some((now, line, col, true, false));
                 state.change_id += 1;
+                state.syntax_dirty_from = line.max(1);
+                state.syntax_dirty_change_id = state.change_id;
                 return true;
             }
         }
     }
-    push_undo(state);
+    if has_selection {
+        push_undo(state);
+        state.last_edit = Some((now, line, col, true, true));
+        return false;
+    }
+    if state.is_huge() {
+        state.pending = None;
+        state.redo.clear();
+        state.change_id += 1;
+        state.syntax_dirty_from = line.max(1);
+        state.syntax_dirty_change_id = state.change_id;
+        state.last_edit = Some((now, line, col, true, has_selection));
+        return false;
+    }
+    finalize_pending(state);
+    state.pending = Some(PendingUndo::Direct {
+        base_selections: state.selections.clone(),
+        base_change_id: state.change_id,
+        edit: EditRecord {
+            kind: b'r',
+            line1: line,
+            col1: col,
+            line2: line,
+            col2: col + 1,
+            text: String::new(),
+        },
+    });
+    state.redo.clear();
+    state.change_id += 1;
+    state.syntax_dirty_from = line.max(1);
+    state.syntax_dirty_change_id = state.change_id;
     state.last_edit = Some((now, line, col, true, has_selection));
     false
 }
@@ -1386,6 +1458,8 @@ pub fn undo(state: &mut BufferState) {
         .push(pack_undo_entry(redo_change_id, &redo_selections, &inverse));
     state.selections = restore_selections;
     state.change_id = restore_change_id;
+    state.syntax_dirty_from = edits.iter().map(|edit| edit.line1).min().unwrap_or(1);
+    state.syntax_dirty_change_id = state.change_id;
     // `total_bytes` only gates the huge-file heuristic, so track the edits' net
     // byte change instead of rescanning every line.
     state.total_bytes = state.total_bytes.saturating_add_signed(byte_delta);
@@ -1416,6 +1490,8 @@ pub fn redo(state: &mut BufferState) {
         .push(pack_undo_entry(undo_change_id, &undo_selections, &inverse));
     state.selections = restore_selections;
     state.change_id = restore_change_id;
+    state.syntax_dirty_from = edits.iter().map(|edit| edit.line1).min().unwrap_or(1);
+    state.syntax_dirty_change_id = state.change_id;
     // `total_bytes` only gates the huge-file heuristic, so track the edits' net
     // byte change instead of rescanning every line.
     state.total_bytes = state.total_bytes.saturating_add_signed(byte_delta);

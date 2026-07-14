@@ -1,4 +1,4 @@
-//! Baseline performance probes. NOT a regression test — these don't assert
+//! Baseline performance probes. NOT a regression test. These don't assert
 //! anything; they just print numbers when the user file is present so we can
 //! see the per-line tokenize cost on the actual files the user is editing.
 //!
@@ -74,7 +74,32 @@ fn baseline_web_ready() {
 #[test]
 #[ignore]
 fn baseline_changelog() {
-    time_tokenize("/home/daniel/dev/lite-anvil/changelog.md", "changelog.md");
+    time_tokenize("/home/daniel/dev/lite-anvil/CHANGELOG.md", "CHANGELOG.md");
+}
+
+#[test]
+#[ignore]
+fn synthetic_tokenizer_scaling() {
+    let datadir = "/home/daniel/dev/lite-anvil/data";
+    let index = syntax::load_syntax_index(datadir);
+    let entry = syntax::match_syntax_entry("sample.md", &index).unwrap();
+    let def = entry.load_full().unwrap();
+    let compiled = tokenizer::compile_from_definition(&def).unwrap();
+    let plain = "ordinary prose with no markdown delimiter ".repeat(64);
+
+    for count in [100usize, 1_000, 10_000] {
+        let started = std::time::Instant::now();
+        let mut state = Vec::new();
+        for _ in 0..count {
+            let (_, end) = tokenizer::tokenize_line_with_state(&compiled, &plain, &state);
+            state = end;
+        }
+        eprintln!(
+            "synthetic markdown: lines={count} bytes={} duration={:?}",
+            count * plain.len(),
+            started.elapsed()
+        );
+    }
 }
 
 #[test]

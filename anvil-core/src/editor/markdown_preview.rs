@@ -53,6 +53,10 @@ pub struct MarkdownPreviewState {
     pub scroll_y: f64,
     pub target_scroll_y: f64,
     pub cached_change_id: i64,
+    /// Most recent buffer version observed while waiting for the user to
+    /// pause typing before reparsing the full document.
+    pub pending_change_id: i64,
+    pub reparse_at: Option<std::time::Instant>,
     pub cached_width: f64,
     pub link_regions: Vec<LinkRegion>,
     pub checkbox_regions: Vec<CheckboxRegion>,
