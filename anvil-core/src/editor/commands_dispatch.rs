@@ -1430,6 +1430,7 @@ _ => {
     // Keyboard-initiated: auto-scroll to keep cursor visible.
     if let Some(doc) = docs.get_mut(active_tab) {
         let marker = comment_marker_for_path(&doc.path, &syntax_index);
+        let language_aware = has_syntax_for_path(&doc.path, &syntax_index);
         handle_doc_command(
             &mut doc.view,
             &cmd,
@@ -1437,6 +1438,7 @@ _ => {
             &doc.indent_type,
             doc.indent_size,
             marker.as_ref(),
+            language_aware,
             true,
             line_wrapping,
         );

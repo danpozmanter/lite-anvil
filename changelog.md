@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.14.6] - 2026-07-15 - Responsive saves and plain text autoindent fix.
+
+* Large multi-line saves now use buffered writes and deduplicate file-watcher bursts before checking for external changes, eliminating the post-save input pause.
+* Plain-text files no longer auto indent.
+
 ## [2.14.5] - 2026-07-14 - Sidebar file open fix.
 
 * Sidebar file clicks now open the selected file again even when the bulk-open tab cap is reached, and header clicks no longer map to the first row.

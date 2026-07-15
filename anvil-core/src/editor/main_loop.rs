@@ -477,7 +477,7 @@ impl AutoreloadState {
 
     /// Drain pending events and return paths of modified files.
     fn poll_changed(&self) -> Vec<String> {
-        let mut changed = Vec::new();
+        let mut changed = HashSet::new();
         if let Some(ref rx) = self.rx {
             while let Ok(event) = rx.try_recv() {
                 if let Ok(ev) = event {
@@ -493,14 +493,18 @@ impl AutoreloadState {
                     for p in &ev.paths {
                         if let Some(s) = p.to_str() {
                             if self.watched_files.contains_key(s) {
-                                changed.push(s.to_string());
+                                changed.insert(s.to_string());
                             }
                         }
                     }
                 }
             }
         }
-        changed
+        // One buffered write may still produce several backend events. Do the
+        // metadata comparison only after paths have been deduplicated, so a
+        // save can never turn an event burst into a UI-thread syscall loop.
+        changed.retain(|path| !buffer::is_current_saved_file(path));
+        changed.into_iter().collect()
     }
 }
 
@@ -611,6 +615,20 @@ fn comment_marker_for_path(
         .block_comment
         .as_ref()
         .map(|(o, c)| CommentMarker::Block(o.clone(), c.clone()))
+}
+
+/// Whether the active filename matches a configured language syntax. Files
+/// without a match are plain text and should not receive language editing
+/// behavior such as automatic indentation.
+fn has_syntax_for_path(path: &str, index: &[crate::editor::syntax::SyntaxEntry]) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path);
+    crate::editor::syntax::match_syntax_entry(filename, index).is_some()
 }
 
 /// Truncate a tab name to `max_chars` characters, appending an ellipsis when
@@ -13404,6 +13422,40 @@ fn smart_indent_opens_block(prefix: &str) -> bool {
     matches!(stripped.trim_end().chars().last(), Some(':' | '{' | '(' | '['))
 }
 
+fn newline_indent(
+    line_text: &str,
+    before_cursor: &str,
+    indent_type: &str,
+    indent_size: usize,
+    language_aware: bool,
+) -> String {
+    if !language_aware {
+        return String::new();
+    }
+    let mut indent: String = line_text
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
+    if smart_indent_opens_block(before_cursor) {
+        if indent_type == "hard" {
+            indent.push('\t');
+        } else {
+            indent.push_str(&" ".repeat(indent_size.max(1)));
+        }
+    }
+    indent
+}
+
+fn carried_indent(line_text: &str, language_aware: bool) -> String {
+    if !language_aware {
+        return String::new();
+    }
+    line_text
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
+}
+
 /// Drop everything from the first `//`, `--`, or `#` line-comment marker.
 /// Tracks simple single/double-quoted strings so that markers inside a
 /// string literal are ignored. Heuristic only — does not understand raw
@@ -13719,6 +13771,7 @@ fn handle_doc_command(
     indent_type: &str,
     indent_size: usize,
     comment_marker: Option<&CommentMarker>,
+    language_aware: bool,
     auto_scroll: bool,
     line_wrapping: bool,
 ) {
@@ -14161,37 +14214,29 @@ fn handle_doc_command(
                 buffer::delete_selection(b);
                 line = b.selections[0];
                 col = b.selections[1];
-                let indent: String = b.lines[line - 1]
-                    .chars()
-                    .take_while(|c| *c == ' ' || *c == '\t')
-                    .collect();
+                let line_text = b.lines[line - 1].clone();
                 let l = &mut b.lines[line - 1];
                 let byte_pos = char_to_byte(l, col - 1);
                 let rest = l[byte_pos..].to_string();
                 let before_cursor = l[..byte_pos].to_string();
                 l.truncate(byte_pos);
                 l.push('\n');
-                let extra = if smart_indent_opens_block(&before_cursor) {
-                    if indent_type == "hard" {
-                        "\t".to_string()
-                    } else {
-                        " ".repeat(indent_size.max(1))
-                    }
-                } else {
-                    String::new()
-                };
-                let new_line = format!("{indent}{extra}{rest}");
-                let new_col = indent.chars().count() + extra.chars().count() + 1;
+                let indent = newline_indent(
+                    &line_text,
+                    &before_cursor,
+                    indent_type,
+                    indent_size,
+                    language_aware,
+                );
+                let new_line = format!("{indent}{rest}");
+                let new_col = indent.chars().count() + 1;
                 b.lines.insert(line, new_line);
                 line += 1;
                 col = new_col;
             }
             "doc:newline-below" => {
                 buffer::push_undo(b);
-                let indent: String = b.lines[line - 1]
-                    .chars()
-                    .take_while(|c| *c == ' ' || *c == '\t')
-                    .collect();
+                let indent = carried_indent(&b.lines[line - 1], language_aware);
                 let new_line = format!("{indent}\n");
                 let new_col = indent.len() + 1;
                 b.lines.insert(line, new_line);
@@ -14200,10 +14245,7 @@ fn handle_doc_command(
             }
             "doc:newline-above" => {
                 buffer::push_undo(b);
-                let indent: String = b.lines[line - 1]
-                    .chars()
-                    .take_while(|c| *c == ' ' || *c == '\t')
-                    .collect();
+                let indent = carried_indent(&b.lines[line - 1], language_aware);
                 let new_line = format!("{indent}\n");
                 let new_col = indent.len() + 1;
                 b.lines.insert(line - 1, new_line);
@@ -14964,7 +15006,29 @@ fn load_fonts(_config: &NativeConfig) -> Result<(), String> {
 
 #[cfg(test)]
 mod indent_tests {
-    use super::{smart_backspace_span, smart_indent_opens_block};
+    use super::{carried_indent, newline_indent, smart_backspace_span, smart_indent_opens_block};
+
+    #[test]
+    fn plain_text_newline_does_not_auto_indent() {
+        assert_eq!(
+            newline_indent("    notes:\n", "    notes:", "soft", 4, false),
+            ""
+        );
+        assert_eq!(carried_indent("\tindented note\n", false), "");
+    }
+
+    #[test]
+    fn language_newline_keeps_smart_indent() {
+        assert_eq!(
+            newline_indent("    if ready:\n", "    if ready:", "soft", 4, true),
+            "        "
+        );
+        assert_eq!(
+            newline_indent("\tif ready {\n", "\tif ready {", "hard", 4, true),
+            "\t\t"
+        );
+        assert_eq!(carried_indent("    value\n", true), "    ");
+    }
 
     #[test]
     fn smart_indent_opens_block_python_colon() {

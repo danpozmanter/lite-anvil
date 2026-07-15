@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use parking_lot::Mutex;
@@ -10,6 +11,70 @@ use std::sync::{Arc, LazyLock};
 /// Per-process counter making each atomic-save temp file name unique, so
 /// concurrent saves never collide on one another's scratch file.
 static TMP_SAVE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Identity of the exact on-disk version produced by an editor save.
+/// Autoreload uses this cheap metadata check to discard watcher echoes without
+/// reopening and hashing the file on the UI thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SavedFileStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    ctime: i64,
+    #[cfg(unix)]
+    ctime_nsec: i64,
+}
+
+static SAVED_FILE_STAMPS: LazyLock<Mutex<HashMap<PathBuf, SavedFileStamp>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn saved_file_stamp(filename: &str) -> Option<SavedFileStamp> {
+    let metadata = fs::metadata(filename).ok()?;
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    Some(SavedFileStamp {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+        #[cfg(unix)]
+        dev: metadata.dev(),
+        #[cfg(unix)]
+        ino: metadata.ino(),
+        #[cfg(unix)]
+        ctime: metadata.ctime(),
+        #[cfg(unix)]
+        ctime_nsec: metadata.ctime_nsec(),
+    })
+}
+
+fn record_saved_file(filename: &str) {
+    if let Some(stamp) = saved_file_stamp(filename) {
+        SAVED_FILE_STAMPS
+            .lock()
+            .insert(PathBuf::from(filename), stamp);
+    }
+}
+
+/// Return true while `filename` is still the exact version last written by
+/// `save_file`. A changed stamp is removed so later watcher events take the
+/// normal external-change path.
+pub(crate) fn is_current_saved_file(filename: &str) -> bool {
+    let path = PathBuf::from(filename);
+    let Some(current) = saved_file_stamp(filename) else {
+        SAVED_FILE_STAMPS.lock().remove(&path);
+        return false;
+    };
+    let mut stamps = SAVED_FILE_STAMPS.lock();
+    if stamps.get(&path) == Some(&current) {
+        true
+    } else {
+        stamps.remove(&path);
+        false
+    }
+}
 
 /// Byte Order Mark types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -996,18 +1061,24 @@ pub fn save_file(
     crlf: bool,
     atomic: bool,
 ) -> Result<(), std::io::Error> {
-    if atomic {
+    let result = if atomic {
         save_file_atomic(state, filename, crlf)
     } else {
         save_file_inplace(state, filename, crlf)
+    };
+    if result.is_ok() {
+        record_saved_file(filename);
     }
+    result
 }
 
-fn write_content<W: Write>(
-    mut w: W,
-    state: &BufferState,
-    crlf: bool,
-) -> Result<(), std::io::Error> {
+fn write_content<W: Write>(w: W, state: &BufferState, crlf: bool) -> Result<(), std::io::Error> {
+    // Writing each logical line directly to a File produces one filesystem
+    // notification per line on Linux. Besides the syscall overhead, a large
+    // document can flood autoreload with thousands of events that the UI must
+    // drain after Ctrl+S. Keep the stream bounded while collapsing those
+    // writes into a handful of kernel operations.
+    let mut w = BufWriter::with_capacity(64 * 1024, w);
     if state.bom != BomType::None {
         w.write_all(state.bom.as_bytes())?;
     }
@@ -1019,7 +1090,7 @@ fn write_content<W: Write>(
             w.write_all(trimmed.as_bytes())?;
         }
     }
-    Ok(())
+    w.flush()
 }
 
 fn save_file_inplace(
@@ -2137,6 +2208,67 @@ mod tests {
             );
             let _ = fs::remove_file(&path);
         }
+    }
+
+    #[test]
+    fn saved_file_stamp_only_matches_the_version_written_by_the_editor() {
+        let path = std::env::temp_dir().join(format!(
+            "liteanvil_saved_stamp_{}_{}.txt",
+            std::process::id(),
+            TMP_SAVE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut state = default_buffer_state();
+        state.lines = vec!["editor version\n".to_string()];
+        let filename = path.to_str().unwrap();
+
+        save_file(&state, filename, false, false).unwrap();
+        assert!(is_current_saved_file(filename));
+        assert!(
+            is_current_saved_file(filename),
+            "duplicate watcher echoes must stay cheap"
+        );
+
+        fs::write(&path, "external version with a different size\n").unwrap();
+        assert!(!is_current_saved_file(filename));
+        assert!(!is_current_saved_file(filename));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn large_multiline_save_uses_bounded_underlying_writes() {
+        #[derive(Default)]
+        struct CountingWriter {
+            calls: usize,
+            bytes: usize,
+        }
+
+        impl Write for CountingWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                self.bytes += bytes.len();
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut state = default_buffer_state();
+        state.lines = (0..4_000)
+            .map(|i| format!("{i:04} {}\n", "x".repeat(120)))
+            .collect();
+        let expected_bytes: usize = state.lines.iter().map(String::len).sum();
+        let mut writer = CountingWriter::default();
+
+        write_content(&mut writer, &state, false).unwrap();
+
+        assert_eq!(writer.bytes, expected_bytes);
+        assert!(
+            writer.calls <= 8,
+            "4,000 logical lines produced {} underlying writes",
+            writer.calls
+        );
     }
 
     #[cfg(unix)]
