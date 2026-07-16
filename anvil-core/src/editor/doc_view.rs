@@ -843,6 +843,26 @@ mod tests {
     }
 
     #[test]
+    fn syntax_resume_restarts_frontier_from_checkpoint_after_reverse_scroll() {
+        let mut cache = TokenCache::default();
+        cache.frontier_line = 1_000;
+        cache.frontier_state = vec![10];
+        cache.checkpoints.insert(768, vec![7]);
+
+        let (start, state) = syntax_resume_start(&mut cache, 900);
+        assert_eq!((start, state), (768, vec![7]));
+        assert_eq!(cache.frontier_line, 768);
+        assert_eq!(cache.frontier_state, vec![7]);
+
+        // A yielded frame advances this new frontier. The next frame must
+        // continue from it, rather than returning to checkpoint 768 again.
+        cache.frontier_line = 820;
+        cache.frontier_state = vec![8];
+        let (start, state) = syntax_resume_start(&mut cache, 900);
+        assert_eq!((start, state), (820, vec![8]));
+    }
+
+    #[test]
     fn token_cache_reuses_unchanged_lines_after_edit() {
         let syntax = test_syntax();
         let (buf_id, dv, style) = test_doc(&["alpha\n", "bravo\n", "charlie\n", "delta\n"]);
@@ -1362,6 +1382,30 @@ const TOKENIZE_MAX_LINE_BYTES: usize = 64 * 1024;
 /// displayed immediately.
 const TOKENIZE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(4);
 
+/// Select the lexical state from which to walk to `target`. When a viewport
+/// moves backwards past the current frontier, make its nearest checkpoint the
+/// new frontier before returning it. Otherwise a time-budgeted walk would
+/// restart at that checkpoint on every frame and could leave the viewport
+/// permanently unhighlighted.
+fn syntax_resume_start(
+    cache: &mut crate::editor::open_doc::TokenCache,
+    target: usize,
+) -> (usize, Vec<u8>) {
+    if cache.frontier_line <= target {
+        return (cache.frontier_line, cache.frontier_state.clone());
+    }
+
+    let (line, state) = cache
+        .checkpoints
+        .range(..=target)
+        .next_back()
+        .map(|(&line, state)| (line, state.clone()))
+        .unwrap_or((0, Vec::new()));
+    cache.frontier_line = line;
+    cache.frontier_state = state.clone();
+    (line, state)
+}
+
 /// Build render lines from buffer for the visible range, with syntax highlighting.
 #[cfg(feature = "sdl")]
 #[allow(clippy::too_many_arguments)]
@@ -1454,16 +1498,10 @@ pub(crate) fn build_render_lines(
             let target = first.saturating_sub(1).min(b.lines.len());
             let mut start_line = 0usize;
             if let Some(cache_cell) = token_cache {
-                let cache = cache_cell.borrow();
-                if cache.frontier_line <= target {
-                    start_line = cache.frontier_line;
-                    state.clone_from(&cache.frontier_state);
-                } else if let Some((&line, checkpoint)) =
-                    cache.checkpoints.range(..=target).next_back()
-                {
-                    start_line = line;
-                    state.clone_from(checkpoint);
-                }
+                let (line, resume_state) =
+                    syntax_resume_start(&mut cache_cell.borrow_mut(), target);
+                start_line = line;
+                state = resume_state;
             }
             for ln in start_line + 1..=target {
                 if token_cache.is_some()

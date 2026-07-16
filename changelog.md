@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.14.7] - 2026-07-16 - Large markdown highlighting scroll fix.
+
+* Syntax highlighting resumes correctly after scrolling backward through a large file, so markdown highlights do not disappear while the viewport catches up.
+
 ## [2.14.6] - 2026-07-15 - Responsive saves and plain text autoindent fix.
 
 * Large multi-line saves now use buffered writes and deduplicate file-watcher bursts before checking for external changes, eliminating the post-save input pause.
