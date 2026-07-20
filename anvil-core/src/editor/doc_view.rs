@@ -1,7 +1,9 @@
 use crate::editor::buffer;
 use crate::editor::event::{EditorEvent, EventResult};
+#[cfg(feature = "sdl")]
 use crate::editor::lsp_client::InlayHint;
 use crate::editor::style_ctx::StyleContext;
+#[cfg(feature = "sdl")]
 use crate::editor::tokenizer::{self, CompiledSyntax};
 use crate::editor::types::Rect;
 use crate::editor::view::{DrawContext, UpdateContext, View};
@@ -773,7 +775,7 @@ impl View for DocView {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sdl"))]
 mod tests {
     use super::*;
     #[test]
@@ -844,9 +846,11 @@ mod tests {
 
     #[test]
     fn syntax_resume_restarts_frontier_from_checkpoint_after_reverse_scroll() {
-        let mut cache = TokenCache::default();
-        cache.frontier_line = 1_000;
-        cache.frontier_state = vec![10];
+        let mut cache = TokenCache {
+            frontier_line: 1_000,
+            frontier_state: vec![10],
+            ..Default::default()
+        };
         cache.checkpoints.insert(768, vec![7]);
 
         let (start, state) = syntax_resume_start(&mut cache, 900);

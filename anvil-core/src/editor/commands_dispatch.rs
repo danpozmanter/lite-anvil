@@ -1382,27 +1382,15 @@ match cmd.as_str() {
                 ))
             })
             .unwrap_or((1, 1, 1, 1));
-            // Diagnostics overlapping the cursor line give the server context
-            // for quick fixes.
-            let diags: Vec<serde_json::Value> = lsp_state
-                .diagnostics
-                .get(&uri)
-                .map(|ds| {
-                    ds.iter()
-                        .filter(|d| d.start_line < l2 && d.end_line >= l1.saturating_sub(1))
-                        .map(|d| {
-                            serde_json::json!({
-                                "range": {
-                                    "start": {"line": d.start_line, "character": d.start_col},
-                                    "end": {"line": d.end_line, "character": d.end_col}
-                                },
-                                "severity": d.severity,
-                                "message": d.message
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let (start_line, start_char, end_line, end_char) =
+                normalized_lsp_range(l1, c1, l2, c2);
+            let diags = code_action_diagnostics(
+                lsp_state.diagnostics.get(&doc.path),
+                start_line,
+                start_char,
+                end_line,
+                end_char,
+            );
             let req_id = lsp_state.next_id();
             lsp_state
                 .pending_requests
@@ -1412,11 +1400,11 @@ match cmd.as_str() {
                 &lsp_code_action_request(
                     req_id,
                     &uri,
-                    l1 - 1,
-                    c1 - 1,
-                    l2 - 1,
-                    c2 - 1,
-                    serde_json::Value::Array(diags),
+                    start_line,
+                    start_char,
+                    end_line,
+                    end_char,
+                    diags,
                 ),
             );
         }

@@ -2,6 +2,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{
     Arc,
@@ -116,6 +117,7 @@ impl Drop for TransportHandle {
 
 static TRANSPORTS: LazyLock<Mutex<HashMap<u64, TransportHandle>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static LSP_TRACE: LazyLock<bool> = LazyLock::new(|| std::env::var_os("ANVIL_LSP_TRACE").is_some());
 static NEXT_ID: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(1));
 
 fn next_id() -> u64 {
@@ -175,12 +177,20 @@ fn start_stdout_thread(mut stdout: ChildStdout, sender: Sender<Value>) {
                     // Wake the (possibly idle-blocked) render loop so it drains
                     // the freshly parsed messages instead of waiting out its
                     // idle timeout.
-                    crate::window::push_wakeup_event();
+                    wake_editor();
                 }
             }
         }
     });
 }
+
+#[cfg(feature = "sdl")]
+fn wake_editor() {
+    crate::window::push_wakeup_event();
+}
+
+#[cfg(not(feature = "sdl"))]
+fn wake_editor() {}
 
 fn start_stderr_thread(mut stderr: ChildStderr, sender: Sender<String>) {
     thread::spawn(move || {
@@ -299,6 +309,9 @@ pub fn spawn_transport(
 
 /// Send an LSP message (JSON value) to a transport.
 pub fn send_message(id: u64, value: &Value) -> Result<(), String> {
+    if *LSP_TRACE {
+        eprintln!("LSP[{id}] -> {value}");
+    }
     let payload = serde_json::to_vec(value).map_err(|e| e.to_string())?;
     let mut frame = format!("Content-Length: {}\r\n\r\n", payload.len()).into_bytes();
     frame.extend_from_slice(&payload);
@@ -333,11 +346,17 @@ pub fn poll_transport(id: u64) -> Result<PollResult, String> {
 
     let mut messages = Vec::new();
     while let Ok(msg) = handle.messages.try_recv() {
+        if *LSP_TRACE {
+            eprintln!("LSP[{id}] <- {msg}");
+        }
         messages.push(msg);
     }
 
     let mut stderr = Vec::new();
     while let Ok(line) = handle.stderr.try_recv() {
+        if *LSP_TRACE {
+            eprintln!("LSP[{id}] stderr: {line}");
+        }
         stderr.push(line);
     }
 
@@ -466,7 +485,7 @@ pub fn builtin_specs() -> Vec<LspSpec> {
         lsp_spec(
             "typescript_language_server",
             &["typescript-language-server", "--stdio"],
-            &["javascript", "typescript", "tsx"],
+            &["javascript", "jsx", "typescript", "tsx"],
             &["tsconfig.json", "jsconfig.json", "package.json", ".git"],
         ),
         lsp_spec(
@@ -485,7 +504,13 @@ pub fn builtin_specs() -> Vec<LspSpec> {
             "ocamllsp",
             &["ocamllsp"],
             &["ocaml"],
-            &[".ocamlformat", "dune-project", "dune-workspace", ".git"],
+            &[
+                ".ocamlformat",
+                "dune-project",
+                "dune-workspace",
+                "*.opam",
+                ".git",
+            ],
         ),
         lsp_spec(
             "gleam_lsp",
@@ -514,6 +539,7 @@ pub fn builtin_specs() -> Vec<LspSpec> {
                 "package.yaml",
                 "stack.yaml",
                 "cabal.project",
+                "*.cabal",
                 ".git",
             ],
         ),
@@ -536,7 +562,283 @@ pub fn builtin_specs() -> Vec<LspSpec> {
             &["gossamer"],
             &["project.toml", ".git"],
         ),
+        lsp_spec(
+            "dart_language_server",
+            &["dart", "language-server"],
+            &["dart"],
+            &["pubspec.yaml", ".git"],
+        ),
+        lsp_spec(
+            "metals",
+            &["metals"],
+            &["scala"],
+            &["build.sbt", "build.sc", ".git"],
+        ),
+        lsp_spec(
+            "sourcekit_lsp",
+            &["sourcekit-lsp"],
+            &["swift"],
+            &["Package.swift", ".git"],
+        ),
+        lsp_spec("ruby_lsp", &["ruby-lsp"], &["ruby"], &["Gemfile", ".git"]),
+        lsp_spec(
+            "julia_language_server",
+            &[
+                "julia",
+                "--startup-file=no",
+                "--history-file=no",
+                "-e",
+                "using LanguageServer; runserver()",
+            ],
+            &["julia"],
+            &["Project.toml", ".git"],
+        ),
+        lsp_spec(
+            "clojure_lsp",
+            &["clojure-lsp"],
+            &["clojure"],
+            &["deps.edn", "project.clj", "shadow-cljs.edn", ".git"],
+        ),
+        lsp_spec(
+            "crystalline",
+            &["crystalline"],
+            &["crystal"],
+            &["shard.yml", ".git"],
+        ),
+        lsp_spec(
+            "bash_language_server",
+            &["bash-language-server", "start"],
+            &["bash"],
+            &[".git"],
+        ),
     ]
+}
+
+/// Load builtin specs, then merge user and project `lsp.json` overrides.
+pub fn load_specs(userdir: impl AsRef<Path>, project_root: &str) -> Vec<LspSpec> {
+    let mut specs = builtin_specs();
+    let mut paths = vec![userdir.as_ref().join("lsp.json")];
+    if !project_root.is_empty() {
+        paths.push(PathBuf::from(project_root).join("lsp.json"));
+    }
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        for (name, value) in entries {
+            let Some(config) = value.as_object() else {
+                continue;
+            };
+            if config.get("autostart").and_then(Value::as_bool) == Some(false) {
+                specs.retain(|spec| spec.name != name);
+                continue;
+            }
+            let existing = specs.iter().position(|spec| spec.name == name);
+            let mut spec = existing
+                .map(|index| specs[index].clone())
+                .unwrap_or_else(|| LspSpec {
+                    name: name.clone(),
+                    command: Value::Array(Vec::new()),
+                    filetypes: Vec::new(),
+                    root_patterns: vec![".git".to_string()],
+                    initialization_options: None,
+                    settings: None,
+                    env: None,
+                });
+            if let Some(command) = config.get("command") {
+                spec.command = match command {
+                    Value::String(program) => Value::Array(vec![Value::String(program.clone())]),
+                    Value::Array(_) => command.clone(),
+                    _ => spec.command,
+                };
+            }
+            if let Some(filetypes) = config.get("filetypes").and_then(Value::as_array) {
+                spec.filetypes = filetypes
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect();
+            }
+            if let Some(patterns) = config.get("rootPatterns").and_then(Value::as_array) {
+                spec.root_patterns = patterns
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect();
+            }
+            if let Some(options) = config.get("initializationOptions") {
+                spec.initialization_options = Some(options.clone());
+            }
+            if let Some(settings) = config.get("settings") {
+                spec.settings = Some(settings.clone());
+            }
+            if let Some(env) = config.get("env") {
+                spec.env = Some(env.clone());
+            }
+            if spec.command.as_array().is_none_or(Vec::is_empty) || spec.filetypes.is_empty() {
+                continue;
+            }
+            if let Some(index) = existing {
+                specs[index] = spec;
+            } else {
+                specs.push(spec);
+            }
+        }
+    }
+    specs
+}
+
+/// Rust Analyzer servers bundled with installed VS Code extensions.
+fn bundled_rust_analyzer_commands(extension_roots: &[PathBuf]) -> Vec<Vec<String>> {
+    let mut bundled = extension_roots
+        .iter()
+        .filter_map(|root| std::fs::read_dir(root).ok())
+        .flat_map(|entries| entries.flatten())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("rust-lang.rust-analyzer-"))
+        })
+        .filter_map(|entry| {
+            let executable = entry.path().join("server").join(if cfg!(windows) {
+                "rust-analyzer.exe"
+            } else {
+                "rust-analyzer"
+            });
+            executable.is_file().then_some(executable)
+        })
+        .collect::<Vec<_>>();
+    bundled.sort();
+    bundled.reverse();
+    bundled
+        .into_iter()
+        .map(|executable| vec![executable.to_string_lossy().into_owned()])
+        .collect()
+}
+
+/// Commands to try for an LSP specification. The configured command is always
+/// first; languages with commonly bundled alternatives append those candidates.
+pub fn command_candidates(
+    spec: &LspSpec,
+    extension_log_directory: Option<&Path>,
+) -> Vec<Vec<String>> {
+    let mut candidates = Vec::new();
+    let configured_command = spec.command.as_array().map(|command| {
+        command
+            .iter()
+            .filter_map(|value| value.as_str().map(String::from))
+            .collect::<Vec<_>>()
+    });
+    let is_rust = spec.filetypes.iter().any(|filetype| filetype == "rust");
+    if let Some(command) = configured_command
+        .as_ref()
+        .filter(|command| !command.is_empty())
+    {
+        candidates.push(command.clone());
+    }
+
+    if is_rust {
+        let mut extension_roots = Vec::new();
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = PathBuf::from(home);
+            extension_roots.push(home.join(".vscode/extensions"));
+            extension_roots.push(home.join(".vscode-server/extensions"));
+            extension_roots.push(home.join(".vscode-oss/extensions"));
+            extension_roots.push(home.join(".vscode-server-insiders/extensions"));
+        }
+        candidates.extend(bundled_rust_analyzer_commands(&extension_roots));
+        return candidates;
+    }
+    if !spec.filetypes.iter().any(|filetype| filetype == "c#") {
+        return candidates;
+    }
+
+    let roslyn_args = || {
+        let mut args = vec![
+            "--stdio".to_string(),
+            "--autoLoadProjects".to_string(),
+            "--logLevel".to_string(),
+            "Warning".to_string(),
+            "--telemetryLevel".to_string(),
+            "off".to_string(),
+        ];
+        if let Some(directory) = extension_log_directory {
+            args.push("--extensionLogDirectory".to_string());
+            args.push(directory.to_string_lossy().into_owned());
+        }
+        args
+    };
+    let mut path_command = vec!["Microsoft.CodeAnalysis.LanguageServer".to_string()];
+    path_command.extend(roslyn_args());
+    candidates.push(path_command);
+
+    let mut extension_roots = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        extension_roots.push(home.join(".vscode/extensions"));
+        extension_roots.push(home.join(".vscode-server/extensions"));
+        extension_roots.push(home.join(".vscode-oss/extensions"));
+        extension_roots.push(home.join(".vscode-server-insiders/extensions"));
+    }
+    let mut bundled = extension_roots
+        .into_iter()
+        .filter_map(|root| std::fs::read_dir(root).ok())
+        .flat_map(|entries| entries.flatten())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("ms-dotnettools.csharp-"))
+        })
+        .filter_map(|entry| {
+            let extension_root = entry.path();
+            let executable = extension_root.join(".roslyn").join(if cfg!(windows) {
+                "Microsoft.CodeAnalysis.LanguageServer.exe"
+            } else {
+                "Microsoft.CodeAnalysis.LanguageServer"
+            });
+            executable.is_file().then_some((executable, extension_root))
+        })
+        .collect::<Vec<_>>();
+    bundled.sort();
+    bundled.reverse();
+    for (executable, extension_root) in bundled {
+        let mut command = vec![executable.to_string_lossy().to_string()];
+        command.extend(roslyn_args());
+        let razor = extension_root.join(".razorExtension");
+        for (flag, path) in [
+            (
+                "--extension",
+                razor.join("Microsoft.VisualStudioCode.RazorExtension.dll"),
+            ),
+            (
+                "--razorSourceGenerator",
+                razor.join("Microsoft.CodeAnalysis.Razor.Compiler.dll"),
+            ),
+            (
+                "--razorDesignTimePath",
+                razor.join("Targets/Microsoft.NET.Sdk.Razor.DesignTime.targets"),
+            ),
+            (
+                "--csharpDesignTimePath",
+                razor.join("Targets/Microsoft.CSharpExtension.DesignTime.targets"),
+            ),
+        ] {
+            if path.is_file() {
+                command.push(flag.to_string());
+                command.push(path.to_string_lossy().to_string());
+            }
+        }
+        candidates.push(command);
+    }
+
+    candidates.push(vec!["csharp-ls".to_string()]);
+    candidates.push(vec!["omnisharp".to_string(), "-lsp".to_string()]);
+    candidates
 }
 
 fn lsp_spec(name: &str, cmd: &[&str], filetypes: &[&str], root_patterns: &[&str]) -> LspSpec {
@@ -668,6 +970,153 @@ mod tests {
         let specs = builtin_specs();
         assert!(specs.len() >= 15);
         assert!(specs.iter().any(|s| s.name == "rust_analyzer"));
+    }
+
+    #[test]
+    fn every_mapped_language_has_a_builtin_spec() {
+        let specs = builtin_specs();
+        for filetype in [
+            "rust",
+            "c#",
+            "f#",
+            "java",
+            "kotlin",
+            "python",
+            "go",
+            "javascript",
+            "jsx",
+            "typescript",
+            "tsx",
+            "php",
+            "elixir",
+            "ocaml",
+            "gleam",
+            "erlang",
+            "c",
+            "c++",
+            "haskell",
+            "lua",
+            "svelte",
+            "zig",
+            "gossamer",
+            "dart",
+            "scala",
+            "swift",
+            "ruby",
+            "julia",
+            "clojure",
+            "crystal",
+            "bash",
+        ] {
+            assert!(
+                specs
+                    .iter()
+                    .any(|spec| spec.filetypes.iter().any(|value| value == filetype)),
+                "missing builtin LSP spec for {filetype}"
+            );
+        }
+    }
+
+    #[test]
+    fn lsp_json_merges_overrides_and_custom_servers() {
+        let root =
+            std::env::temp_dir().join(format!("lite-anvil-lsp-config-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("lsp.json"),
+            serde_json::json!({
+                "rust_analyzer": { "settings": { "rust-analyzer": { "check": false } } },
+                "custom": {
+                    "command": ["custom-lsp", "--stdio"],
+                    "filetypes": ["crystal"],
+                    "rootPatterns": ["custom.toml"],
+                    "env": { "CUSTOM_ENV": "1" }
+                },
+                "pyright": { "autostart": false }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let specs = load_specs(root.to_str().unwrap(), "");
+        assert!(!specs.iter().any(|spec| spec.name == "pyright"));
+        assert!(
+            specs
+                .iter()
+                .find(|spec| spec.name == "rust_analyzer")
+                .and_then(|spec| spec.settings.as_ref())
+                .is_some()
+        );
+        let custom = specs.iter().find(|spec| spec.name == "custom").unwrap();
+        assert_eq!(custom.command[0], "custom-lsp");
+        assert_eq!(custom.root_patterns, ["custom.toml"]);
+        assert_eq!(custom.env.as_ref().unwrap()["CUSTOM_ENV"], "1");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn csharp_candidates_include_modern_and_legacy_servers() {
+        let spec = builtin_specs()
+            .into_iter()
+            .find(|spec| spec.filetypes.iter().any(|value| value == "c#"))
+            .unwrap();
+        let log_directory = std::path::Path::new("/tmp/lite-anvil-roslyn-logs");
+        let candidates = command_candidates(&spec, Some(log_directory));
+        assert!(candidates.iter().any(|command| {
+            command
+                .first()
+                .is_some_and(|program| program.ends_with("Microsoft.CodeAnalysis.LanguageServer"))
+        }));
+        assert!(
+            candidates
+                .iter()
+                .filter(|command| {
+                    command.first().is_some_and(|program| {
+                        program.contains("Microsoft.CodeAnalysis.LanguageServer")
+                    })
+                })
+                .all(|command| command.windows(2).any(|args| {
+                    args[0] == "--extensionLogDirectory"
+                        && args[1] == log_directory.to_string_lossy()
+                }))
+        );
+        assert!(candidates.iter().any(|command| {
+            command
+                .first()
+                .is_some_and(|program| program == "csharp-ls")
+        }));
+        assert!(candidates.iter().any(|command| {
+            command
+                .first()
+                .is_some_and(|program| program.eq_ignore_ascii_case("omnisharp"))
+        }));
+    }
+
+    #[test]
+    fn discovers_vscode_bundled_rust_analyzer_servers_newest_first() {
+        let root = std::env::temp_dir().join(format!(
+            "lite-anvil-rust-analyzer-candidates-{}",
+            std::process::id()
+        ));
+        for version in ["0.3.100", "0.3.200"] {
+            let server = root
+                .join(format!("rust-lang.rust-analyzer-{version}-linux-x64"))
+                .join("server");
+            std::fs::create_dir_all(&server).unwrap();
+            std::fs::write(
+                server.join(if cfg!(windows) {
+                    "rust-analyzer.exe"
+                } else {
+                    "rust-analyzer"
+                }),
+                [],
+            )
+            .unwrap();
+        }
+        let candidates = bundled_rust_analyzer_commands(std::slice::from_ref(&root));
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates[0][0].contains("0.3.200"));
+        assert!(candidates[1][0].contains("0.3.100"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

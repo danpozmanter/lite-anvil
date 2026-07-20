@@ -1,5 +1,13 @@
 # Change Log
 
+## [2.15.0] - 2026-07-20 - LSP quick fixes and diagnostics.
+
+* Quick Fix now mirrors VS Code behavior: server actions are requested with diagnostic context, resolved when needed, and applied by mouse or Enter.
+* Workspace edits, commands, and `workspace/applyEdit` are supported for every LSP language, including Gossamer and C#.
+* LSP diagnostics and document changes now follow each server's advertised protocol, restoring live Roslyn diagnostics after edits.
+* Improved LSP startup, language mappings, server fallback, and separate push/pull diagnostic handling across supported languages.
+* Roslyn uses Lite Anvil's log directory and no longer creates timestamped build directories in C# projects.
+
 ## [2.14.7] - 2026-07-16 - Large markdown highlighting scroll fix.
 
 * Syntax highlighting resumes correctly after scrolling backward through a large file, so markdown highlights do not disappear while the viewport catches up.

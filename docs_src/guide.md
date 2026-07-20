@@ -139,7 +139,7 @@ Lite Anvil includes built-in configurations for the following language servers. 
 | C / C++ | `clangd` | Package manager (e.g. `apt install clangd`) |
 | Java | `jdtls` | [Eclipse JDT.LS](https://github.com/eclipse-jdtls/eclipse.jdt.ls) |
 | Kotlin | `kotlin-language-server` | [GitHub releases](https://github.com/fwcd/kotlin-language-server) |
-| C# | `OmniSharp` | `dotnet tool install -g OmniSharp` |
+| C# | Roslyn, `csharp-ls`, or `OmniSharp` | Roslyn is auto-detected from an installed VS Code C# extension; [OmniSharp releases](https://github.com/OmniSharp/omnisharp-roslyn/releases) |
 | F# | `fsautocomplete` | `dotnet tool install -g fsautocomplete` |
 | Scala | `metals` | [Metals](https://scalameta.org/metals/docs/editors/new-editor) |
 | PHP | `intelephense` | `npm install -g intelephense` |

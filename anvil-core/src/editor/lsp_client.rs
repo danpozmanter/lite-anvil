@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,7 @@ pub(crate) struct InlayHint {
 }
 
 /// A single LSP diagnostic with pre-extracted fields.
+#[derive(Clone)]
 pub(crate) struct Diagnostic {
     pub start_line: usize,
     pub start_col: usize,
@@ -27,13 +28,47 @@ pub(crate) struct Diagnostic {
     pub severity: u8,
     /// Diagnostic message body shown as the mouse-hover tooltip.
     pub message: String,
+    /// The original protocol value. Code-action contexts must return the
+    /// diagnostic unchanged, including server-specific `code` and `data`.
+    pub raw: serde_json::Value,
+}
+
+impl Diagnostic {
+    pub fn from_lsp(raw: &serde_json::Value) -> Self {
+        let range = raw.get("range");
+        let position = |edge: &str, field: &str| {
+            range
+                .and_then(|r| r.get(edge))
+                .and_then(|p| p.get(field))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize
+        };
+        Self {
+            start_line: position("start", "line"),
+            start_col: position("start", "character"),
+            end_line: position("end", "line"),
+            end_col: position("end", "character"),
+            severity: raw.get("severity").and_then(|v| v.as_u64()).unwrap_or(1) as u8,
+            message: raw
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            raw: raw.clone(),
+        }
+    }
 }
 
 /// LSP connection state tracked in the main loop.
 pub(crate) struct LspState {
     pub transport_id: Option<u64>,
     pub initialized: bool,
+    /// Combined diagnostics consumed by rendering, hover, and code actions.
     pub diagnostics: HashMap<String, Vec<Diagnostic>>,
+    /// Diagnostics delivered through `textDocument/publishDiagnostics`.
+    pub push_diagnostics: HashMap<String, Vec<Diagnostic>>,
+    /// Diagnostics delivered through `textDocument/diagnostic` responses.
+    pub pull_diagnostics_by_path: HashMap<String, Vec<Diagnostic>>,
     pub pending_requests: HashMap<i64, String>,
     /// Per-request URI for pending inlayHint requests, so that late
     /// responses for a non-active file can be discarded instead of
@@ -42,6 +77,24 @@ pub(crate) struct LspState {
     pub next_request_id: i64,
     pub root_uri: String,
     pub filetype: String,
+    /// Whether the active server can fill lazy code actions through
+    /// `codeAction/resolve`.
+    pub code_action_resolve_provider: bool,
+    /// Whether pull diagnostics have not been explicitly rejected by the server.
+    /// Some servers implement them without advertising `diagnosticProvider`.
+    pub pull_diagnostics: bool,
+    /// Last pull-diagnostic result id per document, used for incremental pulls.
+    pub diagnostic_result_ids: HashMap<String, String>,
+    /// Document URIs already announced to the active server with `didOpen`.
+    pub opened_documents: HashSet<String>,
+    /// Text last sent to each opened document. Incremental-sync servers need
+    /// this to express a whole-document replacement as a valid ranged edit.
+    pub document_texts: HashMap<String, String>,
+    /// Whether the active server requested incremental `didChange` updates.
+    pub incremental_sync: bool,
+    /// Bounded retry for servers that return an empty pull while indexing.
+    pub diagnostic_retry_at: Option<Instant>,
+    pub diagnostic_retry_count: u8,
     pub last_change: Option<Instant>,
     pub pending_change_uri: Option<String>,
     pub pending_change_version: i64,
@@ -62,6 +115,28 @@ pub(crate) struct LspState {
     /// Monotonic instant of the most recent spawn failure, gating the next
     /// respawn attempt. `None` once a spawn has succeeded.
     pub last_spawn_failure: Option<Instant>,
+    /// Command used for the current initialization attempt.
+    pub launch_command: Vec<String>,
+    /// Commands that spawned but exited before initialization. Candidate
+    /// selection skips these so any language can advance to a fallback.
+    pub rejected_launch_commands: HashSet<Vec<String>>,
+}
+
+/// Probe pull diagnostics even when initialization omits `diagnosticProvider`.
+/// Current Roslyn servers implement the method without advertising it. Servers
+/// that return the standard "method not found" error are disabled afterward.
+pub(crate) fn should_probe_pull_diagnostics() -> bool {
+    true
+}
+
+/// Only the standard JSON-RPC method-not-found response proves that a server
+/// cannot handle pull diagnostics. Other errors may be transient while a
+/// workspace is loading and should remain eligible for retry.
+pub(crate) fn pull_diagnostics_are_unsupported(response: &serde_json::Value) -> bool {
+    response
+        .pointer("/error/code")
+        .and_then(serde_json::Value::as_i64)
+        == Some(-32601)
 }
 
 impl LspState {
@@ -70,11 +145,21 @@ impl LspState {
             transport_id: None,
             initialized: false,
             diagnostics: HashMap::new(),
+            push_diagnostics: HashMap::new(),
+            pull_diagnostics_by_path: HashMap::new(),
             pending_requests: HashMap::new(),
             pending_request_uris: HashMap::new(),
             next_request_id: 1,
             root_uri: String::new(),
             filetype: String::new(),
+            code_action_resolve_provider: false,
+            pull_diagnostics: false,
+            diagnostic_result_ids: HashMap::new(),
+            opened_documents: HashSet::new(),
+            document_texts: HashMap::new(),
+            incremental_sync: false,
+            diagnostic_retry_at: None,
+            diagnostic_retry_count: 0,
             last_change: None,
             pending_change_uri: None,
             pending_change_version: 0,
@@ -85,6 +170,8 @@ impl LspState {
             last_seen_change_id: HashMap::new(),
             respawn_failures: 0,
             last_spawn_failure: None,
+            launch_command: Vec::new(),
+            rejected_launch_commands: HashSet::new(),
         }
     }
 
@@ -92,6 +179,38 @@ impl LspState {
         let id = self.next_request_id;
         self.next_request_id += 1;
         id
+    }
+
+    pub fn update_push_diagnostics(&mut self, path: String, diagnostics: Vec<Diagnostic>) {
+        replace_diagnostic_source(&mut self.push_diagnostics, &path, diagnostics);
+        self.rebuild_diagnostics(&path);
+    }
+
+    pub fn update_pull_diagnostics(&mut self, path: String, diagnostics: Vec<Diagnostic>) {
+        replace_diagnostic_source(&mut self.pull_diagnostics_by_path, &path, diagnostics);
+        self.rebuild_diagnostics(&path);
+    }
+
+    fn rebuild_diagnostics(&mut self, path: &str) {
+        let mut combined = Vec::new();
+        for diagnostic in self.push_diagnostics.get(path).into_iter().flatten().chain(
+            self.pull_diagnostics_by_path
+                .get(path)
+                .into_iter()
+                .flatten(),
+        ) {
+            if !combined
+                .iter()
+                .any(|existing| same_diagnostic(existing, diagnostic))
+            {
+                combined.push(diagnostic.clone());
+            }
+        }
+        if combined.is_empty() {
+            self.diagnostics.remove(path);
+        } else {
+            self.diagnostics.insert(path.to_string(), combined);
+        }
     }
 
     /// Backoff delay required before the next respawn at the current failure level.
@@ -125,7 +244,29 @@ impl LspState {
     pub fn note_spawn_success(&mut self) {
         self.respawn_failures = 0;
         self.last_spawn_failure = None;
+        self.rejected_launch_commands.clear();
     }
+}
+
+fn replace_diagnostic_source(
+    source: &mut HashMap<String, Vec<Diagnostic>>,
+    path: &str,
+    diagnostics: Vec<Diagnostic>,
+) {
+    if diagnostics.is_empty() {
+        source.remove(path);
+    } else {
+        source.insert(path.to_string(), diagnostics);
+    }
+}
+
+fn same_diagnostic(left: &Diagnostic, right: &Diagnostic) -> bool {
+    left.start_line == right.start_line
+        && left.start_col == right.start_col
+        && left.end_line == right.end_line
+        && left.end_col == right.end_col
+        && left.severity == right.severity
+        && left.message == right.message
 }
 
 /// Autocomplete popup state for LSP completions.
@@ -339,9 +480,96 @@ pub(crate) fn lsp_code_action_request(
                 "start": { "line": start_line, "character": start_char },
                 "end": { "line": end_line, "character": end_char }
             },
-            "context": { "diagnostics": diagnostics }
+            "context": {
+                "diagnostics": diagnostics,
+                "triggerKind": 1
+            }
         }
     })
+}
+
+/// Resolve `workspace/configuration` items from the active server settings.
+/// An unset section must be JSON null. Returning an empty object changes the
+/// meaning of scalar settings in servers such as Roslyn.
+pub(crate) fn lsp_configuration_values(
+    items: Option<&serde_json::Value>,
+    settings: Option<&serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    let Some(items) = items.and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|item| {
+            let Some(section) = item.get("section").and_then(serde_json::Value::as_str) else {
+                return serde_json::Value::Null;
+            };
+            let Some(settings) = settings else {
+                return serde_json::Value::Null;
+            };
+            if let Some(value) = settings.get(section) {
+                return value.clone();
+            }
+            section
+                .split('.')
+                .try_fold(settings, |value, key| value.get(key))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
+        })
+        .collect()
+}
+
+/// Build a `codeAction/resolve` request for a lazy action returned by a server.
+pub(crate) fn lsp_code_action_resolve_request(
+    id: i64,
+    action: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "codeAction/resolve",
+        "params": action
+    })
+}
+
+/// Convert the editor's 1-based anchor/cursor selection to a normalized,
+/// 0-based LSP range.
+pub(crate) fn normalized_lsp_range(
+    line1: usize,
+    col1: usize,
+    line2: usize,
+    col2: usize,
+) -> (usize, usize, usize, usize) {
+    let start = (line1.saturating_sub(1), col1.saturating_sub(1));
+    let end = (line2.saturating_sub(1), col2.saturating_sub(1));
+    if start <= end {
+        (start.0, start.1, end.0, end.1)
+    } else {
+        (end.0, end.1, start.0, start.1)
+    }
+}
+
+/// Return published diagnostics whose lines overlap an action request range.
+/// The original JSON values are retained because servers may use `code`,
+/// `source`, or `data` to identify the available fixes.
+pub(crate) fn code_action_diagnostics(
+    diagnostics: Option<&Vec<Diagnostic>>,
+    start_line: usize,
+    start_col: usize,
+    end_line: usize,
+    end_col: usize,
+) -> serde_json::Value {
+    serde_json::Value::Array(
+        diagnostics
+            .into_iter()
+            .flatten()
+            .filter(|d| {
+                (d.start_line, d.start_col) <= (end_line, end_col)
+                    && (d.end_line, d.end_col.max(d.start_col + 1)) >= (start_line, start_col)
+            })
+            .map(|d| d.raw.clone())
+            .collect(),
+    )
 }
 
 /// Map a file extension to an LSP filetype name.
@@ -352,7 +580,7 @@ pub(crate) fn ext_to_lsp_filetype(ext: &str) -> Option<&'static str> {
         "js" | "mjs" | "cjs" => Some("javascript"),
         "ts" | "mts" | "cts" => Some("typescript"),
         "tsx" => Some("tsx"),
-        "jsx" => Some("javascript"),
+        "jsx" => Some("jsx"),
         "go" => Some("go"),
         "c" | "h" => Some("c"),
         "cpp" | "cc" | "cxx" | "hpp" => Some("c++"),
@@ -371,7 +599,28 @@ pub(crate) fn ext_to_lsp_filetype(ext: &str) -> Option<&'static str> {
         "fs" | "fsi" | "fsx" => Some("f#"),
         "svelte" => Some("svelte"),
         "gos" => Some("gossamer"),
+        "dart" => Some("dart"),
+        "scala" | "sc" => Some("scala"),
+        "swift" => Some("swift"),
+        "jl" => Some("julia"),
+        "clj" | "cljc" | "cljs" | "edn" => Some("clojure"),
+        "cr" => Some("crystal"),
+        "sh" | "bash" | "zsh" => Some("bash"),
         _ => None,
+    }
+}
+
+/// Map the editor's internal filetype name to the language identifier sent in
+/// `textDocument/didOpen`.
+pub(crate) fn lsp_language_id(filetype: &str) -> &str {
+    match filetype {
+        "c#" => "csharp",
+        "c++" => "cpp",
+        "f#" => "fsharp",
+        "jsx" => "javascriptreact",
+        "tsx" => "typescriptreact",
+        "bash" => "shellscript",
+        other => other,
     }
 }
 
@@ -390,7 +639,7 @@ pub(crate) fn find_project_root(dir: &str, root_patterns: &[String]) -> Option<S
     let mut path = PathBuf::from(dir);
     loop {
         for pattern in root_patterns {
-            if path.join(pattern).exists() {
+            if root_pattern_exists(&path, pattern) {
                 return Some(path.to_string_lossy().to_string());
             }
         }
@@ -401,16 +650,58 @@ pub(crate) fn find_project_root(dir: &str, root_patterns: &[String]) -> Option<S
     None
 }
 
+fn root_pattern_exists(dir: &std::path::Path, pattern: &str) -> bool {
+    if dir.join(pattern).exists() {
+        return true;
+    }
+    let suffix = pattern
+        .strip_prefix('*')
+        .or_else(|| pattern.starts_with('.').then_some(pattern));
+    let Some(suffix) = suffix else { return false };
+    std::fs::read_dir(dir).ok().is_some_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(suffix))
+        })
+    })
+}
+
 /// Build the LSP `initialize` request.
+#[cfg(test)]
 pub(crate) fn lsp_initialize_request(id: i64, root_uri: &str) -> serde_json::Value {
-    serde_json::json!({
+    lsp_initialize_request_with_options(id, root_uri, None)
+}
+
+pub(crate) fn lsp_initialize_request_with_options(
+    id: i64,
+    root_uri: &str,
+    initialization_options: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut request = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
         "method": "initialize",
         "params": {
             "processId": std::process::id(),
             "rootUri": root_uri,
+            "workspaceFolders": [{ "uri": root_uri, "name": "workspace" }],
             "capabilities": {
+                "workspace": {
+                    "applyEdit": true,
+                    "configuration": true,
+                    "workspaceFolders": true,
+                    "workspaceEdit": {
+                        "documentChanges": true
+                    },
+                    "diagnostics": {
+                        "refreshSupport": true
+                    }
+                },
+                "window": {
+                    "workDoneProgress": true
+                },
                 "textDocument": {
                     "publishDiagnostics": { "relatedInformation": true },
                     "synchronization": {
@@ -436,16 +727,111 @@ pub(crate) fn lsp_initialize_request(id: i64, root_uri: &str) -> serde_json::Val
                         }
                     },
                     "codeAction": {
+                        "dataSupport": true,
+                        "isPreferredSupport": true,
+                        "disabledSupport": true,
+                        "resolveSupport": {
+                            "properties": ["edit", "command"]
+                        },
                         "codeActionLiteralSupport": {
                             "codeActionKind": {
-                                "valueSet": ["quickfix", "refactor", "source"]
+                                "valueSet": [
+                                    "quickfix",
+                                    "refactor",
+                                    "refactor.extract",
+                                    "refactor.inline",
+                                    "refactor.rewrite",
+                                    "source",
+                                    "source.organizeImports",
+                                    "source.fixAll"
+                                ]
                             }
                         }
+                    },
+                    "diagnostic": {
+                        "dynamicRegistration": true,
+                        "relatedDocumentSupport": false
                     }
                 }
             }
         }
+    });
+    if let Some(options) = initialization_options {
+        request["params"]["initializationOptions"] = options.clone();
+    }
+    request
+}
+
+/// Build an LSP 3.17 pull-diagnostic request.
+pub(crate) fn lsp_document_diagnostic_request(
+    id: i64,
+    uri: &str,
+    previous_result_id: Option<&str>,
+) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "textDocument": { "uri": uri }
+    });
+    if let Some(result_id) = previous_result_id {
+        params["previousResultId"] = serde_json::Value::String(result_id.to_string());
+    }
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/diagnostic",
+        "params": params
     })
+}
+
+/// Build the Roslyn project-loading notification used by the current VS Code
+/// C# server. Standard LSP workspace folders do not cause this server to load
+/// `.sln` or `.csproj` files.
+pub(crate) fn csharp_project_open_notification(root_uri: &str) -> Option<serde_json::Value> {
+    let root = PathBuf::from(uri_to_path(root_uri));
+    let mut stack = vec![root];
+    let mut solutions = Vec::new();
+    let mut projects = Vec::new();
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !matches!(name.as_ref(), ".git" | "bin" | "obj" | "node_modules") {
+                    stack.push(path);
+                }
+                continue;
+            }
+            match path.extension().and_then(|extension| extension.to_str()) {
+                Some("sln") if solutions.len() < 2 => {
+                    solutions.push(path_to_uri(&path.to_string_lossy()))
+                }
+                Some("csproj") if projects.len() < 100 => {
+                    projects.push(path_to_uri(&path.to_string_lossy()))
+                }
+                _ => {}
+            }
+        }
+    }
+    solutions.sort();
+    projects.sort();
+    if solutions.len() == 1 {
+        Some(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "solution/open",
+            "params": { "solution": solutions[0] }
+        }))
+    } else if !projects.is_empty() {
+        Some(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "project/open",
+            "params": { "projects": projects }
+        }))
+    } else {
+        None
+    }
 }
 
 /// Build a `textDocument/didOpen` notification.
@@ -485,6 +871,47 @@ pub(crate) fn lsp_did_change(uri: &str, version: i64, text: &str) -> serde_json:
             "contentChanges": [{ "text": text }]
         }
     })
+}
+
+/// Build an incremental `didChange` notification that replaces the previous
+/// document contents. This remains a single update while satisfying servers
+/// that reject full-sync payloads without a range.
+pub(crate) fn lsp_incremental_did_change(
+    uri: &str,
+    version: i64,
+    previous_text: &str,
+    text: &str,
+) -> serde_json::Value {
+    let (end_line, end_character) = lsp_end_position(previous_text);
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": uri, "version": version },
+            "contentChanges": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": end_line, "character": end_character }
+                },
+                "rangeLength": previous_text.encode_utf16().count(),
+                "text": text
+            }]
+        }
+    })
+}
+
+fn lsp_end_position(text: &str) -> (usize, usize) {
+    let mut line = 0;
+    let mut character = 0;
+    for ch in text.chars() {
+        if ch == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += ch.len_utf16();
+        }
+    }
+    (line, character)
 }
 
 /// Build a `textDocument/inlayHint` request.
@@ -540,6 +967,24 @@ mod tests {
         assert!(s.pending_requests.is_empty());
         assert_eq!(s.next_request_id, 1);
         assert!(s.inlay_hints.is_empty());
+    }
+
+    #[test]
+    fn pull_diagnostics_are_probed_when_capability_is_missing() {
+        assert!(should_probe_pull_diagnostics());
+    }
+
+    #[test]
+    fn only_method_not_found_disables_pull_diagnostics() {
+        assert!(pull_diagnostics_are_unsupported(&serde_json::json!({
+            "error": { "code": -32601 }
+        })));
+        assert!(!pull_diagnostics_are_unsupported(&serde_json::json!({
+            "error": { "code": -32603 }
+        })));
+        assert!(!pull_diagnostics_are_unsupported(&serde_json::json!({
+            "result": null
+        })));
     }
 
     #[test]
@@ -625,6 +1070,7 @@ mod tests {
                 end_col: 5,
                 severity: 1,
                 message: String::new(),
+                raw: serde_json::Value::Null,
             }],
         );
         // New publishDiagnostics for the same URI replaces (HashMap insert overwrites).
@@ -637,6 +1083,7 @@ mod tests {
                 end_col: 5,
                 severity: 2,
                 message: String::new(),
+                raw: serde_json::Value::Null,
             }],
         );
         let v = &s.diagnostics[&uri];
@@ -657,6 +1104,7 @@ mod tests {
                 end_col: 1,
                 severity: 1,
                 message: String::new(),
+                raw: serde_json::Value::Null,
             }],
         );
         s.diagnostics.insert(
@@ -668,11 +1116,67 @@ mod tests {
                 end_col: 1,
                 severity: 2,
                 message: String::new(),
+                raw: serde_json::Value::Null,
             }],
         );
         assert_eq!(s.diagnostics.len(), 2);
         assert_eq!(s.diagnostics["file:///a.rs"][0].severity, 1);
         assert_eq!(s.diagnostics["file:///b.rs"][0].severity, 2);
+    }
+
+    #[test]
+    fn empty_pull_does_not_erase_pushed_diagnostics() {
+        let mut state = LspState::new();
+        let path = "/project/main.lang".to_string();
+        state.update_push_diagnostics(path.clone(), vec![test_diagnostic("pushed error")]);
+
+        state.update_pull_diagnostics(path.clone(), Vec::new());
+
+        assert_eq!(state.diagnostics[&path].len(), 1);
+        assert_eq!(state.diagnostics[&path][0].message, "pushed error");
+        state.update_push_diagnostics(path.clone(), Vec::new());
+        assert!(!state.diagnostics.contains_key(&path));
+    }
+
+    #[test]
+    fn empty_push_does_not_erase_pulled_diagnostics() {
+        let mut state = LspState::new();
+        let path = "/project/main.lang".to_string();
+        state.update_pull_diagnostics(path.clone(), vec![test_diagnostic("pulled error")]);
+
+        state.update_push_diagnostics(path.clone(), Vec::new());
+
+        assert_eq!(state.diagnostics[&path].len(), 1);
+        assert_eq!(state.diagnostics[&path][0].message, "pulled error");
+    }
+
+    #[test]
+    fn matching_push_and_pull_diagnostics_are_deduplicated() {
+        let mut state = LspState::new();
+        let path = "/project/main.lang".to_string();
+        state.update_push_diagnostics(path.clone(), vec![test_diagnostic("same error")]);
+        state.update_pull_diagnostics(path.clone(), vec![test_diagnostic("same error")]);
+
+        assert_eq!(state.diagnostics[&path].len(), 1);
+    }
+
+    fn test_diagnostic(message: &str) -> Diagnostic {
+        Diagnostic {
+            start_line: 1,
+            start_col: 2,
+            end_line: 1,
+            end_col: 5,
+            severity: 1,
+            message: message.to_string(),
+            raw: serde_json::json!({
+                "range": {
+                    "start": { "line": 1, "character": 2 },
+                    "end": { "line": 1, "character": 5 }
+                },
+                "severity": 1,
+                "message": message
+            }),
+        }
     }
 
     #[test]
@@ -732,6 +1236,22 @@ mod tests {
         assert!(req["params"]["capabilities"]["textDocument"]["completion"].is_object());
         assert!(req["params"]["capabilities"]["textDocument"]["hover"].is_object());
         assert!(req["params"]["capabilities"]["textDocument"]["inlayHint"].is_object());
+        assert_eq!(
+            req["params"]["capabilities"]["workspace"]["applyEdit"],
+            true
+        );
+        assert_eq!(
+            req["params"]["capabilities"]["workspace"]["workspaceEdit"]["documentChanges"],
+            true
+        );
+        assert_eq!(
+            req["params"]["capabilities"]["workspace"]["configuration"],
+            true
+        );
+        assert_eq!(
+            req["params"]["capabilities"]["textDocument"]["diagnostic"]["dynamicRegistration"],
+            true
+        );
     }
 
     #[test]
@@ -753,6 +1273,11 @@ mod tests {
         assert_eq!(
             td["codeAction"]["codeActionLiteralSupport"]["codeActionKind"]["valueSet"][0],
             "quickfix"
+        );
+        assert_eq!(td["codeAction"]["dataSupport"], true);
+        assert_eq!(
+            td["codeAction"]["resolveSupport"]["properties"],
+            serde_json::json!(["edit", "command"])
         );
     }
 
@@ -805,6 +1330,109 @@ mod tests {
             req["params"]["context"]["diagnostics"][0]["message"],
             "unused"
         );
+        assert_eq!(req["params"]["context"]["triggerKind"], 1);
+    }
+
+    #[test]
+    fn configuration_values_use_null_for_unset_scalar_settings() {
+        let items = serde_json::json!([
+            { "section": "dotnet.projects.binaryLogPath" },
+            { "section": "rust-analyzer.check" }
+        ]);
+        assert_eq!(
+            lsp_configuration_values(Some(&items), None),
+            vec![serde_json::Value::Null, serde_json::Value::Null]
+        );
+
+        let settings = serde_json::json!({
+            "dotnet": { "projects": { "binaryLogPath": null } },
+            "rust-analyzer.check": false
+        });
+        assert_eq!(
+            lsp_configuration_values(Some(&items), Some(&settings)),
+            vec![serde_json::Value::Null, serde_json::json!(false)]
+        );
+    }
+
+    #[test]
+    fn lsp_code_action_resolve_request_uses_action_as_params() {
+        let action = serde_json::json!({
+            "title": "Import HashMap",
+            "data": { "id": 7 }
+        });
+        let req = lsp_code_action_resolve_request(15, action.clone());
+        assert_eq!(req["id"], 15);
+        assert_eq!(req["method"], "codeAction/resolve");
+        assert_eq!(req["params"], action);
+    }
+
+    #[test]
+    fn csharp_uses_the_standard_lsp_language_id() {
+        assert_eq!(lsp_language_id("c#"), "csharp");
+        assert_eq!(lsp_language_id("rust"), "rust");
+    }
+
+    #[test]
+    fn project_root_suffix_marker_matches_project_file() {
+        let root = std::env::temp_dir().join(format!(
+            "lite-anvil-lsp-root-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let nested = root.join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(root.join("Example.csproj"), "<Project />").unwrap();
+        assert_eq!(
+            find_project_root(nested.to_str().unwrap(), &[".csproj".to_string()]),
+            Some(root.to_string_lossy().to_string())
+        );
+        let notification =
+            csharp_project_open_notification(&path_to_uri(&root.to_string_lossy())).unwrap();
+        assert_eq!(notification["method"], "project/open");
+        assert_eq!(
+            notification["params"]["projects"][0],
+            path_to_uri(&root.join("Example.csproj").to_string_lossy())
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pull_diagnostic_request_reuses_result_id() {
+        let req = lsp_document_diagnostic_request(9, "file:///tmp/a.cs", Some("result-1"));
+        assert_eq!(req["method"], "textDocument/diagnostic");
+        assert_eq!(req["params"]["textDocument"]["uri"], "file:///tmp/a.cs");
+        assert_eq!(req["params"]["previousResultId"], "result-1");
+    }
+
+    #[test]
+    fn normalized_lsp_range_orders_backwards_selection() {
+        assert_eq!(normalized_lsp_range(4, 9, 2, 3), (1, 2, 3, 8));
+        assert_eq!(normalized_lsp_range(2, 3, 4, 9), (1, 2, 3, 8));
+    }
+
+    #[test]
+    fn code_action_diagnostics_preserve_server_fields() {
+        let raw = serde_json::json!({
+            "range": {
+                "start": { "line": 3, "character": 4 },
+                "end": { "line": 3, "character": 8 }
+            },
+            "severity": 2,
+            "code": "E0425",
+            "source": "rustc",
+            "message": "cannot find value",
+            "data": { "fix": 42 }
+        });
+        let diagnostics = vec![Diagnostic::from_lsp(&raw)];
+        let context = code_action_diagnostics(Some(&diagnostics), 3, 4, 3, 8);
+        assert_eq!(context[0], raw);
+        assert_eq!(diagnostics[0].start_col, 4);
+        assert_eq!(diagnostics[0].end_col, 8);
+        assert!(
+            code_action_diagnostics(Some(&diagnostics), 4, 0, 4, 20)
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
     }
 
     #[test]
@@ -824,6 +1452,19 @@ mod tests {
         assert_eq!(r1["params"]["textDocument"]["version"], 1);
         assert_eq!(r2["params"]["textDocument"]["version"], 2);
         assert_eq!(r2["params"]["contentChanges"][0]["text"], "v2");
+    }
+
+    #[test]
+    fn incremental_did_change_replaces_the_prior_document_with_a_valid_range() {
+        let request = lsp_incremental_did_change("file:///x.cs", 4, "a\nb😀", "replacement");
+        let change = &request["params"]["contentChanges"][0];
+        assert_eq!(request["params"]["textDocument"]["version"], 4);
+        assert_eq!(change["range"]["start"]["line"], 0);
+        assert_eq!(change["range"]["start"]["character"], 0);
+        assert_eq!(change["range"]["end"]["line"], 1);
+        assert_eq!(change["range"]["end"]["character"], 3);
+        assert_eq!(change["rangeLength"], 5);
+        assert_eq!(change["text"], "replacement");
     }
 
     #[test]
@@ -850,6 +1491,17 @@ mod tests {
         assert_eq!(ext_to_lsp_filetype("cpp"), Some("c++"));
         assert_eq!(ext_to_lsp_filetype("cs"), Some("c#"));
         assert_eq!(ext_to_lsp_filetype("gos"), Some("gossamer"));
+        assert_eq!(ext_to_lsp_filetype("dart"), Some("dart"));
+        assert_eq!(ext_to_lsp_filetype("scala"), Some("scala"));
+        assert_eq!(ext_to_lsp_filetype("swift"), Some("swift"));
+        assert_eq!(ext_to_lsp_filetype("rb"), Some("ruby"));
+        assert_eq!(ext_to_lsp_filetype("jl"), Some("julia"));
+        assert_eq!(ext_to_lsp_filetype("clj"), Some("clojure"));
+        assert_eq!(ext_to_lsp_filetype("cr"), Some("crystal"));
+        assert_eq!(ext_to_lsp_filetype("sh"), Some("bash"));
+        assert_eq!(lsp_language_id("jsx"), "javascriptreact");
+        assert_eq!(lsp_language_id("tsx"), "typescriptreact");
+        assert_eq!(lsp_language_id("bash"), "shellscript");
     }
 
     #[test]

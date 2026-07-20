@@ -22,6 +22,7 @@ macro_rules! sdl_only {
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "sdl")]
 use std::time::Instant;
 
 use crossbeam_channel::Receiver;
@@ -88,21 +89,35 @@ fn is_document_mutation_command(command: &str) -> bool {
 
 use crate::editor::buffer;
 use crate::editor::config::NativeConfig;
-use crate::editor::context_menu::{ContextMenu, MenuItem};
+#[cfg(feature = "sdl")]
+use crate::editor::context_menu::ContextMenu;
+use crate::editor::context_menu::MenuItem;
+#[cfg(feature = "sdl")]
 use crate::editor::doc_view::{
     DocView, RenderLine, SYNTAX_COLORS, build_render_lines, click_to_doc_pos, syntax_color,
 };
+#[cfg(feature = "sdl")]
 use crate::editor::empty_view::EmptyView;
+#[cfg(feature = "sdl")]
 use crate::editor::event::{EditorEvent, MouseButton};
+#[cfg(feature = "sdl")]
 use crate::editor::keymap::NativeKeymap;
+#[cfg(feature = "sdl")]
 use crate::editor::lsp;
+#[cfg(feature = "sdl")]
 use crate::editor::lsp_client::*;
+#[cfg(feature = "sdl")]
 use crate::editor::picker;
+#[cfg(feature = "sdl")]
 use crate::editor::status_view::{StatusItem, StatusView};
 use crate::editor::storage;
+#[cfg(feature = "sdl")]
 use crate::editor::style_ctx::StyleContext;
+#[cfg(feature = "sdl")]
 use crate::editor::terminal_panel::*;
+#[cfg(feature = "sdl")]
 use crate::editor::tokenizer::{self, CompiledSyntax};
+#[cfg(feature = "sdl")]
 use crate::editor::view::{UpdateContext, View};
 
 /// Append a timestamped message to the log file in the user directory.
@@ -1903,6 +1918,13 @@ pub fn run(
     // LSP completion, hover, and go-to-definition state.
     let mut completion = CompletionState::new();
     let mut hover = HoverState::new();
+    // Diagnostic hover identity and hit regions for its action row.
+    let mut hovered_diagnostic: Option<(String, usize, usize, usize, usize)> = None;
+    let mut diagnostic_hover_region_rect: Option<crate::editor::types::Rect> = None;
+    let mut diagnostic_hover_leave_at: Option<Instant> = None;
+    let mut diagnostic_quick_fix_rect: Option<crate::editor::types::Rect> = None;
+    let mut diagnostic_hover_action_request: Option<i64> = None;
+    let mut diagnostic_hover_actions: Vec<(String, serde_json::Value)> = Vec::new();
     // Signature-help popup reuses the hover popup shape (text + visibility).
     let mut signature_help = HoverState::new();
     // Mouse-tracked hover state: `mouse_doc_pos` is the (1-based line,
@@ -1915,6 +1937,7 @@ pub fn run(
     let mut mouse_doc_pos: Option<(usize, usize)> = None;
     let mut mouse_idle_since: Option<Instant> = None;
     let mut last_lsp_hover_pos: Option<(usize, usize)> = None;
+    let mut pending_lsp_hover_request: Option<i64> = None;
 
     // Terminal emulator panel (multi-terminal).
     let mut terminal = TerminalPanel::new();
@@ -1969,8 +1992,9 @@ pub fn run(
 
     // LSP state.
     let mut lsp_state = LspState::new();
+    let mut inactive_lsp_states: HashMap<(String, String), LspState> = HashMap::new();
     let lsp_specs = if subsystems.has_lsp() {
-        lsp::builtin_specs()
+        lsp::load_specs(userdir_path, &project_root)
     } else {
         Vec::new()
     };
@@ -1993,46 +2017,107 @@ pub fn run(
         let Some(spec) = find_lsp_spec(filetype, lsp_specs) else {
             return;
         };
-        let root = find_project_root(
-            Path::new(file_path)
-                .parent()
-                .map(|p| p.to_str().unwrap_or("."))
-                .unwrap_or("."),
-            &spec.root_patterns,
-        );
-        let Some(root_dir) = root else { return };
-        let cmd: Vec<String> = spec
-            .command
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
+        let file_dir = Path::new(file_path)
+            .parent()
+            .and_then(Path::to_str)
+            .unwrap_or(".");
+        let root_dir = find_project_root(file_dir, &spec.root_patterns)
+            .unwrap_or_else(|| file_dir.to_string());
+        let environment = spec
+            .env
+            .as_ref()
+            .and_then(serde_json::Value::as_object)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_string()))
+                    })
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        if cmd.is_empty() {
+        let roslyn_log_directory = (filetype == "c#").then(|| {
+            let directory = Path::new(userdir).join("logs").join("roslyn");
+            if let Err(error) = std::fs::create_dir_all(&directory) {
+                log_to_file(
+                    userdir,
+                    &format!("Failed to create Roslyn log directory: {error}"),
+                );
+            }
+            directory
+        });
+        let mut last_error = None;
+        let candidates = lsp::command_candidates(spec, roslyn_log_directory.as_deref());
+        if !candidates
+            .iter()
+            .any(|command| !lsp_state.rejected_launch_commands.contains(command))
+        {
+            lsp_state.rejected_launch_commands.clear();
+            lsp_state.note_spawn_failure();
             return;
         }
-        match lsp::spawn_transport(&cmd, &root_dir, &[]) {
-            Ok(tid) => {
-                lsp_state.transport_id = Some(tid);
-                lsp_state.root_uri = path_to_uri(&root_dir);
-                lsp_state.filetype = filetype.to_string();
-                let req_id = lsp_state.next_id();
-                lsp_state
-                    .pending_requests
-                    .insert(req_id, "initialize".to_string());
-                let _ =
-                    lsp::send_message(tid, &lsp_initialize_request(req_id, &lsp_state.root_uri));
+        for command in candidates {
+            if lsp_state.rejected_launch_commands.contains(&command) {
+                continue;
             }
-            Err(e) => {
-                lsp_state.note_spawn_failure();
-                log_to_file(userdir, &format!("Failed to spawn LSP: {e}"));
-                if verbose {
-                    eprintln!("Failed to spawn LSP: {e}");
+            match lsp::spawn_transport(&command, &root_dir, &environment) {
+                Ok(tid) => {
+                    lsp_state.launch_command = command;
+                    lsp_state.transport_id = Some(tid);
+                    lsp_state.root_uri = path_to_uri(&root_dir);
+                    lsp_state.filetype = filetype.to_string();
+                    let req_id = lsp_state.next_id();
+                    lsp_state
+                        .pending_requests
+                        .insert(req_id, "initialize".to_string());
+                    let _ = lsp::send_message(
+                        tid,
+                        &lsp_initialize_request_with_options(
+                            req_id,
+                            &lsp_state.root_uri,
+                            spec.initialization_options.as_ref(),
+                        ),
+                    );
+                    return;
                 }
+                Err(error) => last_error = Some(error),
             }
         }
+        if let Some(error) = last_error {
+            lsp_state.note_spawn_failure();
+            log_to_file(userdir, &format!("Failed to spawn LSP: {error}"));
+            if verbose {
+                eprintln!("Failed to spawn LSP: {error}");
+            }
+        }
+    }
+
+    fn request_lsp_diagnostics(tid: u64, lsp_state: &mut LspState, uri: &str) {
+        if !lsp_state.pull_diagnostics {
+            return;
+        }
+        let already_pending = lsp_state.pending_requests.iter().any(|(id, method)| {
+            method == "textDocument/diagnostic"
+                && lsp_state
+                    .pending_request_uris
+                    .get(id)
+                    .is_some_and(|value| value == uri)
+        });
+        if already_pending {
+            return;
+        }
+        let previous_result_id = lsp_state.diagnostic_result_ids.get(uri).cloned();
+        let request_id = lsp_state.next_id();
+        lsp_state
+            .pending_requests
+            .insert(request_id, "textDocument/diagnostic".to_string());
+        lsp_state
+            .pending_request_uris
+            .insert(request_id, uri.to_string());
+        let _ = lsp::send_message(
+            tid,
+            &lsp_document_diagnostic_request(request_id, uri, previous_result_id.as_deref()),
+        );
     }
 
     // Try to start LSP for the first open file.
@@ -2225,6 +2310,7 @@ pub fn run(
                         }
                         continue;
                     }
+                    pending_lsp_hover_request = None;
                     cursor_blink_reset = Instant::now();
                     let mut mods = *modifiers;
                     // On macOS, optionally fold Cmd into Ctrl so Cmd+S acts
@@ -2435,6 +2521,12 @@ pub fn run(
                     // Dismiss hover on any keypress.
                     if hover.visible {
                         hover.hide();
+                        hovered_diagnostic = None;
+                        diagnostic_hover_region_rect = None;
+                        diagnostic_hover_leave_at = None;
+                        diagnostic_quick_fix_rect = None;
+                        diagnostic_hover_action_request = None;
+                        diagnostic_hover_actions.clear();
                         redraw = true;
                     }
                     // Dismiss signature help on Escape; it persists while typing
@@ -3856,57 +3948,30 @@ pub fn run(
                                 if let Some((_, action)) =
                                     code_actions.get(code_action_selected).cloned()
                                 {
-                                    let atomic = config.files.atomic_save;
-                                    if let Some(edit) = action.get("edit") {
-                                        let n = apply_lsp_workspace_edit(
-                                            edit,
-                                            &mut docs,
-                                            use_git(),
-                                            atomic,
+                                    if let Some(reason) = code_action_disabled_reason(&action) {
+                                        info_message = Some((reason.to_string(), Instant::now()));
+                                    } else if lsp_state.code_action_resolve_provider
+                                        && action.get("data").is_some_and(|v| !v.is_null())
+                                        && action.get("edit").is_none_or(|v| v.is_null())
+                                        && action.get("command").is_none_or(|v| v.is_null())
+                                        && let Some(tid) = lsp_state.transport_id
+                                    {
+                                        let req_id = lsp_state.next_id();
+                                        lsp_state
+                                            .pending_requests
+                                            .insert(req_id, "codeAction/resolve".to_string());
+                                        let _ = lsp::send_message(
+                                            tid,
+                                            &lsp_code_action_resolve_request(req_id, action),
                                         );
-                                        if n > 0 {
-                                            for d in &mut docs {
-                                                d.cached_change_id = -1;
-                                            }
-                                            crate::window::force_invalidate();
-                                        }
-                                    }
-                                    if let Some(tid) = lsp_state.transport_id {
-                                        let cmdv = action.get("command");
-                                        let (name, args) = if let Some(s) =
-                                            cmdv.and_then(|c| c.as_str())
-                                        {
-                                            (Some(s.to_string()), action.get("arguments").cloned())
-                                        } else if let Some(obj) = cmdv.filter(|c| c.is_object()) {
-                                            (
-                                                obj.get("command")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(String::from),
-                                                obj.get("arguments").cloned(),
-                                            )
-                                        } else {
-                                            (None, None)
-                                        };
-                                        if let Some(name) = name {
-                                            let req_id = lsp_state.next_id();
-                                            lsp_state.pending_requests.insert(
-                                                req_id,
-                                                "workspace/executeCommand".to_string(),
-                                            );
-                                            let _ = lsp::send_message(
-                                                tid,
-                                                &serde_json::json!({
-                                                    "jsonrpc": "2.0",
-                                                    "id": req_id,
-                                                    "method": "workspace/executeCommand",
-                                                    "params": {
-                                                        "command": name,
-                                                        "arguments":
-                                                            args.unwrap_or_else(|| serde_json::json!([]))
-                                                    }
-                                                }),
-                                            );
-                                        }
+                                    } else {
+                                        execute_lsp_code_action(
+                                            &action,
+                                            &mut docs,
+                                            &mut lsp_state,
+                                            use_git(),
+                                            config.files.atomic_save,
+                                        );
                                     }
                                 }
                                 code_action_active = false;
@@ -5786,6 +5851,88 @@ pub fn run(
                     // view never jumps unexpectedly.
                     if let Some(doc) = docs.get_mut(active_tab) {
                         doc.view.target_scroll_y = doc.view.scroll_y;
+                    }
+                    if *button == MouseButton::Left {
+                        let contains = |rect: crate::editor::types::Rect| {
+                            *x >= rect.x
+                                && *x <= rect.x + rect.w
+                                && *y >= rect.y
+                                && *y <= rect.y + rect.h
+                        };
+                        if code_action_active
+                            && let Some(action_idx) = code_action_picker_row_at(
+                                *x,
+                                *y,
+                                &style,
+                                code_actions.len(),
+                                code_action_selected,
+                            )
+                            && let Some((_, action)) = code_actions.get(action_idx).cloned()
+                        {
+                            code_action_selected = action_idx;
+                            if let Some(reason) = code_action_disabled_reason(&action) {
+                                info_message = Some((reason.to_string(), Instant::now()));
+                            } else if lsp_state.code_action_resolve_provider
+                                && action.get("data").is_some_and(|v| !v.is_null())
+                                && action.get("edit").is_none_or(|v| v.is_null())
+                                && action.get("command").is_none_or(|v| v.is_null())
+                                && let Some(tid) = lsp_state.transport_id
+                            {
+                                let req_id = lsp_state.next_id();
+                                lsp_state
+                                    .pending_requests
+                                    .insert(req_id, "codeAction/resolve".to_string());
+                                let _ = lsp::send_message(
+                                    tid,
+                                    &lsp_code_action_resolve_request(req_id, action),
+                                );
+                            } else {
+                                execute_lsp_code_action(
+                                    &action,
+                                    &mut docs,
+                                    &mut lsp_state,
+                                    use_git(),
+                                    config.files.atomic_save,
+                                );
+                            }
+                            code_action_active = false;
+                            redraw = true;
+                            continue;
+                        }
+                        let quick_fix = diagnostic_quick_fix_rect.is_some_and(contains);
+                        if quick_fix
+                            && let Some((path, start_line, start_col, end_line, end_col)) =
+                                hovered_diagnostic.clone()
+                            && let Some(tab) = docs.iter().position(|doc| doc.path == path)
+                        {
+                            active_tab = tab;
+                            if let Some(doc) = docs.get_mut(active_tab)
+                                && let Some(buffer_id) = doc.view.buffer_id
+                            {
+                                let _ = buffer::with_buffer_mut(buffer_id, |buffer| {
+                                    buffer.selections = vec![
+                                        start_line + 1,
+                                        start_col + 1,
+                                        end_line + 1,
+                                        end_col + 1,
+                                    ];
+                                    Ok(())
+                                });
+                                scroll_to_cursor(&mut doc.view);
+                            }
+                            code_actions.clone_from(&diagnostic_hover_actions);
+                            code_action_selected = 0;
+                            code_action_active = !code_actions.is_empty();
+                            hover.hide();
+                            hovered_diagnostic = None;
+                            diagnostic_hover_region_rect = None;
+                            diagnostic_hover_leave_at = None;
+                            diagnostic_quick_fix_rect = None;
+                            diagnostic_hover_action_request = None;
+                            diagnostic_hover_actions.clear();
+                            redraw = true;
+                            continue;
+                        }
                     }
                     // Nag bar button click handling.
                     if let Nag::UnsavedChanges {
@@ -7842,6 +7989,11 @@ pub fn run(
                     // immediately. Otherwise note the position + time
                     // so the debounce loop below can fire a deferred
                     // `textDocument/hover` request.
+                    if diagnostic_hover_region_rect.is_some_and(|rect| point_in_rect(rect, *x, *y))
+                    {
+                        diagnostic_hover_leave_at = None;
+                        continue;
+                    }
                     let new_doc_pos: Option<(usize, usize)> = (|| {
                         if editor_mouse_down || sidebar_dragging {
                             return None;
@@ -7875,19 +8027,34 @@ pub fn run(
                     if new_doc_pos != mouse_doc_pos {
                         mouse_doc_pos = new_doc_pos;
                         mouse_idle_since = Some(Instant::now());
-                        if hover.visible {
+                        pending_lsp_hover_request = None;
+                        if hover.visible && hovered_diagnostic.is_none() {
                             hover.hide();
+                            hovered_diagnostic = None;
+                            diagnostic_hover_region_rect = None;
+                            diagnostic_hover_leave_at = None;
+                            diagnostic_quick_fix_rect = None;
+                            diagnostic_hover_action_request = None;
+                            diagnostic_hover_actions.clear();
                             redraw = true;
+                        } else if hovered_diagnostic.is_some() {
+                            // Match VS Code's sticky hover behavior: pointer
+                            // movement toward the popup gets a short grace
+                            // period instead of dismissing on the first pixel
+                            // outside the diagnostic range.
+                            diagnostic_hover_leave_at =
+                                Some(Instant::now() + std::time::Duration::from_millis(450));
+                            mouse_idle_since = None;
                         }
                         // Immediate diagnostic tooltip.
-                        if let Some((line, col)) = new_doc_pos
+                        let matched_diagnostic = if let Some((line, col)) = new_doc_pos
                             && subsystems.has_lsp()
                             && let Some(doc) = docs.get(active_tab)
                             && let Some(diags) = lsp_state.diagnostics.get(&doc.path)
                         {
                             let l0 = line.saturating_sub(1);
                             let c0 = col.saturating_sub(1);
-                            for d in diags {
+                            diags.iter().find_map(|d| {
                                 let in_line =
                                     d.start_line <= l0 && l0 <= d.end_line.max(d.start_line);
                                 let span_end = d.end_col.max(d.start_col + 1);
@@ -7901,18 +8068,65 @@ pub fn run(
                                     true
                                 };
                                 if in_line && in_col && !d.message.is_empty() {
-                                    hover.text = d.message.clone();
-                                    hover.line = line;
-                                    hover.col = col;
-                                    hover.visible = true;
-                                    // Don't also fire LSP hover for this position —
-                                    // dedupe by recording it.
-                                    last_lsp_hover_pos = Some((line, col));
-                                    mouse_idle_since = None;
-                                    redraw = true;
-                                    break;
+                                    Some((
+                                        d.message.clone(),
+                                        doc.path.clone(),
+                                        d.start_line,
+                                        d.start_col,
+                                        d.end_line,
+                                        d.end_col,
+                                        d.raw.clone(),
+                                    ))
+                                } else {
+                                    None
                                 }
+                            })
+                        } else {
+                            None
+                        };
+                        if let (Some((line, col)), Some((message, path, sl, sc, el, ec, raw))) =
+                            (new_doc_pos, matched_diagnostic)
+                        {
+                            let diagnostic_identity = (path.clone(), sl, sc, el, ec);
+                            let changed_diagnostic =
+                                hovered_diagnostic.as_ref() != Some(&diagnostic_identity);
+                            hover.text = message;
+                            hover.line = line;
+                            hover.col = col;
+                            hover.visible = true;
+                            hovered_diagnostic = Some(diagnostic_identity);
+                            diagnostic_hover_leave_at = None;
+                            if changed_diagnostic {
+                                diagnostic_hover_actions.clear();
+                                diagnostic_hover_action_request = None;
                             }
+                            if changed_diagnostic
+                                && lsp_state.initialized
+                                && let Some(tid) = lsp_state.transport_id
+                            {
+                                let request_id = lsp_state.next_id();
+                                lsp_state.pending_requests.insert(
+                                    request_id,
+                                    "textDocument/codeAction/hover".to_string(),
+                                );
+                                let _ = lsp::send_message(
+                                    tid,
+                                    &lsp_code_action_request(
+                                        request_id,
+                                        &path_to_uri(&path),
+                                        sl,
+                                        sc,
+                                        el,
+                                        ec,
+                                        serde_json::Value::Array(vec![raw]),
+                                    ),
+                                );
+                                diagnostic_hover_action_request = Some(request_id);
+                            }
+                            // Do not also fire LSP hover for this position.
+                            last_lsp_hover_pos = Some((line, col));
+                            mouse_idle_since = None;
+                            redraw = true;
                         }
                     }
                     continue;
@@ -8028,6 +8242,33 @@ pub fn run(
             }
         }
 
+        // The active state is scoped to one language and project root. Keep
+        // inactive states alive so tab switches reuse their indexed server.
+        if subsystems.has_lsp()
+            && let Some(doc) = docs.get(active_tab)
+            && !doc.path.is_empty()
+        {
+            let extension = doc.path.rsplit('.').next().unwrap_or("");
+            let active_filetype = ext_to_lsp_filetype(extension);
+            let desired_root_uri = active_filetype
+                .and_then(|filetype| find_lsp_spec(filetype, &lsp_specs))
+                .map(|spec| {
+                    let file_dir = Path::new(&doc.path)
+                        .parent()
+                        .and_then(Path::to_str)
+                        .unwrap_or(".");
+                    path_to_uri(
+                        &find_project_root(file_dir, &spec.root_patterns)
+                            .unwrap_or_else(|| file_dir.to_string()),
+                    )
+                });
+            if let (Some(filetype), Some(root_uri)) = (active_filetype, desired_root_uri)
+                && (filetype != lsp_state.filetype || root_uri != lsp_state.root_uri)
+            {
+                activate_lsp_state(&mut lsp_state, &mut inactive_lsp_states, filetype, root_uri);
+            }
+        }
+
         // LSP: auto-start for the active file if no transport is running.
         if subsystems.has_lsp()
             && lsp_state.transport_id.is_none()
@@ -8119,6 +8360,25 @@ pub fn run(
                                 .unwrap_or(false);
                             if is_lsp_file {
                                 let uri = path_to_uri(&doc.path);
+                                if !lsp_state.opened_documents.contains(&uri)
+                                    && let Some(buffer_id) = doc.view.buffer_id
+                                {
+                                    let text = buffer::with_buffer(buffer_id, |buffer| {
+                                        Ok(buffer.lines.join(""))
+                                    })
+                                    .unwrap_or_default();
+                                    let _ = lsp::send_message(
+                                        tid,
+                                        &lsp_did_open(
+                                            &uri,
+                                            lsp_language_id(&lsp_state.filetype),
+                                            &text,
+                                        ),
+                                    );
+                                    lsp_state.opened_documents.insert(uri.clone());
+                                    lsp_state.document_texts.insert(uri.clone(), text);
+                                    request_lsp_diagnostics(tid, &mut lsp_state, &uri);
+                                }
                                 let already_pending =
                                     lsp_state.pending_request_uris.values().any(|u| u == &uri);
                                 if lsp_state.inlay_hints_uri != uri && !already_pending {
@@ -8139,7 +8399,7 @@ pub fn run(
                                         &lsp_inlay_hint_request(req_id, &uri, 0, line_count),
                                     );
                                     lsp_state.inlay_hints.clear();
-                                    lsp_state.inlay_hints_uri = String::new();
+                                    lsp_state.inlay_hints_uri = uri;
                                     for d in &mut docs {
                                         d.cached_change_id = -1;
                                     }
@@ -8182,6 +8442,17 @@ pub fn run(
                         }
                     }
                 }
+                if lsp_state
+                    .diagnostic_retry_at
+                    .is_some_and(|retry_at| Instant::now() >= retry_at)
+                {
+                    lsp_state.diagnostic_retry_at = None;
+                    if let Some(doc) = docs.get(active_tab)
+                        && !doc.path.is_empty()
+                    {
+                        request_lsp_diagnostics(tid, &mut lsp_state, &path_to_uri(&doc.path));
+                    }
+                }
                 if let Ok(poll) = lsp::poll_transport(tid) {
                     for msg in &poll.messages {
                         // Server-to-client `workspace/applyEdit` request: apply the
@@ -8201,17 +8472,128 @@ pub fn run(
                                 crate::window::force_invalidate();
                                 redraw = true;
                             }
-                            if let (Some(rid), Some(tid)) = (
-                                msg.get("id").and_then(|v| v.as_i64()),
-                                lsp_state.transport_id,
-                            ) {
+                            if let (Some(rid), Some(tid)) = (msg.get("id"), lsp_state.transport_id)
+                            {
                                 let _ = lsp::send_message(
                                     tid,
                                     &serde_json::json!({
                                         "jsonrpc": "2.0",
-                                        "id": rid,
+                                        "id": rid.clone(),
                                         "result": { "applied": applied > 0 }
                                     }),
+                                );
+                            }
+                            continue;
+                        }
+                        // Answer server-to-client requests. Roslyn uses these
+                        // during startup and can wait indefinitely if the client
+                        // advertises support but never sends a response.
+                        if let (Some(method), Some(request_id)) = (
+                            msg.get("method").and_then(|value| value.as_str()),
+                            msg.get("id"),
+                        ) {
+                            let mut request_diagnostics = false;
+                            let response = match method {
+                                "workspace/configuration" => {
+                                    let settings = find_lsp_spec(&lsp_state.filetype, &lsp_specs)
+                                        .and_then(|spec| spec.settings.as_ref());
+                                    serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request_id.clone(),
+                                        "result": lsp_configuration_values(
+                                            msg.pointer("/params/items"),
+                                            settings,
+                                        )
+                                    })
+                                }
+                                "workspace/workspaceFolders" => serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": request_id.clone(),
+                                    "result": [{
+                                        "uri": lsp_state.root_uri,
+                                        "name": uri_to_path(&lsp_state.root_uri)
+                                            .rsplit(std::path::MAIN_SEPARATOR)
+                                            .next()
+                                            .unwrap_or("workspace")
+                                    }]
+                                }),
+                                "client/registerCapability" => {
+                                    if let Some(sync_kind) = msg
+                                        .pointer("/params/registrations")
+                                        .and_then(|value| value.as_array())
+                                        .and_then(|registrations| {
+                                            registrations.iter().find_map(|registration| {
+                                                (registration
+                                                    .get("method")
+                                                    .and_then(|value| value.as_str())
+                                                    == Some("textDocument/didChange"))
+                                                .then(|| {
+                                                    registration
+                                                        .pointer("/registerOptions/syncKind")
+                                                        .and_then(serde_json::Value::as_i64)
+                                                })
+                                                .flatten()
+                                            })
+                                        })
+                                    {
+                                        lsp_state.incremental_sync = sync_kind == 2;
+                                    }
+                                    if msg
+                                        .pointer("/params/registrations")
+                                        .and_then(|value| value.as_array())
+                                        .is_some_and(|registrations| {
+                                            registrations.iter().any(|registration| {
+                                                registration
+                                                    .get("method")
+                                                    .and_then(|value| value.as_str())
+                                                    == Some("textDocument/diagnostic")
+                                            })
+                                        })
+                                    {
+                                        lsp_state.pull_diagnostics = true;
+                                        request_diagnostics = true;
+                                    }
+                                    serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request_id.clone(),
+                                        "result": null
+                                    })
+                                }
+                                "client/unregisterCapability"
+                                | "window/workDoneProgress/create"
+                                | "window/showMessageRequest"
+                                | "workspace/inlayHint/refresh"
+                                | "workspace/semanticTokens/refresh" => serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": request_id.clone(),
+                                    "result": null
+                                }),
+                                "workspace/diagnostic/refresh" => {
+                                    request_diagnostics = true;
+                                    serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request_id.clone(),
+                                        "result": null
+                                    })
+                                }
+                                _ => serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": request_id.clone(),
+                                    "error": {
+                                        "code": -32601,
+                                        "message": format!("Unsupported client method: {method}")
+                                    }
+                                }),
+                            };
+                            let _ = lsp::send_message(tid, &response);
+                            if request_diagnostics
+                                && let Some(doc) = docs.get(active_tab)
+                                && !doc.path.is_empty()
+                            {
+                                request_lsp_diagnostics(
+                                    tid,
+                                    &mut lsp_state,
+                                    &path_to_uri(&doc.path),
                                 );
                             }
                             continue;
@@ -8222,6 +8604,25 @@ pub fn run(
                                 == Some("initialize")
                             {
                                 lsp_state.pending_requests.remove(&id);
+                                lsp_state.code_action_resolve_provider = msg
+                                    .pointer(
+                                        "/result/capabilities/codeActionProvider/resolveProvider",
+                                    )
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                // LSP capability advertisements are not reliable here:
+                                // current Roslyn accepts `textDocument/diagnostic` but
+                                // omits `diagnosticProvider`. Probe every server once and
+                                // disable only after an explicit method-not-found response.
+                                lsp_state.pull_diagnostics = should_probe_pull_diagnostics();
+                                lsp_state.incremental_sync = msg
+                                    .pointer("/result/capabilities/textDocumentSync/change")
+                                    .and_then(serde_json::Value::as_i64)
+                                    .or_else(|| {
+                                        msg.pointer("/result/capabilities/textDocumentSync")
+                                            .and_then(serde_json::Value::as_i64)
+                                    })
+                                    == Some(2);
                                 lsp_state.initialized = true;
                                 lsp_state.note_spawn_success();
                                 // Send initialized notification.
@@ -8233,6 +8634,25 @@ pub fn run(
                                         "params": {}
                                     }),
                                 );
+                                if let Some(settings) =
+                                    find_lsp_spec(&lsp_state.filetype, &lsp_specs)
+                                        .and_then(|spec| spec.settings.as_ref())
+                                {
+                                    let _ = lsp::send_message(
+                                        tid,
+                                        &serde_json::json!({
+                                            "jsonrpc": "2.0",
+                                            "method": "workspace/didChangeConfiguration",
+                                            "params": { "settings": settings }
+                                        }),
+                                    );
+                                }
+                                if lsp_state.filetype == "c#"
+                                    && let Some(notification) =
+                                        csharp_project_open_notification(&lsp_state.root_uri)
+                                {
+                                    let _ = lsp::send_message(tid, &notification);
+                                }
                                 // Send didOpen only for files matching the LSP filetype.
                                 for doc in &docs {
                                     if doc.path.is_empty() {
@@ -8252,8 +8672,15 @@ pub fn run(
                                         let uri = path_to_uri(&doc.path);
                                         let _ = lsp::send_message(
                                             tid,
-                                            &lsp_did_open(&uri, &lsp_state.filetype, &text),
+                                            &lsp_did_open(
+                                                &uri,
+                                                lsp_language_id(&lsp_state.filetype),
+                                                &text,
+                                            ),
                                         );
+                                        lsp_state.opened_documents.insert(uri.clone());
+                                        lsp_state.document_texts.insert(uri.clone(), text);
+                                        request_lsp_diagnostics(tid, &mut lsp_state, &uri);
                                     }
                                 }
                                 // Request inlay hints only for the active file if it matches LSP.
@@ -8281,6 +8708,64 @@ pub fn run(
                                             &lsp_inlay_hint_request(req_id, &uri, 0, line_count),
                                         );
                                     }
+                                }
+                            }
+
+                            if lsp_state.pending_requests.get(&id).map(String::as_str)
+                                == Some("textDocument/diagnostic")
+                            {
+                                lsp_state.pending_requests.remove(&id);
+                                let uri = lsp_state
+                                    .pending_request_uris
+                                    .remove(&id)
+                                    .unwrap_or_default();
+                                if pull_diagnostics_are_unsupported(msg) {
+                                    lsp_state.pull_diagnostics = false;
+                                    lsp_state.diagnostic_retry_at = None;
+                                    lsp_state.diagnostic_retry_count = 0;
+                                    continue;
+                                }
+                                if let Some(result_id) = msg
+                                    .pointer("/result/resultId")
+                                    .and_then(|value| value.as_str())
+                                {
+                                    lsp_state
+                                        .diagnostic_result_ids
+                                        .insert(uri.clone(), result_id.to_string());
+                                }
+                                let is_unchanged =
+                                    msg.pointer("/result/kind").and_then(|value| value.as_str())
+                                        == Some("unchanged");
+                                if !uri.is_empty() && !is_unchanged {
+                                    let diagnostics = msg
+                                        .pointer("/result/items")
+                                        .and_then(|value| value.as_array())
+                                        .map(|items| {
+                                            items
+                                                .iter()
+                                                .map(Diagnostic::from_lsp)
+                                                .collect::<Vec<_>>()
+                                        })
+                                        .unwrap_or_default();
+                                    let path = uri_to_path(&uri);
+                                    let pull_is_empty = diagnostics.is_empty();
+                                    lsp_state.update_pull_diagnostics(path.clone(), diagnostics);
+                                    let has_pushed_diagnostics = lsp_state
+                                        .push_diagnostics
+                                        .get(&path)
+                                        .is_some_and(|diagnostics| !diagnostics.is_empty());
+                                    if pull_is_empty && !has_pushed_diagnostics {
+                                        if lsp_state.diagnostic_retry_count < 20 {
+                                            lsp_state.diagnostic_retry_count += 1;
+                                            lsp_state.diagnostic_retry_at = Some(
+                                                Instant::now() + std::time::Duration::from_secs(1),
+                                            );
+                                        }
+                                    } else {
+                                        lsp_state.diagnostic_retry_count = 0;
+                                        lsp_state.diagnostic_retry_at = None;
+                                    }
+                                    redraw = true;
                                 }
                             }
 
@@ -8354,7 +8839,20 @@ pub fn run(
                                             label: display,
                                         });
                                     }
-                                    if new_hints.is_empty() {
+                                    let uri_changed = lsp_state.inlay_hints_uri != req_uri;
+                                    let content_changed = uri_changed
+                                        || lsp_state.inlay_hints.len() != new_hints.len()
+                                        || lsp_state.inlay_hints.iter().zip(new_hints.iter()).any(
+                                            |(a, b)| {
+                                                a.line != b.line
+                                                    || a.col != b.col
+                                                    || a.label != b.label
+                                            },
+                                        );
+                                    let empty = new_hints.is_empty();
+                                    lsp_state.inlay_hints = new_hints;
+                                    lsp_state.inlay_hints_uri = req_uri.clone();
+                                    if empty {
                                         if lsp_state.inlay_retry_count < 20 {
                                             lsp_state.inlay_retry_at = Some(
                                                 Instant::now() + std::time::Duration::from_secs(2),
@@ -8362,39 +8860,15 @@ pub fn run(
                                             lsp_state.inlay_retry_count += 1;
                                         }
                                     } else {
-                                        // Detect any difference in positions or
-                                        // labels — count alone is not enough.
-                                        // After a small edit the number of
-                                        // hints often stays identical while
-                                        // every hint's `col` shifts; comparing
-                                        // only `len()` would let stale render
-                                        // tokens leak through and the inlays
-                                        // would render at their previous
-                                        // positions until the next structural
-                                        // change.
-                                        let uri_changed = lsp_state.inlay_hints_uri != req_uri;
-                                        let content_changed = uri_changed
-                                            || lsp_state.inlay_hints.len() != new_hints.len()
-                                            || lsp_state
-                                                .inlay_hints
-                                                .iter()
-                                                .zip(new_hints.iter())
-                                                .any(|(a, b)| {
-                                                    a.line != b.line
-                                                        || a.col != b.col
-                                                        || a.label != b.label
-                                                });
-                                        lsp_state.inlay_hints = new_hints;
-                                        lsp_state.inlay_hints_uri = req_uri.clone();
                                         lsp_state.inlay_retry_count = 0;
                                         lsp_state.inlay_retry_at = None;
-                                        if content_changed {
-                                            pending_render_cache = None;
-                                            for d in &mut docs {
-                                                d.cached_change_id = -1;
-                                            }
-                                            crate::window::force_invalidate();
+                                    }
+                                    if content_changed {
+                                        pending_render_cache = None;
+                                        for d in &mut docs {
+                                            d.cached_change_id = -1;
                                         }
+                                        crate::window::force_invalidate();
                                     }
                                     redraw = true;
                                 }
@@ -8503,26 +8977,32 @@ pub fn run(
                                 == Some("textDocument/hover")
                             {
                                 lsp_state.pending_requests.remove(&id);
-                                let contents = msg.get("result").and_then(|r| r.get("contents"));
-                                let text = contents
-                                    .and_then(|c| {
-                                        // MarkupContent: {kind, value}
-                                        c.get("value")
-                                            .and_then(|v| v.as_str())
-                                            .map(String::from)
-                                            .or_else(|| {
-                                                // Plain string.
-                                                c.as_str().map(String::from)
-                                            })
-                                    })
-                                    .unwrap_or_default();
-                                if !text.is_empty() {
-                                    hover.text = text;
-                                    hover.visible = true;
-                                } else {
-                                    hover.hide();
+                                if pending_lsp_hover_request == Some(id)
+                                    && hovered_diagnostic.is_none()
+                                {
+                                    pending_lsp_hover_request = None;
+                                    let contents =
+                                        msg.get("result").and_then(|r| r.get("contents"));
+                                    let text = contents
+                                        .and_then(|c| {
+                                            // MarkupContent: {kind, value}
+                                            c.get("value")
+                                                .and_then(|v| v.as_str())
+                                                .map(String::from)
+                                                .or_else(|| {
+                                                    // Plain string.
+                                                    c.as_str().map(String::from)
+                                                })
+                                        })
+                                        .unwrap_or_default();
+                                    if !text.is_empty() {
+                                        hover.text = text;
+                                        hover.visible = true;
+                                    } else {
+                                        hover.hide();
+                                    }
+                                    redraw = true;
                                 }
-                                redraw = true;
                             }
 
                             // Handle go-to-definition response.
@@ -8684,24 +9164,52 @@ pub fn run(
                                 redraw = true;
                             }
 
+                            // Resolve lazy code actions before applying their edit
+                            // or command. Rust Analyzer and OmniSharp both use this
+                            // path for actions whose initial response only has data.
+                            if lsp_state.pending_requests.get(&id).map(|s| s.as_str())
+                                == Some("codeAction/resolve")
+                            {
+                                lsp_state.pending_requests.remove(&id);
+                                if let Some(action) =
+                                    msg.get("result").filter(|result| result.is_object())
+                                {
+                                    execute_lsp_code_action(
+                                        action,
+                                        &mut docs,
+                                        &mut lsp_state,
+                                        use_git(),
+                                        config.files.atomic_save,
+                                    );
+                                } else {
+                                    info_message = Some((
+                                        "Language server could not resolve the code action"
+                                            .to_string(),
+                                        Instant::now(),
+                                    ));
+                                }
+                                redraw = true;
+                            }
+
                             // Handle code-action response: collect into the picker.
+                            if lsp_state.pending_requests.get(&id).map(|s| s.as_str())
+                                == Some("textDocument/codeAction/hover")
+                            {
+                                lsp_state.pending_requests.remove(&id);
+                                if diagnostic_hover_action_request == Some(id) {
+                                    diagnostic_hover_action_request = None;
+                                    diagnostic_hover_actions =
+                                        collect_lsp_code_actions(msg.get("result"));
+                                    diagnostic_quick_fix_rect = None;
+                                    redraw = true;
+                                }
+                            }
+
                             if lsp_state.pending_requests.get(&id).map(|s| s.as_str())
                                 == Some("textDocument/codeAction")
                             {
                                 lsp_state.pending_requests.remove(&id);
-                                code_actions.clear();
-                                if let Some(arr) = msg.get("result").and_then(|r| r.as_array()) {
-                                    for a in arr {
-                                        let title = a
-                                            .get("title")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        if !title.is_empty() {
-                                            code_actions.push((title, a.clone()));
-                                        }
-                                    }
-                                }
+                                code_actions = collect_lsp_code_actions(msg.get("result"));
                                 if code_actions.is_empty() {
                                     info_message = Some((
                                         "No code actions available".to_string(),
@@ -8832,63 +9340,27 @@ pub fn run(
                                     let diags: Vec<Diagnostic> = params
                                         .get("diagnostics")
                                         .and_then(|v| v.as_array())
-                                        .map(|arr| {
-                                            arr.iter()
-                                                .map(|d| {
-                                                    let range = d.get("range");
-                                                    let start = range.and_then(|r| r.get("start"));
-                                                    let end = range.and_then(|r| r.get("end"));
-                                                    Diagnostic {
-                                                        start_line: start
-                                                            .and_then(|s| s.get("line"))
-                                                            .and_then(|v| v.as_u64())
-                                                            .unwrap_or(0)
-                                                            as usize,
-                                                        start_col: start
-                                                            .and_then(|s| s.get("character"))
-                                                            .and_then(|v| v.as_u64())
-                                                            .unwrap_or(0)
-                                                            as usize,
-                                                        end_line: end
-                                                            .and_then(|s| s.get("line"))
-                                                            .and_then(|v| v.as_u64())
-                                                            .unwrap_or(0)
-                                                            as usize,
-                                                        end_col: end
-                                                            .and_then(|s| s.get("character"))
-                                                            .and_then(|v| v.as_u64())
-                                                            .unwrap_or(0)
-                                                            as usize,
-                                                        severity: d
-                                                            .get("severity")
-                                                            .and_then(|v| v.as_u64())
-                                                            .unwrap_or(1)
-                                                            as u8,
-                                                        message: d
-                                                            .get("message")
-                                                            .and_then(|v| v.as_str())
-                                                            .unwrap_or("")
-                                                            .to_string(),
-                                                    }
-                                                })
-                                                .collect()
-                                        })
+                                        .map(|arr| arr.iter().map(Diagnostic::from_lsp).collect())
                                         .unwrap_or_default();
-                                    // A cleared-diagnostics publish (empty list)
-                                    // drops the entry instead of leaving an empty
-                                    // vec behind, so the map does not grow with
-                                    // every file the server has ever reported on.
-                                    if diags.is_empty() {
-                                        lsp_state.diagnostics.remove(&path);
-                                    } else {
-                                        lsp_state.diagnostics.insert(path, diags);
-                                    }
+                                    lsp_state.update_push_diagnostics(path, diags);
                                     redraw = true;
                                 }
                             }
                         }
+                        if msg.get("method").and_then(|value| value.as_str())
+                            == Some("workspace/projectInitializationComplete")
+                            && let Some(doc) = docs.get(active_tab)
+                            && !doc.path.is_empty()
+                        {
+                            request_lsp_diagnostics(tid, &mut lsp_state, &path_to_uri(&doc.path));
+                        }
                     }
                     if !poll.running {
+                        if !lsp_state.initialized && !lsp_state.launch_command.is_empty() {
+                            lsp_state
+                                .rejected_launch_commands
+                                .insert(lsp_state.launch_command.clone());
+                        }
                         lsp::remove_transport(tid);
                         lsp_state.note_spawn_failure();
                         lsp_state.transport_id = None;
@@ -8965,14 +9437,28 @@ pub fn run(
                                         let text =
                                             buffer::with_buffer(buf_id, |b| Ok(b.lines.join("")))
                                                 .unwrap_or_default();
-                                        let _ = lsp::send_message(
-                                            tid,
-                                            &lsp_did_change(
+                                        let previous_text = lsp_state
+                                            .document_texts
+                                            .get(&uri)
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        let change = if lsp_state.incremental_sync {
+                                            lsp_incremental_did_change(
+                                                &uri,
+                                                lsp_state.pending_change_version,
+                                                &previous_text,
+                                                &text,
+                                            )
+                                        } else {
+                                            lsp_did_change(
                                                 &uri,
                                                 lsp_state.pending_change_version,
                                                 &text,
-                                            ),
-                                        );
+                                            )
+                                        };
+                                        let _ = lsp::send_message(tid, &change);
+                                        lsp_state.document_texts.insert(uri.clone(), text);
+                                        request_lsp_diagnostics(tid, &mut lsp_state, &uri);
                                         // Re-request inlay hints after change is flushed.
                                         let line_count =
                                             buffer::with_buffer(buf_id, |b| Ok(b.lines.len()))
@@ -8994,6 +9480,17 @@ pub fn run(
                     lsp_state.last_change = None;
                 }
             }
+        }
+
+        if diagnostic_hover_leave_at.is_some_and(|deadline| Instant::now() >= deadline) {
+            hover.hide();
+            hovered_diagnostic = None;
+            diagnostic_hover_region_rect = None;
+            diagnostic_hover_leave_at = None;
+            diagnostic_quick_fix_rect = None;
+            diagnostic_hover_action_request = None;
+            diagnostic_hover_actions.clear();
+            redraw = true;
         }
 
         // LSP: fire a deferred `textDocument/hover` after the mouse
@@ -9022,6 +9519,7 @@ pub fn run(
                     .pending_requests
                     .insert(req_id, "textDocument/hover".to_string());
                 let _ = lsp::send_message(tid, &lsp_hover_request(req_id, &uri, line - 1, col - 1));
+                pending_lsp_hover_request = Some(req_id);
                 hover.line = line;
                 hover.col = col;
             }
@@ -12304,7 +12802,7 @@ pub fn run(
                     } else {
                         0
                     };
-                    for (i, (action_title, _)) in code_actions
+                    for (i, (action_title, action)) in code_actions
                         .iter()
                         .enumerate()
                         .skip(scroll_off)
@@ -12315,10 +12813,12 @@ pub fn run(
                         if i == code_action_selected {
                             draw_ctx.draw_rect(ca_x, ry, ca_w, line_h, style.selection.to_array());
                         }
-                        let color = if i == code_action_selected {
+                        let color = if code_action_disabled_reason(action).is_some() {
+                            style.dim.to_array()
+                        } else if i == code_action_selected {
                             style.accent.to_array()
                         } else {
-                            style.dim.to_array()
+                            style.text.to_array()
                         };
                         draw_ctx.draw_text(
                             style.font,
@@ -12746,24 +13246,39 @@ pub fn run(
                             .collect();
                         let line_count_h = hover_lines.len();
                         let tooltip_line_h = style.font_height + 2.0;
-                        let tooltip_h =
+                        let message_h =
                             tooltip_line_h * line_count_h as f64 + style.padding_y * 2.0;
-                        let tooltip_w = hover_lines
+                        let is_diagnostic_hover = hovered_diagnostic.is_some();
+                        let has_quick_fixes = !diagnostic_hover_actions.is_empty();
+                        let action_h = if has_quick_fixes {
+                            style.font_height + style.padding_y * 2.0
+                        } else {
+                            0.0
+                        };
+                        let quick_fix_w =
+                            draw_ctx.font_width(style.font, "Quick Fix") + style.padding_x * 2.0;
+                        let actions_w = quick_fix_w + style.padding_x * 2.0;
+                        let tooltip_h = message_h + action_h;
+                        let tooltip_w = (hover_lines
                             .iter()
                             .map(|l| draw_ctx.font_width(style.font, l))
                             .fold(0.0_f64, f64::max)
-                            + style.padding_x * 2.0;
-                        let tooltip_y = hover_y - tooltip_h;
+                            + style.padding_x * 2.0)
+                            .max(if has_quick_fixes { actions_w } else { 0.0 });
+                        let tooltip_x = hover_x
+                            .max(dv.rect().x)
+                            .min((width - tooltip_w - style.padding_x).max(dv.rect().x));
+                        let tooltip_y = (hover_y - tooltip_h).max(style.padding_y);
                         // Background.
                         draw_ctx.draw_rect(
-                            hover_x,
+                            tooltip_x,
                             tooltip_y,
                             tooltip_w,
                             tooltip_h,
                             style.background3.to_array(),
                         );
                         draw_ctx.draw_rect(
-                            hover_x,
+                            tooltip_x,
                             tooltip_y,
                             tooltip_w,
                             style.divider_size,
@@ -12773,10 +13288,61 @@ pub fn run(
                             draw_ctx.draw_text(
                                 style.font,
                                 line_text,
-                                hover_x + style.padding_x,
+                                tooltip_x + style.padding_x,
                                 tooltip_y + style.padding_y + i as f64 * tooltip_line_h,
                                 style.text.to_array(),
                             );
+                        }
+                        if has_quick_fixes {
+                            let action_y = tooltip_y + message_h;
+                            draw_ctx.draw_rect(
+                                tooltip_x,
+                                action_y,
+                                tooltip_w,
+                                style.divider_size,
+                                style.divider.to_array(),
+                            );
+                            let quick_rect = crate::editor::types::Rect {
+                                x: tooltip_x + style.padding_x,
+                                y: action_y + style.padding_y / 2.0,
+                                w: quick_fix_w,
+                                h: action_h - style.padding_y,
+                            };
+                            draw_ctx.draw_text(
+                                style.font,
+                                "Quick Fix",
+                                quick_rect.x + style.padding_x,
+                                quick_rect.y + style.padding_y / 2.0,
+                                style.accent.to_array(),
+                            );
+                            diagnostic_quick_fix_rect = Some(quick_rect);
+                        } else {
+                            diagnostic_quick_fix_rect = None;
+                        }
+                        if is_diagnostic_hover {
+                            let popup_rect = crate::editor::types::Rect {
+                                x: tooltip_x,
+                                y: tooltip_y,
+                                w: tooltip_w,
+                                h: tooltip_h,
+                            };
+                            let anchor_rect = crate::editor::types::Rect {
+                                x: hover_x,
+                                y: hover_y + style.padding_y,
+                                w: draw_ctx.font_width(style.code_font, "m").max(1.0),
+                                h: line_h_hover,
+                            };
+                            diagnostic_hover_region_rect = Some(diagnostic_hover_intent_rect(
+                                popup_rect,
+                                anchor_rect,
+                                style.padding_x,
+                            ));
+                        } else {
+                            diagnostic_hover_region_rect = None;
+                            diagnostic_hover_leave_at = None;
+                            diagnostic_quick_fix_rect = None;
+                            diagnostic_hover_action_request = None;
+                            diagnostic_hover_actions.clear();
                         }
                     }
                 }
@@ -13079,11 +13645,38 @@ pub fn run(
 }
 
 #[cfg(not(feature = "sdl"))]
-pub fn run(_config: NativeConfig, _args: &[String], _datadir: &str, _userdir: &str) -> bool {
+pub fn run(
+    _config: NativeConfig,
+    _args: &[String],
+    _datadir: &str,
+    _userdir: &str,
+    _subsystems: crate::editor::subsystems::EditorSubsystems,
+) -> bool {
     false
 }
 
 sdl_only! {
+fn point_in_rect(rect: crate::editor::types::Rect, x: f64, y: f64) -> bool {
+    x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
+}
+
+fn diagnostic_hover_intent_rect(
+    popup: crate::editor::types::Rect,
+    anchor: crate::editor::types::Rect,
+    padding: f64,
+) -> crate::editor::types::Rect {
+    let left = popup.x.min(anchor.x) - padding;
+    let top = popup.y.min(anchor.y) - padding;
+    let right = (popup.x + popup.w).max(anchor.x + anchor.w) + padding;
+    let bottom = (popup.y + popup.h).max(anchor.y + anchor.h) + padding;
+    crate::editor::types::Rect {
+        x: left,
+        y: top,
+        w: right - left,
+        h: bottom - top,
+    }
+}
+
 /// Filter command list using fuzzy matching from the picker module.
 fn fuzzy_filter_commands(query: &str, all_commands: &[(String, String)]) -> Vec<(String, String)> {
     if query.is_empty() {
@@ -13534,9 +14127,167 @@ fn insert_text_at_caret(b: &mut crate::editor::buffer::BufferState, text: &str) 
     }
 }
 
-/// Convert pasted text's leading whitespace to match the document's indent
-/// style. Detects whether the clipboard content uses tabs or spaces, then
-/// re-indents every line to the target style (preserving relative depth).
+fn code_action_disabled_reason(action: &serde_json::Value) -> Option<&str> {
+    action
+        .get("disabled")
+        .and_then(|disabled| disabled.get("reason"))
+        .and_then(|reason| reason.as_str())
+}
+
+/// Return the code-action index under a pointer, using the picker's rendered
+/// row geometry. The caller supplies the selected index because it determines
+/// the visible scroll window.
+fn code_action_picker_row_at(
+    x: f64,
+    y: f64,
+    style: &StyleContext,
+    action_count: usize,
+    selected: usize,
+) -> Option<usize> {
+    let (window_width, _, _, _) = crate::window::get_window_size();
+    code_action_picker_row_at_width(
+        x,
+        y,
+        window_width as f64,
+        style,
+        action_count,
+        selected,
+    )
+}
+
+fn code_action_picker_row_at_width(
+    x: f64,
+    y: f64,
+    width: f64,
+    style: &StyleContext,
+    action_count: usize,
+    selected: usize,
+) -> Option<usize> {
+    const MAX_VISIBLE: usize = 15;
+    if action_count == 0 {
+        return None;
+    }
+    let picker_width = (width * 0.5).max(400.0).min(width - 20.0);
+    let picker_x = (width - picker_width) / 2.0;
+    let line_height = style.font_height + style.padding_y;
+    if line_height <= 0.0 {
+        return None;
+    }
+    let rows_y = style.padding_y * 3.0 + line_height + style.divider_size;
+    let visible = action_count.min(MAX_VISIBLE);
+    let scroll_offset = selected.saturating_sub(MAX_VISIBLE - 1);
+    if x < picker_x
+        || x > picker_x + picker_width
+        || y < rows_y
+        || y >= rows_y + line_height * visible as f64
+    {
+        return None;
+    }
+    let row = ((y - rows_y) / line_height).floor() as usize;
+    (row < visible).then_some(scroll_offset + row)
+}
+
+fn activate_lsp_state(
+    active: &mut LspState,
+    inactive: &mut HashMap<(String, String), LspState>,
+    filetype: &str,
+    root_uri: String,
+) {
+    let next_key = (filetype.to_string(), root_uri);
+    let next_state = inactive.remove(&next_key).unwrap_or_else(LspState::new);
+    let previous_state = std::mem::replace(active, next_state);
+    if previous_state.filetype.is_empty() || previous_state.root_uri.is_empty() {
+        return;
+    }
+    let previous_key = (
+        previous_state.filetype.clone(),
+        previous_state.root_uri.clone(),
+    );
+    if let Some(displaced) = inactive.insert(previous_key, previous_state)
+        && let Some(displaced_transport) = displaced.transport_id
+    {
+        lsp::remove_transport(displaced_transport);
+    }
+}
+
+fn collect_lsp_code_actions(
+    result: Option<&serde_json::Value>,
+) -> Vec<(String, serde_json::Value)> {
+    let mut actions: Vec<_> = result
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|action| {
+            let title = action.get("title")?.as_str()?;
+            (!title.is_empty()).then(|| (title.to_string(), action.clone()))
+        })
+        .collect();
+    actions.sort_by_key(|(_, action)| {
+        !action
+            .get("isPreferred")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    });
+    actions
+}
+
+fn code_action_command(action: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    let command = action.get("command")?;
+    if let Some(name) = command.as_str() {
+        return Some((
+            name.to_string(),
+            action
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        ));
+    }
+    let name = command.get("command")?.as_str()?.to_string();
+    let arguments = command
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    Some((name, arguments))
+}
+
+fn execute_lsp_code_action(
+    action: &serde_json::Value,
+    docs: &mut Vec<crate::editor::open_doc::OpenDoc>,
+    lsp_state: &mut LspState,
+    use_git: bool,
+    atomic: bool,
+) {
+    if let Some(edit) = action.get("edit") {
+        let changed = apply_lsp_workspace_edit(edit, docs, use_git, atomic);
+        if changed > 0 {
+            for doc in docs.iter_mut() {
+                doc.cached_change_id = -1;
+            }
+            crate::window::force_invalidate();
+        }
+    }
+    if let (Some(tid), Some((command, arguments))) =
+        (lsp_state.transport_id, code_action_command(action))
+    {
+        let req_id = lsp_state.next_id();
+        lsp_state
+            .pending_requests
+            .insert(req_id, "workspace/executeCommand".to_string());
+        let _ = lsp::send_message(
+            tid,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": command,
+                    "arguments": arguments
+                }
+            }),
+        );
+    }
+}
+
 /// Apply a list of LSP `TextEdit`s to a buffer as one undoable change.
 /// Edits are applied last-position-first so earlier offsets stay valid.
 /// LSP positions are 0-based; character is treated as a char column to match
@@ -13669,6 +14420,9 @@ fn apply_lsp_workspace_edit(
     changed
 }
 
+/// Convert pasted text's leading whitespace to match the document's indent
+/// style. Detects whether the clipboard content uses tabs or spaces, then
+/// re-indents every line to the target style (preserving relative depth).
 fn convert_paste_indent(text: &str, doc_indent_type: &str, doc_indent_size: usize) -> String {
     let size = doc_indent_size.max(1);
     // Detect the paste's dominant indent character: if any non-blank line
@@ -14994,17 +15748,205 @@ fn build_style(
 }
 
 }
-#[cfg(not(feature = "sdl"))]
-fn build_style(_config: &NativeConfig, _ctx: &()) -> StyleContext {
-    StyleContext::default()
+#[cfg(all(test, feature = "sdl"))]
+mod diagnostic_hover_tests {
+    use super::{diagnostic_hover_intent_rect, point_in_rect};
+    use crate::editor::types::Rect;
+
+    #[test]
+    fn intent_region_bridges_diagnostic_to_popup() {
+        let popup = Rect {
+            x: 100.0,
+            y: 50.0,
+            w: 240.0,
+            h: 100.0,
+        };
+        let diagnostic = Rect {
+            x: 120.0,
+            y: 170.0,
+            w: 10.0,
+            h: 20.0,
+        };
+        let region = diagnostic_hover_intent_rect(popup, diagnostic, 8.0);
+        assert!(point_in_rect(region, 125.0, 160.0));
+        assert!(point_in_rect(region, 300.0, 80.0));
+        assert!(!point_in_rect(region, 80.0, 210.0));
+    }
+}
+#[cfg(all(test, feature = "sdl"))]
+mod lsp_code_action_tests {
+    use super::{
+        apply_lsp_workspace_edit, code_action_command, code_action_disabled_reason,
+        code_action_picker_row_at_width, collect_lsp_code_actions, path_to_uri,
+    };
+    use crate::editor::style_ctx::StyleContext;
+
+    fn temp_source(name: &str, source: &str) -> String {
+        let unique = format!(
+            "lite-anvil-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        std::fs::write(&path, source).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn applies_gossamer_style_quickfix_workspace_edit() {
+        let path = temp_source(
+            "gossamer-action.gos",
+            "fn helper() { }\nfn main() { helpre() }\n",
+        );
+        let uri = path_to_uri(&path);
+        let edit = serde_json::json!({
+            "changes": {
+                uri.clone(): [{
+                    "range": {
+                        "start": { "line": 1, "character": 12 },
+                        "end": { "line": 1, "character": 18 }
+                    },
+                    "newText": "helper"
+                }]
+            }
+        });
+        let mut docs = Vec::new();
+        assert_eq!(apply_lsp_workspace_edit(&edit, &mut docs, false, false), 1);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "fn helper() { }\nfn main() { helper() }\n"
+        );
+        drop(docs);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn applies_text_document_edit_form() {
+        let path = temp_source("document-change.cs", "class C { int value; }\n");
+        let uri = path_to_uri(&path);
+        let edit = serde_json::json!({
+            "documentChanges": [{
+                "textDocument": { "uri": uri, "version": 1 },
+                "edits": [{
+                    "range": {
+                        "start": { "line": 0, "character": 14 },
+                        "end": { "line": 0, "character": 19 }
+                    },
+                    "newText": "count"
+                }]
+            }]
+        });
+        let mut docs = Vec::new();
+        assert_eq!(apply_lsp_workspace_edit(&edit, &mut docs, false, false), 1);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "class C { int count; }\n"
+        );
+        drop(docs);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn reads_command_and_disabled_action_shapes() {
+        let command = serde_json::json!({
+            "title": "Run fix",
+            "command": { "command": "fix.run", "arguments": [1] }
+        });
+        assert_eq!(
+            code_action_command(&command),
+            Some(("fix.run".to_string(), serde_json::json!([1])))
+        );
+        let disabled = serde_json::json!({
+            "title": "Unavailable fix",
+            "disabled": { "reason": "Project is still loading" }
+        });
+        assert_eq!(
+            code_action_disabled_reason(&disabled),
+            Some("Project is still loading")
+        );
+    }
+
+    #[test]
+    fn collects_server_confirmed_actions_with_preferred_first() {
+        let result = serde_json::json!([
+            { "title": "Second choice", "kind": "quickfix" },
+            { "title": "Preferred fix", "kind": "quickfix", "isPreferred": true },
+            { "kind": "quickfix" }
+        ]);
+        let actions = collect_lsp_code_actions(Some(&result));
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].0, "Preferred fix");
+        assert_eq!(actions[1].0, "Second choice");
+    }
+
+    #[test]
+    fn code_action_rows_are_clickable_with_the_rendered_scroll_offset() {
+        let style = StyleContext {
+            padding_y: 8.0,
+            divider_size: 1.0,
+            font_height: 16.0,
+            ..StyleContext::default()
+        };
+        // At 1000px wide, the picker spans x=250..750. The first action row
+        // begins at y=49 and is 24px tall.
+        assert_eq!(
+            code_action_picker_row_at_width(300.0, 50.0, 1000.0, &style, 20, 0),
+            Some(0)
+        );
+        assert_eq!(
+            code_action_picker_row_at_width(300.0, 74.0, 1000.0, &style, 20, 15),
+            Some(2)
+        );
+        assert_eq!(
+            code_action_picker_row_at_width(100.0, 50.0, 1000.0, &style, 20, 0),
+            None
+        );
+    }
 }
 
-#[cfg(not(feature = "sdl"))]
-fn load_fonts(_config: &NativeConfig) -> Result<(), String> {
-    Ok(())
+#[cfg(all(test, feature = "sdl"))]
+mod lsp_state_switch_tests {
+    use std::collections::HashMap;
+
+    use super::{LspState, activate_lsp_state};
+
+    #[test]
+    fn restores_cached_language_even_when_current_server_exited() {
+        let mut active = LspState::new();
+        active.filetype = "language-a".to_string();
+        active.root_uri = "file:///workspace/a".to_string();
+        active.transport_id = None;
+
+        let mut cached = LspState::new();
+        cached.filetype = "language-b".to_string();
+        cached.root_uri = "file:///workspace/b".to_string();
+        cached.initialized = true;
+        cached.next_request_id = 42;
+
+        let mut inactive = HashMap::from([(
+            ("language-b".to_string(), "file:///workspace/b".to_string()),
+            cached,
+        )]);
+        activate_lsp_state(
+            &mut active,
+            &mut inactive,
+            "language-b",
+            "file:///workspace/b".to_string(),
+        );
+
+        assert_eq!(active.filetype, "language-b");
+        assert!(active.initialized);
+        assert_eq!(active.next_request_id, 42);
+        assert!(
+            inactive.contains_key(&("language-a".to_string(), "file:///workspace/a".to_string()))
+        );
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sdl"))]
 mod indent_tests {
     use super::{carried_indent, newline_indent, smart_backspace_span, smart_indent_opens_block};
 
@@ -15110,7 +16052,7 @@ mod indent_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sdl"))]
 mod clipboard_tests {
     use super::{append_clipboard_line, insert_clipboard_line};
 
@@ -15161,7 +16103,7 @@ mod clipboard_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sdl"))]
 mod paste_insert_tests {
     use super::insert_text_at_caret;
     use crate::editor::buffer::default_buffer_state;

@@ -1,3 +1,8 @@
+// The no-SDL build keeps the editor's shared data and protocol modules
+// available, but its `main_loop::run` is intentionally a stub. Private UI
+// helpers therefore have no reachable caller in that feature configuration.
+#![cfg_attr(not(feature = "sdl"), allow(dead_code))]
+
 pub mod app_state;
 pub mod buffer;
 pub mod cmdview;

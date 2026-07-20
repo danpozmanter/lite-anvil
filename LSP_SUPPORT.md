@@ -6,15 +6,16 @@ server spec and launches the language server automatically.
 
 ## Requirements
 
-The language server binary must be installed and available on your `PATH`. Lite
-Anvil does not install language servers for you.
+The language server binary must normally be installed and available on your
+`PATH`. Lite Anvil does not install language servers for you. Lite Anvil can
+also use servers bundled with installed VS Code extensions for Rust and C#.
 
 ## Builtin Language Servers
 
 | Language | Server | Binary | Root markers |
 |---|---|---|---|
-| Rust | rust-analyzer | `rust-analyzer` | `Cargo.toml`, `rust-project.json` |
-| C# | OmniSharp | `OmniSharp` | `.sln`, `.csproj` |
+| Rust | rust-analyzer | auto-detected | `Cargo.toml`, `rust-project.json` |
+| C# | Roslyn, csharp-ls, or OmniSharp | auto-detected | `.sln`, `.csproj` |
 | F# | fsautocomplete | `fsautocomplete` | `.fsproj`, `.sln` |
 | Java | Eclipse JDT.LS | `jdtls` | `pom.xml`, `build.gradle[.kts]` |
 | Kotlin | kotlin-language-server | `kotlin-language-server` | `build.gradle[.kts]`, `pom.xml` |
@@ -43,6 +44,30 @@ Anvil does not install language servers for you.
 | Gossamer | gossamer-lsp (via `gos`) | `gos lsp` | `project.toml` |
 
 All builtin specs fall back to `.git` as a final root marker.
+
+The Rust builtin tries the configured `rust-analyzer` command first, then
+installed VS Code Rust Analyzer extension servers. A command that starts but
+exits before initialization is rejected so the editor can advance to the next
+candidate. This fallback lifecycle is shared by every LSP configuration.
+
+The C# builtin tries the configured OmniSharp command first, then Roslyn on
+`PATH`, the Roslyn server bundled with installed VS Code C# extensions,
+`csharp-ls`, and lowercase `omnisharp`. Roslyn pull diagnostics and standard
+LSP push diagnostics are both supported.
+Roslyn session and design-time build logs are stored under the editor's
+`logs/roslyn` directory instead of being written into the project.
+
+## Problems and Quick Fixes
+
+Hover an underlined diagnostic to open its problem popup. **Quick Fix** appears
+only when the language server returns one or more actions for that exact
+diagnostic. Select it, choose an action with the arrow keys, and press Enter to
+apply it. `Ctrl+Shift+A` opens code actions for the current cursor or selection
+without using the popup.
+
+This behavior is shared by every builtin and custom LSP server. The client
+supports diagnostic push and pull, lazy code-action resolution, command-based
+actions, and both `changes` and `documentChanges` workspace edits.
 
 ## Custom Configuration
 
