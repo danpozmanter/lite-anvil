@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.1] - 2026-07-21 - Windows LSP test fix.
+
+* Fixed the C# LSP project-root suffix marker test on Windows.
+
 ## [2.15.0] - 2026-07-20 - LSP quick fixes and diagnostics.
 
 * Quick Fix now mirrors VS Code behavior: server actions are requested with diagnostic context, resolved when needed, and applied by mouse or Enter.

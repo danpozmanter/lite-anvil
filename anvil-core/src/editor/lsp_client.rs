@@ -1374,12 +1374,25 @@ mod tests {
 
     #[test]
     fn project_root_suffix_marker_matches_project_file() {
+        let test_name = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
         let root = std::env::temp_dir().join(format!(
             "lite-anvil-lsp-root-{}-{}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            test_name
         ));
         let nested = root.join("src");
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(root.join("Example.csproj"), "<Project />").unwrap();
         assert_eq!(
