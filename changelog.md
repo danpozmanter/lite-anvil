@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.2] - 2026-07-22 - External edit visibility fix.
+
+* File contents now repaint after external edits while NanoAnvil, LiteAnvil, or NoteAnvil is hidden or covered.
+
 ## [2.15.1] - 2026-07-21 - Windows LSP test fix.
 
 * Fixed the C# LSP project-root suffix marker test on Windows.

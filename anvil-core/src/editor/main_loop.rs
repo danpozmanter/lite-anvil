@@ -2234,10 +2234,17 @@ pub fn run(
                 }
                 EditorEvent::Exposed | EditorEvent::Resized { .. } | EditorEvent::FocusGained => {
                     window_hidden = false;
+                    // A covered/minimised window can lose its backing surface
+                    // without SDL delivering a matching expose event.  The
+                    // retained renderer may still consider every text cell
+                    // current, so force a full repaint when the window becomes
+                    // usable again.
+                    crate::window::force_invalidate();
                     redraw = true;
                 }
                 EditorEvent::Shown => {
                     window_hidden = false;
+                    crate::window::force_invalidate();
                     redraw = true;
                 }
                 EditorEvent::Occluded | EditorEvent::Hidden => {
@@ -4625,6 +4632,7 @@ pub fn run(
                                         });
                                         doc.cached_change_id = -1;
                                         doc.cached_render = std::sync::Arc::new(Vec::new());
+                                        crate::window::force_invalidate();
                                         if let Ok((cid, sig)) = buffer::with_buffer(buf_id, |b| {
                                             Ok((b.change_id, buffer::content_signature(&b.lines)))
                                         }) {
@@ -9903,6 +9911,7 @@ pub fn run(
                         // the bump.
                         doc.cached_change_id = -1;
                         doc.cached_render = std::sync::Arc::new(Vec::new());
+                        crate::window::force_invalidate();
                         // Realign the "saved" markers with what is now on
                         // disk so the next external change is judged against
                         // the correct baseline.
