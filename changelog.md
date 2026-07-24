@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.15.3] - 2026-07-24 - Nano Anvil LSP support.
+
+* Nano Anvil now keeps LSP enabled in its single-file profile, matching Lite Anvil's language-server behavior while still omitting project-oriented panels.
+* Added a regression test that keeps LSP enabled in both Lite Anvil and Nano Anvil startup profiles.
+
 ## [2.15.2] - 2026-07-22 - External edit visibility fix.
 
 * File contents now repaint after external edits while NanoAnvil, LiteAnvil, or NoteAnvil is hidden or covered.

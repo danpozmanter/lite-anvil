@@ -53,8 +53,9 @@ I do not intend to maintain or support this in any way, but wanted to share the 
 A stripped-down single-file editor for minimal resource usage.
 
 - Single file at a time, always starts with a blank document
+- LSP support for diagnostics, completion, hover, and navigation
 - Find and replace within the current file
-- No sidebar, terminal, LSP, git, tabs, bookmarks, or code folding
+- No sidebar, terminal, git, tabs, bookmarks, or code folding
 
 ## Note Anvil
 

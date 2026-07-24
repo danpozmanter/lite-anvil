@@ -33,7 +33,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     );
     config.verbose = verbose;
 
-    let subsystems = EditorSubsystems::all();
+    let subsystems = EditorSubsystems::lite();
     anvil_core::editor::main_loop::run(
         config,
         args,

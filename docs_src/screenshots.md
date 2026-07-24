@@ -15,7 +15,7 @@ The full editor: sidebar, tabs, LSP inlay hints, embedded terminal, git integrat
 
 ![Nano Anvil screenshot](assets/nano_screenshot.png){ .screenshot }
 
-The minimal single-file editor. No sidebar, terminal, LSP, git, or tabs.
+The minimal single-file editor with LSP support. No sidebar, terminal, git, or tabs.
 
 ## Note Anvil
 

@@ -1,7 +1,7 @@
 //! Trait-based subsystem definitions for optional editor features.
 //!
 //! Each subsystem represents a feature that Lite-Anvil includes but
-//! Nano-Anvil omits. The `EditorSubsystems` container holds an
+//! smaller app profiles may omit. The `EditorSubsystems` container holds an
 //! `Option` for each, and the event loop dispatches conditionally.
 
 /// Sidebar file tree panel.
@@ -104,8 +104,9 @@ impl UpdateCheckSubsystem for Enabled {}
 
 /// Optional editor subsystems injected at startup.
 ///
-/// Lite-Anvil populates all fields. Nano-Anvil leaves them all `None`.
-/// Note-Anvil leaves most `None` but populates `sidebar` + `picker` +
+/// Lite-Anvil populates all fields. Nano-Anvil enables LSP and update
+/// checks while leaving project-oriented features off. Note-Anvil leaves
+/// most `None` but populates `sidebar` + `picker` +
 /// `notes_mode`. The native event loop checks each `Option` before
 /// dispatching to subsystem-specific code paths.
 pub struct EditorSubsystems {
@@ -123,7 +124,7 @@ pub struct EditorSubsystems {
 }
 
 impl EditorSubsystems {
-    /// All subsystems disabled (Nano-Anvil).
+    /// All optional subsystems disabled.
     pub fn none() -> Self {
         Self {
             sidebar: None,
@@ -137,6 +138,20 @@ impl EditorSubsystems {
             folding: None,
             update_check: None,
             notes_mode: None,
+        }
+    }
+
+    /// Lite-Anvil: full editor profile.
+    pub fn lite() -> Self {
+        Self::all()
+    }
+
+    /// Nano-Anvil: single-file editor with LSP support.
+    pub fn nano() -> Self {
+        Self {
+            lsp: Some(Box::new(Enabled)),
+            update_check: Some(Box::new(Enabled)),
+            ..Self::none()
         }
     }
 
@@ -226,5 +241,32 @@ impl EditorSubsystems {
                 folder: folder.into(),
             })),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EditorSubsystems;
+
+    #[test]
+    fn lite_profile_keeps_lsp_enabled() {
+        assert!(EditorSubsystems::lite().has_lsp());
+    }
+
+    #[test]
+    fn nano_profile_keeps_lsp_enabled() {
+        let subsystems = EditorSubsystems::nano();
+
+        assert!(subsystems.has_lsp());
+        assert!(!subsystems.has_sidebar());
+        assert!(!subsystems.has_terminal());
+        assert!(!subsystems.has_git());
+        assert!(!subsystems.has_picker());
+        assert!(!subsystems.has_find_in_files());
+        assert!(!subsystems.has_toolbar());
+        assert!(!subsystems.has_bookmarks());
+        assert!(!subsystems.has_folding());
+        assert!(subsystems.has_update_check());
+        assert!(!subsystems.has_notes_mode());
     }
 }

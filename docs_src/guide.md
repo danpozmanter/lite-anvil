@@ -296,7 +296,8 @@ On Linux, Nano Anvil is also available as a desktop application (Nano Anvil in y
 Nano Anvil is designed for lightweight, single-file editing:
 
 - Single file at a time (no tabs, no project)
-- No sidebar, terminal, LSP, git integration, bookmarks, or code folding
+- LSP support for diagnostics, completion, hover, and navigation
+- No sidebar, terminal, git integration, bookmarks, or code folding
 - Syntax highlighting for 50+ languages (shared with Lite Anvil)
 - Find and replace within the current file
 - Full undo/redo (capped at 100 entries)

@@ -132,7 +132,7 @@ External edits are picked up automatically, even across atomic save-by-rename pa
 
 ### Nano Anvil
 
-A minimal single-file editor. No sidebar, terminal, LSP, git, or tabs.
+A minimal single-file editor with LSP support. No sidebar, terminal, git, or tabs.
 
 </div>
 

@@ -5,7 +5,7 @@
 // See lite-anvil/src/main.rs for why we detach from the console on
 // release Windows builds.
 
-use anvil_core::editor::subsystems::{EditorSubsystems, Enabled};
+use anvil_core::editor::subsystems::EditorSubsystems;
 
 fn main() {
     env_logger::init();
@@ -33,10 +33,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     );
     config.verbose = verbose;
 
-    let subsystems = EditorSubsystems {
-        update_check: Some(Box::new(Enabled)),
-        ..EditorSubsystems::none()
-    };
+    let subsystems = EditorSubsystems::nano();
     anvil_core::editor::main_loop::run(
         config,
         args,
