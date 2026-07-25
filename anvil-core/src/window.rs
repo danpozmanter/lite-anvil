@@ -924,12 +924,8 @@ fn translate_event_native(
             )
         };
         let name = key_name(keycode, scancode, keymod)?;
-        let modifiers = crate::editor::event::Modifiers {
-            shift: (keymod.0 & SDL_KMOD_SHIFT.0) != 0,
-            ctrl: (keymod.0 & SDL_KMOD_CTRL.0) != 0,
-            alt: (keymod.0 & SDL_KMOD_ALT.0) != 0,
-            gui: (keymod.0 & SDL_KMOD_GUI.0) != 0,
-        };
+        let live_keymod = unsafe { SDL_GetModState() };
+        let modifiers = modifiers_from_keymod(SDL_Keymod(keymod.0 | live_keymod.0));
         let _ = repeat;
         return if t == SDL_EVENT_KEY_DOWN {
             Some(EditorEvent::KeyPressed {
@@ -972,13 +968,7 @@ fn translate_event_native(
         };
         return if t == SDL_EVENT_MOUSE_BUTTON_DOWN {
             // SDL only carries keyboard modifiers on key events, so query the live state here.
-            let keymod = unsafe { SDL_GetModState() };
-            let modifiers = crate::editor::event::Modifiers {
-                shift: (keymod.0 & SDL_KMOD_SHIFT.0) != 0,
-                ctrl: (keymod.0 & SDL_KMOD_CTRL.0) != 0,
-                alt: (keymod.0 & SDL_KMOD_ALT.0) != 0,
-                gui: (keymod.0 & SDL_KMOD_GUI.0) != 0,
-            };
+            let modifiers = modifiers_from_keymod(unsafe { SDL_GetModState() });
             Some(EditorEvent::MousePressed {
                 button,
                 x: x as f64 * scale_x,
@@ -1311,6 +1301,15 @@ fn key_name(keycode: SDL_Keycode, scancode: SDL_Scancode, keymod: SDL_Keymod) ->
     None
 }
 
+fn modifiers_from_keymod(keymod: SDL_Keymod) -> crate::editor::event::Modifiers {
+    crate::editor::event::Modifiers {
+        shift: (keymod.0 & SDL_KMOD_SHIFT.0) != 0,
+        ctrl: (keymod.0 & SDL_KMOD_CTRL.0) != 0,
+        alt: (keymod.0 & SDL_KMOD_ALT.0) != 0,
+        gui: (keymod.0 & SDL_KMOD_GUI.0) != 0,
+    }
+}
+
 fn button_name(btn: u8) -> Option<&'static str> {
     match btn {
         1 => Some("left"),
@@ -1319,5 +1318,22 @@ fn button_name(btn: u8) -> Option<&'static str> {
         4 => Some("x1"),
         5 => Some("x2"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modifiers_from_keymod_reads_combined_modifier_bits() {
+        let mods = modifiers_from_keymod(SDL_Keymod(
+            SDL_KMOD_CTRL.0 | SDL_KMOD_SHIFT.0 | SDL_KMOD_GUI.0,
+        ));
+
+        assert!(mods.ctrl);
+        assert!(mods.shift);
+        assert!(mods.gui);
+        assert!(!mods.alt);
     }
 }

@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.4] - 2026-07-25 - Shortcut reliability.
+
+* Fixed intermittent document copy failures by merging SDL key-event modifiers with the live modifier state before resolving shortcuts.
+
 ## [2.15.3] - 2026-07-24 - Nano Anvil LSP support.
 
 * Nano Anvil now keeps LSP enabled in its single-file profile, matching Lite Anvil's language-server behavior while still omitting project-oriented panels.
