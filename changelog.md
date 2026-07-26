@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.5] - 2026-07-26 - Recent-file error popup.
+
+* Opening a missing recent item now shows the existing popup-style error instead of failing silently.
+
 ## [2.15.4] - 2026-07-25 - Shortcut reliability.
 
 * Fixed intermittent document copy failures by merging SDL key-event modifiers with the live modifier state before resolving shortcuts.

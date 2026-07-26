@@ -3194,6 +3194,11 @@ pub fn run(
                                                         .unwrap_or_default(),
                                                 );
                                             }
+                                        } else {
+                                            info_message = Some((
+                                                format!("Recent item no longer exists: {path}"),
+                                                Instant::now(),
+                                            ));
                                         }
                                     }
                                     CmdViewMode::SaveAs => {
