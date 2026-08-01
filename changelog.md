@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.6] - 2026-08-01 - Tabbed-line cursor alignment.
+
+* Fixed cursor and click positioning after tabs split across syntax-highlighted runs, so the final character on tabbed lines remains reachable and editable.
+
 ## [2.15.5] - 2026-07-26 - Recent-file error popup.
 
 * Opening a missing recent item now shows the existing popup-style error instead of failing silently.

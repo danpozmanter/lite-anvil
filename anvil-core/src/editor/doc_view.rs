@@ -228,6 +228,23 @@ fn build_row_col_x(
     col_x
 }
 
+/// Draw syntax-colored token runs while keeping tabs aligned to the visual
+/// row, even when highlighting splits the text into several draw calls.
+fn draw_token_runs(
+    ctx: &mut dyn DrawContext,
+    font: u64,
+    tokens: &[RenderToken],
+    x: f64,
+    y: f64,
+) -> f64 {
+    let row_x = x;
+    let mut tx = x;
+    for token in tokens {
+        tx = ctx.draw_text_with_tab_offset(font, &token.text, tx, y, token.color, tx - row_x);
+    }
+    tx
+}
+
 impl DocView {
     /// Rendered pixel offset of buffer column `buffer_col` within visual row
     /// `row_idx`, served from the per-row cache and built on first use. The
@@ -564,46 +581,68 @@ impl DocView {
             }
 
             // Tokens
-            let mut tx = text_x + style.padding_x - self.scroll_x;
-            for token in &line.tokens {
-                let adv = ctx.draw_text(style.code_font, &token.text, tx, text_y, token.color);
-                tx = adv;
-            }
+            draw_token_runs(
+                ctx,
+                style.code_font,
+                &line.tokens,
+                text_x + style.padding_x - self.scroll_x,
+                text_y,
+            );
 
             // Whitespace markers
             if self.show_whitespace {
                 let ws_color = style.guide_color();
-                let space_w = ctx.font_width(style.code_font, " ");
-                let mut wx = text_x + style.padding_x - self.scroll_x;
+                let marker_x = text_x + style.padding_x - self.scroll_x;
+                let mut marker_w = 0.0f32;
+                let mut marker_tab_w = None;
+                let mut marker_buf = [0u8; 4];
                 for tok in &line.tokens {
                     if tok.is_inlay {
-                        wx += ctx.font_width(style.code_font, &tok.text);
+                        for ch in tok.text.chars() {
+                            marker_w += char_pixel_advance(
+                                &*ctx,
+                                style.code_font,
+                                &mut marker_tab_w,
+                                marker_w,
+                                ch,
+                                &mut marker_buf,
+                            );
+                        }
                         continue;
                     }
                     for ch in tok.text.chars() {
+                        let wx = marker_x + marker_w as f64;
+                        let advance = char_pixel_advance(
+                            &*ctx,
+                            style.code_font,
+                            &mut marker_tab_w,
+                            marker_w,
+                            ch,
+                            &mut marker_buf,
+                        );
                         match ch {
                             ' ' => {
                                 let dot_y = text_y + style.code_font_height / 2.0 - 1.0;
-                                ctx.draw_rect(wx + space_w / 2.0 - 1.0, dot_y, 2.0, 2.0, ws_color);
-                                wx += space_w;
+                                ctx.draw_rect(
+                                    wx + advance as f64 / 2.0 - 1.0,
+                                    dot_y,
+                                    2.0,
+                                    2.0,
+                                    ws_color,
+                                );
                             }
                             '\t' => {
-                                let tab_w = space_w * self.indent_size as f64;
                                 ctx.draw_text(style.code_font, ">", wx, text_y, ws_color);
-                                wx += tab_w;
                             }
                             '\r' => {
                                 ctx.draw_text(style.code_font, "\\r", wx, text_y, ws_color);
-                                wx += ctx.font_width(style.code_font, "\\r");
                             }
                             '\n' => {
                                 ctx.draw_text(style.code_font, "\\n", wx, text_y, ws_color);
                             }
-                            _ => {
-                                let cw = ctx.font_width(style.code_font, &ch.to_string());
-                                wx += cw;
-                            }
+                            _ => {}
                         }
+                        marker_w += advance;
                     }
                 }
                 // Newline marker only after the final visual row of a line.
@@ -611,7 +650,13 @@ impl DocView {
                     .get(i + 1)
                     .is_none_or(|n| n.line_number != line.line_number);
                 if is_last_row_for_line {
-                    ctx.draw_text(style.code_font, "\\n", wx, text_y, ws_color);
+                    ctx.draw_text(
+                        style.code_font,
+                        "\\n",
+                        marker_x + marker_w as f64,
+                        text_y,
+                        ws_color,
+                    );
                 }
             }
         }
@@ -726,7 +771,7 @@ impl DocView {
                     for line in lines {
                         let mut w = 0.0_f64;
                         for token in &line.tokens {
-                            w += ctx.font_width(style.code_font, &token.text);
+                            w += ctx.font_width_with_tab_offset(style.code_font, &token.text, w);
                         }
                         if w > max_line_w {
                             max_line_w = w;
@@ -778,12 +823,108 @@ impl View for DocView {
 #[cfg(all(test, feature = "sdl"))]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    struct TabDrawContext {
+        tab_offsets: Vec<f64>,
+    }
+
+    impl TabDrawContext {
+        fn text_width(text: &str, tab_offset: f64) -> f64 {
+            let mut width = 0.0;
+            for ch in text.chars() {
+                if ch == '\t' {
+                    let remainder = (width + tab_offset) % 4.0;
+                    width += if remainder == 0.0 {
+                        4.0
+                    } else {
+                        4.0 - remainder
+                    };
+                } else {
+                    width += 1.0;
+                }
+            }
+            width
+        }
+    }
+
+    impl DrawContext for TabDrawContext {
+        fn draw_rect(&mut self, _: f64, _: f64, _: f64, _: f64, _: [u8; 4]) {}
+
+        fn draw_text(&mut self, _: u64, text: &str, x: f64, _: f64, _: [u8; 4]) -> f64 {
+            x + Self::text_width(text, 0.0)
+        }
+
+        fn draw_text_with_tab_offset(
+            &mut self,
+            _: u64,
+            text: &str,
+            x: f64,
+            _: f64,
+            _: [u8; 4],
+            tab_offset: f64,
+        ) -> f64 {
+            self.tab_offsets.push(tab_offset);
+            x + Self::text_width(text, tab_offset)
+        }
+
+        fn set_clip_rect(&mut self, _: f64, _: f64, _: f64, _: f64) {}
+
+        fn font_height(&self, _: u64) -> f64 {
+            1.0
+        }
+
+        fn font_width(&self, _: u64, text: &str) -> f64 {
+            Self::text_width(text, 0.0)
+        }
+
+        fn font_width_with_tab_offset(&self, _: u64, text: &str, tab_offset: f64) -> f64 {
+            Self::text_width(text, tab_offset)
+        }
+
+        fn draw_image(&mut self, _: &Arc<Vec<u8>>, _: i32, _: i32, _: f64, _: f64) {}
+    }
+
     #[test]
     fn doc_view_defaults() {
         let v = DocView::new();
         assert_eq!(v.name(), "Document");
         assert!(v.focusable());
         assert!(v.buffer_id.is_none());
+    }
+
+    #[test]
+    fn tokenized_tab_line_draws_to_same_boundary_as_cursor_geometry() {
+        let tokens = vec![
+            RenderToken {
+                text: "sys".to_string(),
+                color: [0; 4],
+                is_inlay: false,
+            },
+            RenderToken {
+                text: "\t".to_string(),
+                color: [1; 4],
+                is_inlay: false,
+            },
+            RenderToken {
+                text: "0m0.001s".to_string(),
+                color: [2; 4],
+                is_inlay: false,
+            },
+        ];
+        let mut ctx = TabDrawContext {
+            tab_offsets: Vec::new(),
+        };
+
+        let drawn_end = draw_token_runs(&mut ctx, 0, &tokens, 0.0, 0.0);
+        let mut tab_w = None;
+        let cursor_end = *build_row_col_x(&ctx, 0, &mut tab_w, &tokens)
+            .last()
+            .unwrap();
+
+        assert_eq!(drawn_end, 12.0);
+        assert_eq!(drawn_end, cursor_end);
+        assert_eq!(ctx.tab_offsets, vec![0.0, 3.0, 4.0]);
     }
 
     use crate::editor::open_doc::TokenCache;
@@ -1293,7 +1434,6 @@ pub(crate) fn click_to_doc_pos(
     style: &StyleContext,
     draw_ctx: &mut crate::editor::draw_context::NativeDrawContext,
 ) -> (usize, usize) {
-    use crate::editor::view::DrawContext as _;
     let rect = dv.rect();
     // Clicked visual row relative to the first rendered row.
     let first_logical = cached.first().map(|l| l.line_number as f64).unwrap_or(1.0);
@@ -1317,22 +1457,39 @@ pub(crate) fn click_to_doc_pos(
             // side. This keeps cursor placement aligned with real text
             // even when type-hint overlays are visible.
             let mut col = 0usize;
-            let mut cx = text_x_start;
+            let mut row_w = 0.0f32;
+            let mut tab_w = None;
+            let mut buf = [0u8; 4];
             'walk: for tok in &line.tokens {
                 if tok.is_inlay {
-                    let w = draw_ctx.font_width(style.code_font, &tok.text);
-                    if x < cx + w {
+                    for ch in tok.text.chars() {
+                        row_w += char_pixel_advance(
+                            draw_ctx,
+                            style.code_font,
+                            &mut tab_w,
+                            row_w,
+                            ch,
+                            &mut buf,
+                        );
+                    }
+                    if x < text_x_start + row_w as f64 {
                         break 'walk;
                     }
-                    cx += w;
                     continue;
                 }
                 for ch in tok.text.chars() {
-                    let cw = draw_ctx.font_width(style.code_font, &ch.to_string());
-                    if cx + cw / 2.0 > x {
+                    let advance = char_pixel_advance(
+                        draw_ctx,
+                        style.code_font,
+                        &mut tab_w,
+                        row_w,
+                        ch,
+                        &mut buf,
+                    );
+                    if text_x_start + (row_w + advance / 2.0) as f64 > x {
                         break 'walk;
                     }
-                    cx += cw;
+                    row_w += advance;
                     col += 1;
                 }
             }
@@ -1351,13 +1508,16 @@ pub(crate) fn click_to_doc_pos(
             let line_idx = click_line.min(b.lines.len()).max(1);
             let text = b.lines[line_idx - 1].trim_end_matches('\n');
             let mut col = 1usize;
-            let mut cx = text_x_start;
+            let mut row_w = 0.0f32;
+            let mut tab_w = None;
+            let mut buf = [0u8; 4];
             for ch in text.chars() {
-                let cw = draw_ctx.font_width(style.code_font, &ch.to_string());
-                if cx + cw / 2.0 > x {
+                let advance =
+                    char_pixel_advance(draw_ctx, style.code_font, &mut tab_w, row_w, ch, &mut buf);
+                if text_x_start + (row_w + advance / 2.0) as f64 > x {
                     break;
                 }
-                cx += cw;
+                row_w += advance;
                 col += 1;
             }
             Ok(col)

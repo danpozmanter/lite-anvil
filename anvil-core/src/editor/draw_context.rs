@@ -63,6 +63,18 @@ impl DrawContext for NativeDrawContext {
     }
 
     fn draw_text(&mut self, font_id: u64, text: &str, x: f64, y: f64, color: [u8; 4]) -> f64 {
+        self.draw_text_with_tab_offset(font_id, text, x, y, color, 0.0)
+    }
+
+    fn draw_text_with_tab_offset(
+        &mut self,
+        font_id: u64,
+        text: &str,
+        x: f64,
+        y: f64,
+        color: [u8; 4],
+        tab_offset: f64,
+    ) -> f64 {
         let Some(fonts) = self.get_font(font_id) else {
             return x;
         };
@@ -81,7 +93,7 @@ impl DrawContext for NativeDrawContext {
                     b: color[2],
                     a: color[3],
                 },
-                0.0,
+                tab_offset as f32,
             ) as f64;
         });
         result_x
@@ -109,6 +121,13 @@ impl DrawContext for NativeDrawContext {
         self.get_font(font_id)
             .filter(|fonts| !fonts.is_empty())
             .map(|fonts| crate::renderer::group_text_width(fonts, text, 0.0) as f64)
+            .unwrap_or(0.0)
+    }
+
+    fn font_width_with_tab_offset(&self, font_id: u64, text: &str, tab_offset: f64) -> f64 {
+        self.get_font(font_id)
+            .filter(|fonts| !fonts.is_empty())
+            .map(|fonts| crate::renderer::group_text_width(fonts, text, tab_offset as f32) as f64)
             .unwrap_or(0.0)
     }
 

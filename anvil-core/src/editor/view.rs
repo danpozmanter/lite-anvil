@@ -8,12 +8,28 @@ pub trait DrawContext {
     fn draw_rect(&mut self, x: f64, y: f64, w: f64, h: f64, color: [u8; 4]);
     /// Draw text. Returns the x-advance.
     fn draw_text(&mut self, font_id: u64, text: &str, x: f64, y: f64, color: [u8; 4]) -> f64;
+    /// Draw text with tabs aligned relative to an earlier row origin.
+    fn draw_text_with_tab_offset(
+        &mut self,
+        font_id: u64,
+        text: &str,
+        x: f64,
+        y: f64,
+        color: [u8; 4],
+        _tab_offset: f64,
+    ) -> f64 {
+        self.draw_text(font_id, text, x, y, color)
+    }
     /// Set the clip rectangle.
     fn set_clip_rect(&mut self, x: f64, y: f64, w: f64, h: f64);
     /// Get font height.
     fn font_height(&self, font_id: u64) -> f64;
     /// Get text width.
     fn font_width(&self, font_id: u64, text: &str) -> f64;
+    /// Get text width with tabs aligned relative to an earlier row origin.
+    fn font_width_with_tab_offset(&self, font_id: u64, text: &str, _tab_offset: f64) -> f64 {
+        self.font_width(font_id, text)
+    }
     /// Draw an RGBA image at the given position.
     fn draw_image(
         &mut self,
