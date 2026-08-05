@@ -493,6 +493,7 @@ fn draw_block(
     y: f64,
     max_x: f64,
     style: &StyleContext,
+    pane_clip: Rect,
     code_tokens: Option<&Vec<Vec<crate::editor::tokenizer::Token>>>,
     link_regions: &mut Vec<LinkRegion>,
     checkbox_regions: &mut Vec<CheckboxRegion>,
@@ -627,6 +628,7 @@ fn draw_block(
                     cur_y,
                     max_x,
                     style,
+                    pane_clip,
                     None,
                     link_regions,
                     checkbox_regions,
@@ -651,6 +653,7 @@ fn draw_block(
             y,
             max_x,
             style,
+            pane_clip,
             link_regions,
             checkbox_regions,
             depth,
@@ -668,6 +671,7 @@ fn draw_block(
             y,
             max_x,
             style,
+            pane_clip,
             link_regions,
         ),
     }
@@ -683,6 +687,7 @@ fn draw_list(
     y: f64,
     max_x: f64,
     style: &StyleContext,
+    pane_clip: Rect,
     link_regions: &mut Vec<LinkRegion>,
     checkbox_regions: &mut Vec<CheckboxRegion>,
     depth: usize,
@@ -782,6 +787,7 @@ fn draw_list(
                 cur_y,
                 max_x,
                 style,
+                pane_clip,
                 None,
                 link_regions,
                 checkbox_regions,
@@ -803,6 +809,7 @@ fn draw_table(
     y: f64,
     max_x: f64,
     style: &StyleContext,
+    pane_clip: Rect,
     link_regions: &mut Vec<LinkRegion>,
 ) {
     let n_cols = alignments.len().max(head.len()).max(1);
@@ -835,8 +842,10 @@ fn draw_table(
             body,
             lh,
             style,
+            pane_clip,
             link_regions,
         );
+        restore_pane_clip(ctx, pane_clip);
         cur_y += h;
         ctx.draw_rect(x, cur_y, total_w, 1.0, divider);
         cur_y += 1.0;
@@ -855,8 +864,10 @@ fn draw_table(
             body,
             lh,
             style,
+            pane_clip,
             link_regions,
         );
+        restore_pane_clip(ctx, pane_clip);
         cur_y += h;
         ctx.draw_rect(x, cur_y, total_w, 1.0, divider);
         cur_y += 1.0;
@@ -902,13 +913,17 @@ fn draw_table_row(
     body: u64,
     lh: f64,
     style: &StyleContext,
+    pane_clip: Rect,
     link_regions: &mut Vec<LinkRegion>,
 ) {
     for i in 0..n_cols {
         let cx = x + col_w * i as f64;
         if let Some(cell) = cells.get(i) {
-            // Clip so long content can't spill into the next column.
-            ctx.set_clip_rect(
+            // Clip so long content can't spill into the next column, while
+            // still respecting the preview pane bounds.
+            set_intersected_clip_rect(
+                ctx,
+                pane_clip,
                 cx + TABLE_CELL_PAD,
                 y,
                 (col_w - TABLE_CELL_PAD * 2.0).max(0.0),
@@ -930,9 +945,27 @@ fn draw_table_row(
         }
     }
     // Note: the per-cell clip is not reset here. The outer `draw` loop
-    // re-applies the preview pane clip after every block, so any narrow
-    // clip left behind by this function is harmless — the next block
-    // always starts fresh.
+    // re-applies the preview pane clip after every block, and `draw_table`
+    // restores it between rows before drawing row dividers.
+}
+
+fn set_intersected_clip_rect(
+    ctx: &mut dyn DrawContext,
+    pane_clip: Rect,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) {
+    let x1 = x.max(pane_clip.x);
+    let y1 = y.max(pane_clip.y);
+    let x2 = (x + w).min(pane_clip.x + pane_clip.w);
+    let y2 = (y + h).min(pane_clip.y + pane_clip.h);
+    ctx.set_clip_rect(x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0));
+}
+
+fn restore_pane_clip(ctx: &mut dyn DrawContext, pane_clip: Rect) {
+    ctx.set_clip_rect(pane_clip.x, pane_clip.y, pane_clip.w, pane_clip.h);
 }
 
 // ── Top-level draw + URL helpers ─────────────────────────────────────────
@@ -984,7 +1017,13 @@ pub fn draw(
     let base_y = py - scroll_y_snap;
 
     // Clip content to the preview rect.
-    ctx.set_clip_rect(px, py, pw, ph);
+    let pane_clip = Rect {
+        x: px,
+        y: py,
+        w: pw,
+        h: ph,
+    };
+    restore_pane_clip(ctx, pane_clip);
     for (i, blk) in state.blocks.iter().enumerate() {
         let Some(entry) = state.layout.get(i) else {
             continue;
@@ -1004,6 +1043,7 @@ pub fn draw(
             sy,
             inner_max_x,
             style,
+            pane_clip,
             tokens,
             &mut state.link_regions,
             &mut state.checkbox_regions,
@@ -1014,7 +1054,7 @@ pub fn draw(
         // protection), and without this the next block would render into
         // a tiny stale rect and silently disappear. This is specifically
         // what was cutting off content after the first table in README.md.
-        ctx.set_clip_rect(px, py, pw, ph);
+        restore_pane_clip(ctx, pane_clip);
     }
 }
 

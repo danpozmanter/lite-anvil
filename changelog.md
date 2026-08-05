@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.7] - 2026-08-05 - Markdown preview bounds.
+
+* Fixed markdown preview table rendering so scrolled content stays within the preview pane bounds.
+
 ## [2.15.6] - 2026-08-01 - Tabbed-line cursor alignment.
 
 * Fixed cursor and click positioning after tabs split across syntax-highlighted runs, so the final character on tabbed lines remains reachable and editable.
