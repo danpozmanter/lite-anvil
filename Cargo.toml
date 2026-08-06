@@ -3,7 +3,7 @@ members = ["anvil-core", "lite-anvil", "nano-anvil", "note-anvil"]
 resolver = "2"
 
 [workspace.package]
-version = "2.15.7"
+version = "2.15.8"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"

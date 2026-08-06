@@ -14303,15 +14303,39 @@ fn execute_lsp_code_action(
 }
 
 /// Apply a list of LSP `TextEdit`s to a buffer as one undoable change.
-/// Edits are applied last-position-first so earlier offsets stay valid.
+/// Edits are spliced last-position-first so earlier offsets stay valid.
 /// LSP positions are 0-based; character is treated as a char column to match
 /// the rest of this editor's LSP handling. Returns true if any edit applied.
+///
+/// A position addresses the document rather than a line, so a line index at
+/// or past the last line denotes the end of the document - the range a server
+/// sends for a whole-document format when the text ends with a newline, whose
+/// final line belongs inside the replacement.
 fn apply_lsp_text_edits(
     state: &mut crate::editor::buffer::BufferState,
     edits: &[serde_json::Value],
 ) -> bool {
-    use crate::editor::buffer::{self, EditRecord};
-    let mut parsed: Vec<(usize, usize, usize, usize, String)> = Vec::new();
+    use crate::editor::buffer;
+    let text: String = state.lines.concat();
+    let mut line_starts: Vec<usize> = Vec::with_capacity(state.lines.len());
+    let mut offset = 0usize;
+    for line in &state.lines {
+        line_starts.push(offset);
+        offset += line.len();
+    }
+    let doc_end = text.len();
+    let byte_at = |line: usize, character: usize| -> usize {
+        let Some(start) = line_starts.get(line) else {
+            return doc_end;
+        };
+        let content = &state.lines[line];
+        let within = content
+            .char_indices()
+            .nth(character)
+            .map_or(content.len(), |(byte, _)| byte);
+        start + within
+    };
+    let mut parsed: Vec<(usize, usize, String)> = Vec::new();
     for e in edits {
         let range = e.get("range");
         let pos = |key: &str, field: &str| -> usize {
@@ -14319,49 +14343,32 @@ fn apply_lsp_text_edits(
                 .and_then(|r| r.get(key))
                 .and_then(|p| p.get(field))
                 .and_then(|v| v.as_i64())
-                .unwrap_or(0) as usize
-                + 1
+                .unwrap_or(0)
+                .max(0) as usize
         };
         let new_text = e
             .get("newText")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        parsed.push((
-            pos("start", "line"),
-            pos("start", "character"),
-            pos("end", "line"),
-            pos("end", "character"),
-            new_text,
-        ));
+        let start = byte_at(pos("start", "line"), pos("start", "character"));
+        let end = byte_at(pos("end", "line"), pos("end", "character")).max(start);
+        parsed.push((start, end, new_text));
     }
     if parsed.is_empty() {
         return false;
     }
-    parsed.sort_by_key(|e| std::cmp::Reverse((e.0, e.1)));
+    parsed.sort_by_key(|e| std::cmp::Reverse(e.0));
     buffer::push_undo(state);
-    for (sl, sc, el, ec, nt) in parsed {
-        let remove = EditRecord {
-            kind: b'r',
-            line1: sl,
-            col1: sc,
-            line2: el,
-            col2: ec,
-            text: String::new(),
-        };
-        let _ = buffer::apply_single_edit(&mut state.lines, &mut state.selections, &remove);
-        if !nt.is_empty() {
-            let insert = EditRecord {
-                kind: b'i',
-                line1: sl,
-                col1: sc,
-                line2: sl,
-                col2: sc,
-                text: nt,
-            };
-            let _ = buffer::apply_single_edit(&mut state.lines, &mut state.selections, &insert);
-        }
+    let mut text = text;
+    for (start, end, new_text) in parsed {
+        text.replace_range(start..end, &new_text);
     }
+    state.lines = text.split_inclusive('\n').map(str::to_string).collect();
+    if state.lines.is_empty() {
+        state.lines.push(String::new());
+    }
+    buffer::sanitize_selections(&state.lines, &mut state.selections);
     state.total_bytes = state.lines.iter().map(|l| l.len() as u64).sum();
     true
 }
@@ -15790,10 +15797,62 @@ mod diagnostic_hover_tests {
 #[cfg(all(test, feature = "sdl"))]
 mod lsp_code_action_tests {
     use super::{
-        apply_lsp_workspace_edit, code_action_command, code_action_disabled_reason,
-        code_action_picker_row_at_width, collect_lsp_code_actions, path_to_uri,
+        apply_lsp_text_edits, apply_lsp_workspace_edit, code_action_command,
+        code_action_disabled_reason, code_action_picker_row_at_width, collect_lsp_code_actions,
+        path_to_uri,
     };
     use crate::editor::style_ctx::StyleContext;
+
+    fn buffer_with(text: &str) -> crate::editor::buffer::BufferState {
+        let mut state = crate::editor::buffer::default_buffer_state();
+        state.lines = text.split_inclusive('\n').map(str::to_string).collect();
+        if state.lines.is_empty() {
+            state.lines.push(String::new());
+        }
+        state
+    }
+
+    #[test]
+    fn whole_document_edit_replaces_the_final_line() {
+        // The end position a server sends for a full-document format of text
+        // that ends with a newline: line == line count, character 0.
+        let mut state = buffer_with("for n in 0..2 {\n        println!(\"{}\", n)\n}\n");
+        let edits = vec![serde_json::json!({
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 3, "character": 0 }
+            },
+            "newText": "for n in 0..2 {\n    println!(\"{}\", n)\n}\n"
+        })];
+        assert!(apply_lsp_text_edits(&mut state, &edits));
+        assert_eq!(
+            state.lines.concat(),
+            "for n in 0..2 {\n    println!(\"{}\", n)\n}\n"
+        );
+    }
+
+    #[test]
+    fn multiple_edits_apply_from_the_end_backwards() {
+        let mut state = buffer_with("alpha\nbeta\ngamma\n");
+        let edits = vec![
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 5 }
+                },
+                "newText": "one"
+            }),
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 2, "character": 0 },
+                    "end": { "line": 2, "character": 5 }
+                },
+                "newText": "three"
+            }),
+        ];
+        assert!(apply_lsp_text_edits(&mut state, &edits));
+        assert_eq!(state.lines.concat(), "one\nbeta\nthree\n");
+    }
 
     fn temp_source(name: &str, source: &str) -> String {
         let unique = format!(

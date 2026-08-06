@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.8] - 2026-08-06 - Whole-document formatting edits.
+
+* Fixed format-on-save dropping the last line from a language server's whole-document edit, which left a stray closing brace after the reformatted text.
+
 ## [2.15.7] - 2026-08-05 - Markdown preview bounds.
 
 * Fixed markdown preview table rendering so scrolled content stays within the preview pane bounds.
