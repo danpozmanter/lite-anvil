@@ -45,8 +45,9 @@ fn use_git() -> bool {
     !is_single_file()
 }
 
-pub(crate) fn can_open_another_tab(current: usize) -> bool {
-    MAX_OPEN_TABS.with(|limit| current < limit.get())
+pub(crate) fn can_open_another_tab(_current: usize) -> bool {
+    // The open tab limit has been removed; any number of tabs may be open.
+    true
 }
 
 pub(crate) fn hard_file_limit_mb() -> u32 {

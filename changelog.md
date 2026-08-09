@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.15.9] - 2026-08-07 - Open tab limit removed.
+
+* The fixed cap on simultaneously open tabs has been removed.
+
 ## [2.15.8] - 2026-08-06 - Whole-document formatting edits.
 
 * Fixed format-on-save dropping the last line from a language server's whole-document edit, which left a stray closing brace after the reformatted text.
