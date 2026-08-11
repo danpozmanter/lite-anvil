@@ -1,5 +1,12 @@
 # Change Log
 
+## [2.15.10] - 2026-08-08 - Markdown preview scrolling.
+
+* The markdown preview pane scrolls both ways: draggable scrollbars, click-to-jump tracks, and the mouse wheel (shift for sideways).
+* Clicking the preview focuses it for arrow, page, home, and end scrolling; the split divider takes the accent color while it holds focus, and Escape or a click in the editor hands focus back.
+* The focused preview stays read-only - typing and editing keys never reach the document.
+* Wide code blocks and table columns now scroll into view instead of being clipped, and the horizontal scrollbar appears only for content that cannot wrap.
+
 ## [2.15.9] - 2026-08-07 - Open tab limit removed.
 
 * The fixed cap on simultaneously open tabs has been removed.

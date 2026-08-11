@@ -1064,6 +1064,12 @@ pub fn run(
     let mut terminal_sb_drag_offset: f64 = 0.0;
     let mut sidebar_sb_dragging = false;
     let mut sidebar_sb_drag_offset: f64 = 0.0;
+    // Markdown preview scrollbar drags, one flag per axis, with the same
+    // grip-anchored offset the editor scrollbar uses.
+    let mut preview_sb_v_dragging = false;
+    let mut preview_sb_v_drag_offset: f64 = 0.0;
+    let mut preview_sb_h_dragging = false;
+    let mut preview_sb_h_drag_offset: f64 = 0.0;
     let mut editor_mouse_down = false;
     // Last (buffer, selection range) mirrored into the X11 PRIMARY selection.
     // Keyed so a non-empty selection is pushed once per change rather than
@@ -5409,6 +5415,30 @@ pub fn run(
                         }
                     }
 
+                    // Markdown preview keyboard scrolling. While the pane
+                    // holds focus the navigation keys scroll it, Escape hands
+                    // focus back to the editor, and the keys that would type
+                    // or erase are swallowed so the pane stays read-only.
+                    if let Some(doc) = docs.get_mut(active_tab)
+                        && doc.preview.enabled
+                        && doc.preview.focused
+                    {
+                        if key == "escape" {
+                            doc.preview.focused = false;
+                            redraw = true;
+                            continue;
+                        }
+                        if crate::editor::markdown_preview::scroll_key(
+                            &mut doc.preview,
+                            key,
+                            &style,
+                        ) || crate::editor::markdown_preview::swallows_edit_key(key, &mods)
+                        {
+                            redraw = true;
+                            continue;
+                        }
+                    }
+
                     if let Some(cmds) = keymap.on_key_pressed(key, mods) {
                         for cmd in Vec::from(cmds) {
                             {
@@ -5660,6 +5690,15 @@ pub fn run(
                         redraw = true;
                         continue;
                     }
+                    // The markdown preview is read-only: typing while it holds
+                    // focus scrolls or does nothing, never edits the source.
+                    if docs
+                        .get(active_tab)
+                        .is_some_and(|doc| doc.preview.enabled && doc.preview.focused)
+                    {
+                        redraw = true;
+                        continue;
+                    }
                     if config.large_file.read_only
                         && docs
                             .get(active_tab)
@@ -5865,6 +5904,19 @@ pub fn run(
                     // view never jumps unexpectedly.
                     if let Some(doc) = docs.get_mut(active_tab) {
                         doc.view.target_scroll_y = doc.view.scroll_y;
+                        // Keyboard focus follows the click: inside the preview
+                        // pane it scrolls with the navigation keys, anywhere
+                        // else (the editor, sidebar, tabs) returns to editing.
+                        if doc.preview.enabled {
+                            // The content rect excludes the split divider, so
+                            // dragging the divider doesn't steal focus.
+                            let pr = doc.preview.content_rect;
+                            doc.preview.focused = pr.w > 0.0
+                                && *x >= pr.x
+                                && *x < pr.x + pr.w
+                                && *y >= pr.y
+                                && *y < pr.y + pr.h;
+                        }
                     }
                     if *button == MouseButton::Left {
                         let contains = |rect: crate::editor::types::Rect| {
@@ -7301,7 +7353,55 @@ pub fn run(
                                 && *y >= pr.y
                                 && *y < pr.y + pr.h
                             {
-                                // Checkbox first.
+                                // Scrollbars first: they sit on top of the
+                                // content, so a click there is never a
+                                // checkbox or link click. A press on the
+                                // thumb grabs it; a press on the empty track
+                                // centers the thumb under the cursor and then
+                                // grabs, matching the editor scrollbar.
+                                let v_bar = crate::editor::markdown_preview::vertical_scrollbar(
+                                    &doc.preview,
+                                    &style,
+                                );
+                                let h_bar = crate::editor::markdown_preview::horizontal_scrollbar(
+                                    &doc.preview,
+                                    &style,
+                                );
+                                if let Some(bar) = v_bar
+                                    && bar.track_contains(*x, *y)
+                                {
+                                    if bar.thumb_contains(*x, *y) {
+                                        preview_sb_v_drag_offset = *y - bar.thumb.y;
+                                    } else {
+                                        preview_sb_v_drag_offset = bar.thumb.h / 2.0;
+                                        crate::editor::markdown_preview::scroll_to_thumb_top(
+                                            &mut doc.preview,
+                                            &style,
+                                            *y - bar.thumb.h / 2.0,
+                                        );
+                                    }
+                                    preview_sb_v_dragging = true;
+                                    redraw = true;
+                                    continue;
+                                }
+                                if let Some(bar) = h_bar
+                                    && bar.track_contains(*x, *y)
+                                {
+                                    if bar.thumb_contains(*x, *y) {
+                                        preview_sb_h_drag_offset = *x - bar.thumb.x;
+                                    } else {
+                                        preview_sb_h_drag_offset = bar.thumb.w / 2.0;
+                                        crate::editor::markdown_preview::scroll_to_thumb_left(
+                                            &mut doc.preview,
+                                            &style,
+                                            *x - bar.thumb.w / 2.0,
+                                        );
+                                    }
+                                    preview_sb_h_dragging = true;
+                                    redraw = true;
+                                    continue;
+                                }
+                                // Checkbox next.
                                 let cb = doc
                                     .preview
                                     .checkbox_regions
@@ -7774,6 +7874,29 @@ pub fn run(
                         }
                         continue;
                     }
+                    // Markdown preview scrollbar drags. Same grip model as the
+                    // editor: the point the thumb was grabbed at stays under
+                    // the cursor.
+                    if preview_sb_v_dragging || preview_sb_h_dragging {
+                        if let Some(doc) = docs.get_mut(active_tab) {
+                            if preview_sb_v_dragging {
+                                crate::editor::markdown_preview::scroll_to_thumb_top(
+                                    &mut doc.preview,
+                                    &style,
+                                    *y - preview_sb_v_drag_offset,
+                                );
+                            } else {
+                                crate::editor::markdown_preview::scroll_to_thumb_left(
+                                    &mut doc.preview,
+                                    &style,
+                                    *x - preview_sb_h_drag_offset,
+                                );
+                            }
+                            redraw = true;
+                        }
+                        continue;
+                    }
+
                     // Editor scrollbar drag: move the thumb so its grabbed
                     // point stays under the cursor, then derive scroll.
                     if editor_sb_dragging {
@@ -8169,6 +8292,8 @@ pub fn run(
                     editor_sb_dragging = false;
                     terminal_sb_dragging = false;
                     sidebar_sb_dragging = false;
+                    preview_sb_v_dragging = false;
+                    preview_sb_h_dragging = false;
                     // End terminal selection drag; the selection itself
                     // stays visible until dismissed by another click or
                     // the escape / copy key.
@@ -8178,9 +8303,10 @@ pub fn run(
                     redraw = true;
                     continue;
                 }
-                EditorEvent::MouseWheel { y, .. } => {
+                EditorEvent::MouseWheel { x: wheel_x, y } => {
                     let line_h = style.code_font_height * 1.2;
                     let scroll_amt = y * line_h * 3.0;
+                    let h_scroll_amt = wheel_x * line_h * 3.0;
                     // Wheel routes to the terminal panel when the cursor is over it.
                     let over_terminal = subsystems.has_terminal() && terminal.visible && {
                         let (_, wh, _, _) = crate::window::get_window_size();
@@ -8220,8 +8346,16 @@ pub fn run(
                             && mouse_x >= doc.preview.rect.x
                             && mouse_x < doc.preview.rect.x + doc.preview.rect.w;
                         if over_preview {
-                            doc.preview.target_scroll_y =
-                                (doc.preview.target_scroll_y - scroll_amt).max(0.0);
+                            // Shift turns a vertical wheel into horizontal
+                            // scrolling, the usual convention for panes with
+                            // both axes; a horizontal wheel or trackpad swipe
+                            // scrolls sideways on its own.
+                            let (dx, dy) = if shift_held {
+                                (h_scroll_amt - scroll_amt, 0.0)
+                            } else {
+                                (h_scroll_amt, -scroll_amt)
+                            };
+                            crate::editor::markdown_preview::scroll_by(&mut doc.preview, dx, dy);
                         } else {
                             let dv = &mut doc.view;
                             dv.target_scroll_y = (dv.target_scroll_y - scroll_amt).max(0.0);
@@ -9819,6 +9953,8 @@ pub fn run(
                 } else {
                     doc.view.set_rect(content_rect);
                     doc.preview.rect = crate::editor::types::Rect::default();
+                    doc.preview.content_rect = crate::editor::types::Rect::default();
+                    doc.preview.focused = false;
                 }
             }
             status_view.set_rect(crate::editor::types::Rect {
@@ -11619,14 +11755,22 @@ pub fn run(
                             doc.preview.target_scroll_y =
                                 doc.preview.target_scroll_y.clamp(0.0, max_scroll);
                             doc.preview.scroll_y = doc.preview.target_scroll_y;
-                            // Divider between editor and preview.
+                            // Divider between editor and preview. It takes the
+                            // accent colour while the preview holds keyboard
+                            // focus, so which pane the arrow keys drive is
+                            // visible at a glance.
                             use crate::editor::view::DrawContext as _;
+                            let divider_col = if doc.preview.focused {
+                                style.accent.to_array()
+                            } else {
+                                style.divider.to_array()
+                            };
                             draw_ctx.draw_rect(
                                 rect.x,
                                 rect.y,
                                 style.divider_size.max(1.0),
                                 rect.h,
-                                style.divider.to_array(),
+                                divider_col,
                             );
                             let pane_x = rect.x + style.divider_size.max(1.0);
                             let pane_w = rect.w - style.divider_size.max(1.0);

@@ -577,6 +577,8 @@ match cmd.as_str() {
             || doc.name.ends_with(".markdown");
         if is_md {
             doc.preview.enabled = !doc.preview.enabled;
+            // Keyboard focus starts (and returns) on the editor side.
+            doc.preview.focused = false;
             if doc.preview.enabled {
                 // Force a reparse + relayout on first draw.
                 doc.preview.cached_change_id = -1;
@@ -584,6 +586,7 @@ match cmd.as_str() {
                 doc.preview.layout.clear();
                 doc.preview.scroll_y = 0.0;
                 doc.preview.target_scroll_y = 0.0;
+                doc.preview.scroll_x = 0.0;
             }
         } else {
             info_message = Some((

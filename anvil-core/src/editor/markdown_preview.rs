@@ -50,8 +50,10 @@ pub struct MarkdownPreviewState {
     pub blocks: Vec<Block>,
     pub layout: Vec<LayoutEntry>,
     pub content_height: f64,
+    pub content_width: f64,
     pub scroll_y: f64,
     pub target_scroll_y: f64,
+    pub scroll_x: f64,
     pub cached_change_id: i64,
     /// Most recent buffer version observed while waiting for the user to
     /// pause typing before reparsing the full document.
@@ -63,6 +65,13 @@ pub struct MarkdownPreviewState {
     /// Rectangle this preview occupies. Refreshed each frame by the layout
     /// pass so hit-tests in the main loop know which pane a click is in.
     pub rect: Rect,
+    /// Pixel-snapped rectangle the content is actually drawn into: `rect`
+    /// minus the split divider. Written by `draw` so scrollbar hit-tests and
+    /// scroll clamping use the same geometry the last frame drew.
+    pub content_rect: Rect,
+    /// Whether the pane holds keyboard focus. A focused preview scrolls with
+    /// the navigation keys and swallows text input; it never edits.
+    pub focused: bool,
     /// Parallel to `blocks`: pre-tokenized code-block lines (one entry per
     /// line) when the block's fence lang resolves to a bundled syntax; None
     /// otherwise. Populated by the main loop after each reparse so draws
@@ -320,7 +329,7 @@ fn block_height(
             rows,
         } => {
             let n_cols = alignments.len().max(head.len()).max(1);
-            let col_w = (width / n_cols as f64).floor();
+            let col_w = table_col_width(ctx, head, rows, n_cols, width, body, style);
             let inner_cell_w = (col_w - TABLE_CELL_PAD * 2.0).max(0.0);
             let mut h = 1.0;
             if !head.is_empty() {
@@ -332,6 +341,145 @@ fn block_height(
             h
         }
     }
+}
+
+/// Width a block needs to be fully visible, measured in the same content
+/// coordinates as `block_height` (i.e. excluding the outer `PAD`). Wrapped
+/// text reflows to any width, so this only exceeds the available width for
+/// content that cannot wrap: code lines, and single words wider than their
+/// column.
+fn block_width(
+    ctx: &dyn DrawContext,
+    blk: &Block,
+    width: f64,
+    style: &StyleContext,
+    depth: usize,
+) -> f64 {
+    if depth >= MAX_RENDER_DEPTH {
+        return 0.0;
+    }
+    let body = style.font;
+    match blk {
+        Block::Rule => 0.0,
+        Block::Heading { level, inlines } => {
+            let (hfont, _) = heading_metrics(ctx, *level, style);
+            inlines_min_width(ctx, inlines, hfont, style)
+        }
+        Block::Paragraph { inlines } => inlines_min_width(ctx, inlines, body, style),
+        Block::Code { text, .. } => code_block_width(ctx, text, style),
+        Block::Quote { blocks } => {
+            let inner_w = (width - QUOTE_INDENT).max(0.0);
+            let mut max_w = 0.0_f64;
+            for sub in blocks {
+                let w = block_width(ctx, sub, inner_w, style, depth + 1);
+                if w > max_w {
+                    max_w = w;
+                }
+            }
+            QUOTE_INDENT + max_w
+        }
+        Block::List { items, .. } => {
+            let inner_w = (width - LIST_GUTTER).max(0.0);
+            let mut max_w = 0.0_f64;
+            for item in items {
+                let w = inlines_min_width(ctx, &item.spans, body, style);
+                if w > max_w {
+                    max_w = w;
+                }
+                for sub in &item.blocks {
+                    let w = block_width(ctx, sub, inner_w, style, depth + 1);
+                    if w > max_w {
+                        max_w = w;
+                    }
+                }
+            }
+            LIST_GUTTER + max_w
+        }
+        Block::Table {
+            alignments,
+            head,
+            rows,
+        } => {
+            let n_cols = alignments.len().max(head.len()).max(1);
+            n_cols as f64 * table_col_width(ctx, head, rows, n_cols, width, body, style)
+        }
+    }
+}
+
+/// Width of the widest unbreakable run in a span sequence — the narrowest
+/// column the text can wrap into. `block_width` uses it so a horizontal
+/// scrollbar appears only for content that genuinely cannot fit, not for
+/// every long paragraph.
+fn inlines_min_width(
+    ctx: &dyn DrawContext,
+    spans: &[Span],
+    base_font: u64,
+    style: &StyleContext,
+) -> f64 {
+    let code = style.code_font;
+    let mut max_w = 0.0_f64;
+    for span in spans {
+        let font = if span.code { code } else { base_font };
+        for word in span.text.split_whitespace() {
+            let w = ctx.font_width(font, word);
+            if w > max_w {
+                max_w = w;
+            }
+        }
+    }
+    max_w
+}
+
+/// Natural width of a code block: its widest line plus the panel padding on
+/// both sides. Code lines never wrap, so this is what the block needs to be
+/// read in full.
+fn code_block_width(ctx: &dyn DrawContext, text: &str, style: &StyleContext) -> f64 {
+    let pad = (style.font_height * 0.75).ceil();
+    let text_x = pad + 3.0;
+    let mut max_w = 0.0_f64;
+    for line in text.split('\n') {
+        let w = ctx.font_width(style.code_font, line);
+        if w > max_w {
+            max_w = w;
+        }
+    }
+    text_x * 2.0 + max_w
+}
+
+/// Column width for a table laid out in `avail_w` pixels. Columns split the
+/// available width evenly unless some cell holds an unbreakable run wider
+/// than that share, in which case every column widens to fit it and the
+/// table reaches past the pane for the horizontal scrollbar to expose.
+///
+/// Invariant: `block_height`, `block_width`, and `draw_table` all size
+/// columns through this function, so measured row heights match the drawn
+/// ones.
+fn table_col_width(
+    ctx: &dyn DrawContext,
+    head: &[Vec<Span>],
+    rows: &[Vec<Vec<Span>>],
+    n_cols: usize,
+    avail_w: f64,
+    body: u64,
+    style: &StyleContext,
+) -> f64 {
+    let even = (avail_w.max(0.0) / n_cols as f64).floor();
+    let mut min_cell = 0.0_f64;
+    for cell in head {
+        let w = inlines_min_width(ctx, cell, body, style);
+        if w > min_cell {
+            min_cell = w;
+        }
+    }
+    for row in rows {
+        for cell in row {
+            let w = inlines_min_width(ctx, cell, body, style);
+            if w > min_cell {
+                min_cell = w;
+            }
+        }
+    }
+    even.max((min_cell + TABLE_CELL_PAD * 2.0).ceil())
 }
 
 /// Recompute `state.layout` and `state.content_height` for `width` pixels.
@@ -351,7 +499,218 @@ pub fn compute_layout(
     }
     state.layout = layout;
     state.content_height = y + PAD;
+    // Widest block plus the outer padding, so horizontal scrolling can reach
+    // the right edge of content that cannot wrap (code lines, wide table
+    // columns, long unbreakable words). Never narrower than the pane.
+    let mut widest = 0.0_f64;
+    for blk in &state.blocks {
+        let bw = block_width(ctx, blk, inner, style, 0);
+        if bw > widest {
+            widest = bw;
+        }
+    }
+    state.content_width = (widest + PAD * 2.0).max(width);
     state.cached_width = width;
+}
+
+// ── Scrolling ────────────────────────────────────────────────────────────
+
+/// Horizontal key step, in body line heights. Line height tracks the theme's
+/// font size, so the step stays proportionate at any scale.
+const KEY_H_STEP_MUL: f64 = 2.0;
+/// Lines of the previous view kept on screen after a page scroll.
+const PAGE_OVERLAP_LINES: f64 = 1.0;
+
+/// Track and thumb rectangles of one preview scrollbar.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollbarGeometry {
+    pub track: Rect,
+    pub thumb: Rect,
+}
+
+impl ScrollbarGeometry {
+    /// Whether a point lies anywhere on the track (thumb included).
+    pub fn track_contains(&self, x: f64, y: f64) -> bool {
+        x >= self.track.x
+            && x < self.track.x + self.track.w
+            && y >= self.track.y
+            && y < self.track.y + self.track.h
+    }
+
+    /// Whether a point lies on the thumb.
+    pub fn thumb_contains(&self, x: f64, y: f64) -> bool {
+        x >= self.thumb.x
+            && x < self.thumb.x + self.thumb.w
+            && y >= self.thumb.y
+            && y < self.thumb.y + self.thumb.h
+    }
+}
+
+/// Largest valid `scroll_y` for the drawn pane.
+pub fn max_scroll_y(state: &MarkdownPreviewState) -> f64 {
+    (state.content_height - state.content_rect.h).max(0.0)
+}
+
+/// Largest valid `scroll_x` for the drawn pane.
+pub fn max_scroll_x(state: &MarkdownPreviewState) -> f64 {
+    (state.content_width - state.content_rect.w).max(0.0)
+}
+
+/// Vertical scrollbar geometry, or `None` when the content fits.
+pub fn vertical_scrollbar(
+    state: &MarkdownPreviewState,
+    style: &StyleContext,
+) -> Option<ScrollbarGeometry> {
+    let pane = state.content_rect;
+    if pane.w <= 0.0 || pane.h <= 0.0 || state.content_height <= pane.h {
+        return None;
+    }
+    let size = style.scrollbar_size;
+    let track = Rect {
+        x: pane.x + pane.w - size,
+        y: pane.y,
+        w: size,
+        h: pane.h,
+    };
+    let thumb_h = (track.h * (pane.h / state.content_height))
+        .max(size * 2.0)
+        .min(track.h);
+    let max = max_scroll_y(state);
+    let frac = if max > 0.0 {
+        (state.scroll_y / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    Some(ScrollbarGeometry {
+        track,
+        thumb: Rect {
+            x: track.x,
+            y: track.y + frac * (track.h - thumb_h),
+            w: size,
+            h: thumb_h,
+        },
+    })
+}
+
+/// Horizontal scrollbar geometry, or `None` when the content fits. The track
+/// stops short of the vertical scrollbar when both are present.
+pub fn horizontal_scrollbar(
+    state: &MarkdownPreviewState,
+    style: &StyleContext,
+) -> Option<ScrollbarGeometry> {
+    let pane = state.content_rect;
+    if pane.w <= 0.0 || pane.h <= 0.0 || state.content_width <= pane.w {
+        return None;
+    }
+    let size = style.scrollbar_size;
+    let track_w = if state.content_height > pane.h {
+        (pane.w - size).max(0.0)
+    } else {
+        pane.w
+    };
+    let track = Rect {
+        x: pane.x,
+        y: pane.y + pane.h - size,
+        w: track_w,
+        h: size,
+    };
+    let thumb_w = (track.w * (pane.w / state.content_width))
+        .max(size * 2.0)
+        .min(track.w);
+    let max = max_scroll_x(state);
+    let frac = if max > 0.0 {
+        (state.scroll_x / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    Some(ScrollbarGeometry {
+        track,
+        thumb: Rect {
+            x: track.x + frac * (track.w - thumb_w),
+            y: track.y,
+            w: thumb_w,
+            h: size,
+        },
+    })
+}
+
+/// Scroll by a pixel delta, clamped to the content extents.
+pub fn scroll_by(state: &mut MarkdownPreviewState, dx: f64, dy: f64) {
+    state.target_scroll_y = (state.target_scroll_y + dy).clamp(0.0, max_scroll_y(state));
+    state.scroll_y = state.target_scroll_y;
+    state.scroll_x = (state.scroll_x + dx).clamp(0.0, max_scroll_x(state));
+}
+
+/// Scroll so the vertical thumb's top edge lands at `thumb_top`.
+pub fn scroll_to_thumb_top(state: &mut MarkdownPreviewState, style: &StyleContext, thumb_top: f64) {
+    let Some(g) = vertical_scrollbar(state, style) else {
+        return;
+    };
+    let travel = g.track.h - g.thumb.h;
+    if travel <= 0.0 {
+        return;
+    }
+    let frac = ((thumb_top - g.track.y) / travel).clamp(0.0, 1.0);
+    state.target_scroll_y = frac * max_scroll_y(state);
+    state.scroll_y = state.target_scroll_y;
+}
+
+/// Scroll so the horizontal thumb's left edge lands at `thumb_left`.
+pub fn scroll_to_thumb_left(
+    state: &mut MarkdownPreviewState,
+    style: &StyleContext,
+    thumb_left: f64,
+) {
+    let Some(g) = horizontal_scrollbar(state, style) else {
+        return;
+    };
+    let travel = g.track.w - g.thumb.w;
+    if travel <= 0.0 {
+        return;
+    }
+    let frac = ((thumb_left - g.track.x) / travel).clamp(0.0, 1.0);
+    state.scroll_x = frac * max_scroll_x(state);
+}
+
+/// Whether a focused preview swallows this keystroke instead of letting it
+/// reach the document. The pane is read-only, so the keys that would type or
+/// erase never pass; strokes carrying ctrl/alt/gui always do, keeping save,
+/// find, and the preview toggle working while the preview holds focus.
+pub fn swallows_edit_key(key: &str, mods: &crate::editor::event::Modifiers) -> bool {
+    if mods.ctrl || mods.alt || mods.gui {
+        return false;
+    }
+    matches!(
+        key,
+        "tab" | "backspace" | "delete" | "return" | "keypad enter"
+    )
+}
+
+/// Apply a navigation key to a focused preview. Returns true when the key is
+/// a scrolling key, so the caller can keep it from reaching the document.
+pub fn scroll_key(state: &mut MarkdownPreviewState, key: &str, style: &StyleContext) -> bool {
+    let line = style.font_height.max(1.0);
+    let page = (state.content_rect.h - line * PAGE_OVERLAP_LINES).max(line);
+    let step = line * KEY_H_STEP_MUL;
+    match key {
+        "up" => scroll_by(state, 0.0, -line),
+        "down" => scroll_by(state, 0.0, line),
+        "left" => scroll_by(state, -step, 0.0),
+        "right" => scroll_by(state, step, 0.0),
+        "pageup" => scroll_by(state, 0.0, -page),
+        "pagedown" => scroll_by(state, 0.0, page),
+        "home" => {
+            state.target_scroll_y = 0.0;
+            state.scroll_y = 0.0;
+            state.scroll_x = 0.0;
+        }
+        "end" => {
+            state.target_scroll_y = max_scroll_y(state);
+            state.scroll_y = state.target_scroll_y;
+        }
+        _ => return false,
+    }
+    true
 }
 
 // ── Drawing ──────────────────────────────────────────────────────────────
@@ -566,8 +925,11 @@ fn draw_block(
             let pad = (lh * 0.75).ceil();
             let line_count = code_block_line_count(text);
             let total_h = line_count as f64 * clh + pad * 2.0;
+            // The panel spans the widest line so horizontally scrolled code
+            // keeps its background instead of running onto the page.
+            let panel_w = (max_x - x).max(code_block_width(ctx, text, style));
             // Panel background + a thin left accent bar.
-            ctx.draw_rect(x, y, max_x - x, total_h, style.background2.to_array());
+            ctx.draw_rect(x, y, panel_w, total_h, style.background2.to_array());
             ctx.draw_rect(x, y, 3.0, total_h, style.accent.to_array());
             let mut cy = y + pad;
             let text_x = x + pad + 3.0;
@@ -815,8 +1177,8 @@ fn draw_table(
     let n_cols = alignments.len().max(head.len()).max(1);
     let lh = style.font_height;
     let body = style.font;
-    let total_w = max_x - x;
-    let col_w = (total_w / n_cols as f64).floor();
+    let col_w = table_col_width(ctx, head, rows, n_cols, max_x - x, body, style);
+    let total_w = col_w * n_cols as f64;
     let inner_cell_w = (col_w - TABLE_CELL_PAD * 2.0).max(0.0);
     let divider = style.divider.to_array();
     let line_hl = style.line_highlight.to_array();
@@ -1006,14 +1368,28 @@ pub fn draw(
     state.link_regions.clear();
     state.checkbox_regions.clear();
 
-    let inner_x = px + PAD;
-    let inner_max_x = px + pw - PAD;
+    // Publish the geometry the rest of the frame's content is placed in, so
+    // scroll clamping and the main loop's scrollbar hit-tests agree with what
+    // is drawn here.
+    state.content_rect = Rect {
+        x: px,
+        y: py,
+        w: pw,
+        h: ph,
+    };
+    state.target_scroll_y = state.target_scroll_y.clamp(0.0, max_scroll_y(state));
+    state.scroll_y = state.scroll_y.clamp(0.0, max_scroll_y(state));
+    state.scroll_x = state.scroll_x.clamp(0.0, max_scroll_x(state));
+
     // Snap scroll to a whole pixel before computing block positions. The
     // lerp used by the main loop produces fractional scroll values and
     // `draw_text` truncates to i32 — without snapping, glyphs can sit
     // half a pixel above the background clear, leaving ghost rows below
     // the last legitimate line.
     let scroll_y_snap = state.scroll_y.floor();
+    let scroll_x_snap = state.scroll_x.floor();
+    let inner_x = px + PAD - scroll_x_snap;
+    let inner_max_x = px + pw - PAD - scroll_x_snap;
     let base_y = py - scroll_y_snap;
 
     // Clip content to the preview rect.
@@ -1055,6 +1431,22 @@ pub fn draw(
         // a tiny stale rect and silently disappear. This is specifically
         // what was cutting off content after the first table in README.md.
         restore_pane_clip(ctx, pane_clip);
+    }
+
+    // Scrollbars — mirror the main text panel so the preview also gets
+    // vertical and horizontal scrollbars when its content overflows the
+    // pane. Both come from the same geometry the input handlers hit-test.
+    let sb_track = style.scrollbar_track.to_array();
+    let sb_thumb = style.scrollbar.to_array();
+    for bar in [
+        vertical_scrollbar(state, style),
+        horizontal_scrollbar(state, style),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        ctx.draw_rect(bar.track.x, bar.track.y, bar.track.w, bar.track.h, sb_track);
+        ctx.draw_rect(bar.thumb.x, bar.thumb.y, bar.thumb.w, bar.thumb.h, sb_thumb);
     }
 }
 
@@ -1138,6 +1530,175 @@ fn byte_to_line_col(source: &str, byte_offset: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fixed-metrics context: every glyph is `CHAR_W` wide and every font is
+    /// `LINE_H` tall, so measurements in the tests are exact.
+    struct FixedMetrics;
+
+    const CHAR_W: f64 = 8.0;
+    const LINE_H: f64 = 16.0;
+
+    impl DrawContext for FixedMetrics {
+        fn draw_rect(&mut self, _: f64, _: f64, _: f64, _: f64, _: [u8; 4]) {}
+        fn draw_text(&mut self, _: u64, text: &str, x: f64, _: f64, _: [u8; 4]) -> f64 {
+            x + text.chars().count() as f64 * CHAR_W
+        }
+        fn set_clip_rect(&mut self, _: f64, _: f64, _: f64, _: f64) {}
+        fn font_height(&self, _: u64) -> f64 {
+            LINE_H
+        }
+        fn font_width(&self, _: u64, text: &str) -> f64 {
+            text.chars().count() as f64 * CHAR_W
+        }
+        fn draw_image(&mut self, _: &std::sync::Arc<Vec<u8>>, _: i32, _: i32, _: f64, _: f64) {}
+    }
+
+    fn test_style() -> StyleContext {
+        StyleContext {
+            font_height: LINE_H,
+            code_font_height: LINE_H,
+            h1_font_height: LINE_H,
+            h2_font_height: LINE_H,
+            h3_font_height: LINE_H,
+            scrollbar_size: 10.0,
+            ..StyleContext::default()
+        }
+    }
+
+    /// Lay out `source` in a `w` x `h` pane and return the state with a
+    /// `content_rect` matching what `draw` would publish.
+    fn laid_out(source: &str, w: f64, h: f64) -> MarkdownPreviewState {
+        let ctx = FixedMetrics;
+        let style = test_style();
+        let mut state = MarkdownPreviewState {
+            enabled: true,
+            blocks: crate::editor::markdown::parse(source),
+            ..MarkdownPreviewState::default()
+        };
+        compute_layout(&ctx, &mut state, w, &style);
+        state.content_rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h,
+        };
+        state
+    }
+
+    #[test]
+    fn wrapping_paragraph_needs_no_horizontal_scroll() {
+        let long = "word ".repeat(200);
+        let state = laid_out(&long, 400.0, 300.0);
+        assert_eq!(state.content_width, 400.0);
+        assert!(horizontal_scrollbar(&state, &test_style()).is_none());
+    }
+
+    #[test]
+    fn wide_code_block_extends_content_width() {
+        let source = format!("```\n{}\n```\n", "x".repeat(200));
+        let state = laid_out(&source, 400.0, 300.0);
+        assert!(state.content_width > 400.0);
+        let bar = horizontal_scrollbar(&state, &test_style()).expect("horizontal scrollbar");
+        assert!(bar.thumb.w > 0.0 && bar.thumb.w <= bar.track.w);
+    }
+
+    #[test]
+    fn unbreakable_table_cell_widens_the_table() {
+        let narrow = "| a | b |\n| --- | --- |\n| c | d |\n";
+        let wide = format!("| a | b |\n| --- | --- |\n| {} | d |\n", "x".repeat(120));
+        assert_eq!(laid_out(narrow, 400.0, 300.0).content_width, 400.0);
+        assert!(laid_out(&wide, 400.0, 300.0).content_width > 400.0);
+    }
+
+    #[test]
+    fn scroll_keys_move_within_bounds() {
+        let style = test_style();
+        let mut state = laid_out(&"para\n\n".repeat(200), 400.0, 300.0);
+        assert!(scroll_key(&mut state, "down", &style));
+        assert_eq!(state.scroll_y, LINE_H);
+        assert!(scroll_key(&mut state, "up", &style));
+        assert_eq!(state.scroll_y, 0.0);
+        // Already at the top: up cannot go negative.
+        assert!(scroll_key(&mut state, "up", &style));
+        assert_eq!(state.scroll_y, 0.0);
+        assert!(scroll_key(&mut state, "pagedown", &style));
+        assert_eq!(state.scroll_y, 300.0 - LINE_H);
+        assert!(scroll_key(&mut state, "end", &style));
+        assert_eq!(state.scroll_y, max_scroll_y(&state));
+        assert!(scroll_key(&mut state, "home", &style));
+        assert_eq!(state.scroll_y, 0.0);
+        assert!(!scroll_key(&mut state, "a", &style));
+    }
+
+    #[test]
+    fn horizontal_keys_stop_at_the_content_edge() {
+        let style = test_style();
+        let source = format!("```\n{}\n```\n", "x".repeat(200));
+        let mut state = laid_out(&source, 400.0, 300.0);
+        for _ in 0..500 {
+            assert!(scroll_key(&mut state, "right", &style));
+        }
+        assert_eq!(state.scroll_x, max_scroll_x(&state));
+        for _ in 0..500 {
+            assert!(scroll_key(&mut state, "left", &style));
+        }
+        assert_eq!(state.scroll_x, 0.0);
+    }
+
+    #[test]
+    fn dragging_a_thumb_to_the_track_end_scrolls_to_the_content_end() {
+        let style = test_style();
+        let mut state = laid_out(&"para\n\n".repeat(200), 400.0, 300.0);
+        let bar = vertical_scrollbar(&state, &style).expect("vertical scrollbar");
+        scroll_to_thumb_top(&mut state, &style, bar.track.y + bar.track.h);
+        assert_eq!(state.scroll_y, max_scroll_y(&state));
+        assert_eq!(state.target_scroll_y, state.scroll_y);
+        scroll_to_thumb_top(&mut state, &style, bar.track.y - 50.0);
+        assert_eq!(state.scroll_y, 0.0);
+    }
+
+    #[test]
+    fn scrollbar_thumbs_track_the_scroll_position() {
+        let style = test_style();
+        let mut state = laid_out(&"para\n\n".repeat(200), 400.0, 300.0);
+        let top = vertical_scrollbar(&state, &style).expect("vertical scrollbar");
+        assert_eq!(top.thumb.y, top.track.y);
+        scroll_by(&mut state, 0.0, f64::MAX);
+        let bottom = vertical_scrollbar(&state, &style).expect("vertical scrollbar");
+        assert_eq!(
+            bottom.thumb.y + bottom.thumb.h,
+            bottom.track.y + bottom.track.h
+        );
+    }
+
+    #[test]
+    fn horizontal_track_clears_the_vertical_scrollbar() {
+        let style = test_style();
+        let source = format!("```\n{}\n```\n{}", "x".repeat(200), "para\n\n".repeat(200));
+        let state = laid_out(&source, 400.0, 300.0);
+        assert!(vertical_scrollbar(&state, &style).is_some());
+        let h = horizontal_scrollbar(&state, &style).expect("horizontal scrollbar");
+        assert_eq!(h.track.w, 400.0 - style.scrollbar_size);
+    }
+
+    #[test]
+    fn read_only_pane_swallows_typing_keys_but_not_shortcuts() {
+        use crate::editor::event::Modifiers;
+        let plain = Modifiers::default();
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::default()
+        };
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        assert!(swallows_edit_key("backspace", &plain));
+        assert!(swallows_edit_key("return", &plain));
+        assert!(swallows_edit_key("tab", &shift));
+        assert!(!swallows_edit_key("s", &ctrl));
+        assert!(!swallows_edit_key("f5", &plain));
+    }
 
     #[test]
     fn toggle_task_unchecked_to_checked() {
