@@ -998,6 +998,9 @@ match cmd.as_str() {
                                     "textDocument/formatting@save".to_string(),
                                 );
                                 lsp_state.pending_request_uris.insert(req_id, uri.clone());
+                                if let Ok(cid) = buffer::with_buffer(buf_id, |b| Ok(b.change_id)) {
+                                    lsp_state.pending_request_change_ids.insert(req_id, cid);
+                                }
                                 let _ = lsp::send_message(
                                     tid,
                                     &lsp_formatting_request(req_id, &uri, tab_size, insert_spaces),
@@ -1323,6 +1326,11 @@ match cmd.as_str() {
                 .pending_requests
                 .insert(req_id, "textDocument/formatting".to_string());
             lsp_state.pending_request_uris.insert(req_id, uri.clone());
+            if let Some(buf_id) = doc.view.buffer_id
+                && let Ok(cid) = buffer::with_buffer(buf_id, |b| Ok(b.change_id))
+            {
+                lsp_state.pending_request_change_ids.insert(req_id, cid);
+            }
             let _ = lsp::send_message(
                 tid,
                 &lsp_formatting_request(req_id, &uri, tab_size, insert_spaces),

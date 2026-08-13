@@ -1,5 +1,12 @@
 # Change Log
 
+## [2.15.11] - 2026-08-13 - Language-server crash containment and fixes.
+
+* Fixed the editor being killed by a language server that replies with overlapping text edits, which a formatting or quick-fix response from a crashing server can contain. Such edits are now applied in document order and the overlapping ones dropped, instead of splicing past the end of the text and taking the whole editor down with unsaved work in it.
+* A formatting response now only applies while the document still holds the revision it was requested for, so typing during a format-on-save no longer splices the server's edits at positions that have moved.
+* A language server that exits is now replaced with a clean slate: the restarted server is sent the open documents again, so diagnostics, hover, and completion come back instead of staying dead until the tab is switched.
+* Fixed the editor relaunching a missing language server on every frame: a file whose server is not installed now backs off exponentially instead of running roughly a hundred fork/exec attempts per second for as long as the file stays open, which also stops the log file growing without bound.
+
 ## [2.15.10] - 2026-08-08 - Markdown preview scrolling.
 
 * The markdown preview pane scrolls both ways: draggable scrollbars, click-to-jump tracks, and the mouse wheel (shift for sideways).

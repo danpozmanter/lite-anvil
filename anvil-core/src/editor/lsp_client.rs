@@ -74,6 +74,10 @@ pub(crate) struct LspState {
     /// responses for a non-active file can be discarded instead of
     /// overwriting the hints currently on screen.
     pub pending_request_uris: HashMap<i64, String>,
+    /// Buffer `change_id` a pending formatting request was computed against.
+    /// The server's edit positions address that revision, so a response is only
+    /// safe to splice while the buffer still holds it.
+    pub pending_request_change_ids: HashMap<i64, i64>,
     pub next_request_id: i64,
     pub root_uri: String,
     pub filetype: String,
@@ -149,6 +153,7 @@ impl LspState {
             pull_diagnostics_by_path: HashMap::new(),
             pending_requests: HashMap::new(),
             pending_request_uris: HashMap::new(),
+            pending_request_change_ids: HashMap::new(),
             next_request_id: 1,
             root_uri: String::new(),
             filetype: String::new(),
@@ -238,6 +243,20 @@ impl LspState {
     pub fn note_spawn_failure(&mut self) {
         self.respawn_failures = self.respawn_failures.saturating_add(1);
         self.last_spawn_failure = Some(Instant::now());
+    }
+
+    /// Drop everything that mirrored the previous server's view of the session:
+    /// requests it will never answer, and the documents, texts, and result ids
+    /// it tracked. A replacement server starts from a clean slate, so the
+    /// editor sends `didOpen` again rather than assuming the new process
+    /// already holds the documents.
+    pub fn forget_server_state(&mut self) {
+        self.pending_requests.clear();
+        self.pending_request_uris.clear();
+        self.pending_request_change_ids.clear();
+        self.opened_documents.clear();
+        self.document_texts.clear();
+        self.diagnostic_result_ids.clear();
     }
 
     /// Record a successful initialize: clear the backoff so future spawns are immediate.
@@ -985,6 +1004,34 @@ mod tests {
         assert!(!pull_diagnostics_are_unsupported(&serde_json::json!({
             "result": null
         })));
+    }
+
+    #[test]
+    fn forgetting_server_state_reopens_documents_on_the_next_server() {
+        let mut s = LspState::new();
+        s.opened_documents.insert("file:///a.gos".to_string());
+        s.document_texts
+            .insert("file:///a.gos".to_string(), "old".to_string());
+        s.diagnostic_result_ids
+            .insert("file:///a.gos".to_string(), "r1".to_string());
+        s.pending_requests
+            .insert(7, "textDocument/formatting".to_string());
+        s.pending_request_uris
+            .insert(7, "file:///a.gos".to_string());
+        s.pending_request_change_ids.insert(7, 42);
+        s.filetype = "gossamer".to_string();
+
+        s.forget_server_state();
+
+        assert!(s.opened_documents.is_empty());
+        assert!(s.document_texts.is_empty());
+        assert!(s.diagnostic_result_ids.is_empty());
+        assert!(s.pending_requests.is_empty());
+        assert!(s.pending_request_uris.is_empty());
+        assert!(s.pending_request_change_ids.is_empty());
+        // The (filetype, root) identity survives: it names the state, not the
+        // process that happened to be serving it.
+        assert_eq!(s.filetype, "gossamer");
     }
 
     #[test]

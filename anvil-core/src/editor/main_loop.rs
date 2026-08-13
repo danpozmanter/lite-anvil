@@ -9242,12 +9242,23 @@ pub fn run(
                                         .pending_request_uris
                                         .remove(&id)
                                         .unwrap_or_default();
+                                    let req_change_id =
+                                        lsp_state.pending_request_change_ids.remove(&id);
                                     if let Some(edits) =
                                         msg.get("result").and_then(|r| r.as_array())
                                         && let Some(idx) = docs.iter().position(|d| {
                                             !d.path.is_empty() && path_to_uri(&d.path) == req_uri
                                         })
                                         && let Some(buf_id) = docs[idx].view.buffer_id
+                                        // The edit positions address the revision the request
+                                        // was sent for. Typing while the server works moves
+                                        // every offset after the caret, so a response that
+                                        // outlived its revision is dropped rather than spliced
+                                        // into text it does not describe.
+                                        && buffer::with_buffer(buf_id, |b| Ok(b.change_id))
+                                            .is_ok_and(|cid| {
+                                                req_change_id.is_none_or(|want| want == cid)
+                                            })
                                     {
                                         let changed = buffer::with_buffer_mut(buf_id, |b| {
                                             Ok(apply_lsp_text_edits(b, edits))
@@ -9513,6 +9524,7 @@ pub fn run(
                         lsp_state.note_spawn_failure();
                         lsp_state.transport_id = None;
                         lsp_state.initialized = false;
+                        lsp_state.forget_server_state();
                     }
                 }
             }
@@ -14352,8 +14364,18 @@ fn activate_lsp_state(
     filetype: &str,
     root_uri: String,
 ) {
+    if active.filetype == filetype && active.root_uri == root_uri {
+        return;
+    }
     let next_key = (filetype.to_string(), root_uri);
-    let next_state = inactive.remove(&next_key).unwrap_or_else(LspState::new);
+    let mut next_state = inactive.remove(&next_key).unwrap_or_else(LspState::new);
+    // A state is bound to the (filetype, root) pair it serves from the moment
+    // it becomes active, not from the moment a server first initializes. That
+    // identity is what the caller compares against to decide a swap is needed,
+    // and what keys the parked-state map, so a filetype whose server never
+    // spawns still keeps its respawn backoff across frames.
+    next_state.filetype = next_key.0.clone();
+    next_state.root_uri = next_key.1.clone();
     let previous_state = std::mem::replace(active, next_state);
     if previous_state.filetype.is_empty() || previous_state.root_uri.is_empty() {
         return;
@@ -14503,12 +14525,27 @@ fn apply_lsp_text_edits(
     if parsed.is_empty() {
         return false;
     }
-    parsed.sort_by_key(|e| std::cmp::Reverse(e.0));
-    buffer::push_undo(state);
+    // The protocol requires the ranges to be disjoint, and splicing them
+    // last-position-first is what keeps the earlier offsets valid. A reply that
+    // carries overlapping ranges anyway would have the second splice read past
+    // the end of text the first one shortened, so order by position and keep
+    // only the edits that land inside the region no later edit has replaced.
+    parsed.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
     let mut text = text;
+    let mut untouched_from = text.len();
+    let mut applied = false;
     for (start, end, new_text) in parsed {
+        if end > untouched_from {
+            continue;
+        }
         text.replace_range(start..end, &new_text);
+        untouched_from = start;
+        applied = true;
     }
+    if !applied {
+        return false;
+    }
+    buffer::push_undo(state);
     state.lines = text.split_inclusive('\n').map(str::to_string).collect();
     if state.lines.is_empty() {
         state.lines.push(String::new());
@@ -15999,6 +16036,111 @@ mod lsp_code_action_tests {
         assert_eq!(state.lines.concat(), "one\nbeta\nthree\n");
     }
 
+    #[test]
+    fn overlapping_edits_from_the_same_start_do_not_abort() {
+        // A server must send disjoint ranges. One that does not (a duplicated
+        // or half-written reply) once made the shorter range read past the end
+        // of the text the longer one had already shortened.
+        let mut state = buffer_with("abcdef\n");
+        let edits = vec![
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 6 }
+                },
+                "newText": ""
+            }),
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 3 }
+                },
+                "newText": ""
+            }),
+        ];
+        assert!(apply_lsp_text_edits(&mut state, &edits));
+        assert_eq!(state.lines.concat(), "\n");
+    }
+
+    #[test]
+    fn partially_overlapping_edits_keep_the_later_one() {
+        let mut state = buffer_with("alpha beta gamma\n");
+        let edits = vec![
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 10 }
+                },
+                "newText": "X"
+            }),
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 6 },
+                    "end": { "line": 0, "character": 16 }
+                },
+                "newText": "Y"
+            }),
+        ];
+        assert!(apply_lsp_text_edits(&mut state, &edits));
+        assert_eq!(state.lines.concat(), "alpha Y\n");
+    }
+
+    #[test]
+    fn out_of_range_positions_do_not_abort() {
+        let mut state = buffer_with("alpha\nbeta\n");
+        let edits = vec![
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 4294967295u32, "character": 4294967295u32 },
+                    "end": { "line": 4294967295u32, "character": 4294967295u32 }
+                },
+                "newText": "tail"
+            }),
+            serde_json::json!({
+                "range": {
+                    "start": { "line": -1, "character": -5 },
+                    "end": { "line": 0, "character": 5 }
+                },
+                "newText": "ALPHA"
+            }),
+        ];
+        assert!(apply_lsp_text_edits(&mut state, &edits));
+        assert_eq!(state.lines.concat(), "ALPHA\nbeta\ntail");
+    }
+
+    #[test]
+    fn edits_that_all_overlap_keep_only_the_last_positioned_one() {
+        let mut state = buffer_with("alpha\n");
+        let edits = vec![
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 1 },
+                    "end": { "line": 0, "character": 4 }
+                },
+                "newText": "X"
+            }),
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 1 },
+                    "end": { "line": 0, "character": 3 }
+                },
+                "newText": "Y"
+            }),
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 2 },
+                    "end": { "line": 0, "character": 5 }
+                },
+                "newText": "Z"
+            }),
+        ];
+        // Splicing runs last-position-first, so the edit furthest into the
+        // document wins and the two that reach into it are dropped rather than
+        // taking the editor down.
+        assert!(apply_lsp_text_edits(&mut state, &edits));
+        assert_eq!(state.lines.concat(), "alZ\n");
+    }
+
     fn temp_source(name: &str, source: &str) -> String {
         let unique = format!(
             "lite-anvil-{name}-{}-{}",
@@ -16161,6 +16303,35 @@ mod lsp_state_switch_tests {
         assert!(
             inactive.contains_key(&("language-a".to_string(), "file:///workspace/a".to_string()))
         );
+    }
+
+    #[test]
+    fn activation_keeps_respawn_backoff_when_server_never_spawns() {
+        let mut active = LspState::new();
+        let mut inactive = HashMap::new();
+
+        activate_lsp_state(
+            &mut active,
+            &mut inactive,
+            "language-a",
+            "file:///workspace/a".to_string(),
+        );
+        active.note_spawn_failure();
+        assert!(!active.should_attempt_spawn());
+
+        // The caller re-checks the desired pair every frame; an activated state
+        // already carries it, so no second swap discards the backoff.
+        assert_eq!(active.filetype, "language-a");
+        assert_eq!(active.root_uri, "file:///workspace/a");
+
+        activate_lsp_state(
+            &mut active,
+            &mut inactive,
+            "language-a",
+            "file:///workspace/a".to_string(),
+        );
+        assert_eq!(active.respawn_failures, 1);
+        assert!(!active.should_attempt_spawn());
     }
 }
 
