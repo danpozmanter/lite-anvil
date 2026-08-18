@@ -151,3 +151,49 @@ fn full_document_profile(path: &str, label: &str) {
         eprintln!("  line {ln} ({len} bytes): {dt:?}");
     }
 }
+
+/// Cost of an undo-group boundary as a function of document size: opening the
+/// first group, then closing it and opening the next. This is the work an
+/// editing command pays before its edit is applied.
+fn undo_boundary_profile(mib: usize) {
+    let line = "the quick brown fox jumps over the lazy dog and keeps going\n";
+    let target = mib * 1024 * 1024;
+    let count = target / line.len();
+    let lines: Vec<String> = (0..count).map(|_| line.to_string()).collect();
+
+    let mut state = buffer::default_buffer_state();
+    state.total_bytes = lines.iter().map(|l| l.len() as u64).sum();
+    state.lines = lines;
+    state.selections = vec![1, 1, 1, 1];
+
+    let t0 = std::time::Instant::now();
+    buffer::push_undo(&mut state);
+    let first = t0.elapsed();
+
+    // An edit in the middle of the document, then the next boundary.
+    let mid = state.lines.len() / 2;
+    state.lines[mid] = "the quick brown fox JUMPED over the lazy dog and keeps going\n".to_string();
+    let t1 = std::time::Instant::now();
+    buffer::push_undo(&mut state);
+    let next = t1.elapsed();
+
+    eprintln!(
+        "undo boundary {mib} MiB ({} lines): first group {first:?}, close+open {next:?}",
+        state.lines.len()
+    );
+
+    // The record must still be a correct inverse, not just a fast one.
+    buffer::undo(&mut state);
+    assert_eq!(
+        state.lines[mid], line,
+        "undo must restore the edited line at {mib} MiB"
+    );
+}
+
+#[test]
+#[ignore]
+fn baseline_undo_boundary_scaling() {
+    for mib in [5, 20, 49] {
+        undo_boundary_profile(mib);
+    }
+}

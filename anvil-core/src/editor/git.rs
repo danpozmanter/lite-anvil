@@ -613,13 +613,66 @@ pub struct DiffResult {
 
 static PENDING_DIFFS: LazyLock<Mutex<Vec<DiffResult>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
+/// Diffs waiting for a worker, and the workers currently serving them.
+struct DiffQueue {
+    waiting: VecDeque<String>,
+    /// Paths already waiting, so a burst of requests for one file queues one
+    /// diff. A path is released the moment a worker takes it, so a change
+    /// arriving mid-diff still schedules a fresh one.
+    queued: HashSet<String>,
+    workers: usize,
+}
+
+/// Concurrent `git diff` processes. A git mutation can touch every open tab at
+/// once; each diff is a subprocess, so the fan-out is bounded rather than
+/// scaling with the number of tabs.
+const MAX_DIFF_WORKERS: usize = 4;
+
+static DIFF_QUEUE: LazyLock<Mutex<DiffQueue>> = LazyLock::new(|| {
+    Mutex::new(DiffQueue {
+        waiting: VecDeque::new(),
+        queued: HashSet::new(),
+        workers: 0,
+    })
+});
+
 /// Compute a file's per-line git diff on a worker thread; collect it later via `drain_diffs`.
 pub fn start_diff(file_path: &str) {
-    let path = file_path.to_string();
-    std::thread::spawn(move || {
+    let mut queue = DIFF_QUEUE.lock();
+    if !queue.queued.insert(file_path.to_string()) {
+        return;
+    }
+    queue.waiting.push_back(file_path.to_string());
+    if queue.workers >= MAX_DIFF_WORKERS {
+        return;
+    }
+    queue.workers += 1;
+    drop(queue);
+    std::thread::spawn(diff_worker);
+}
+
+/// Serve queued diffs until none are left, then retire.
+fn diff_worker() {
+    loop {
+        let path = {
+            let mut queue = DIFF_QUEUE.lock();
+            match queue.waiting.pop_front() {
+                Some(path) => {
+                    queue.queued.remove(&path);
+                    path
+                }
+                None => {
+                    // Retiring under the same lock that a request would take
+                    // to enqueue keeps a request from finding a full worker
+                    // set that is about to empty.
+                    queue.workers -= 1;
+                    return;
+                }
+            }
+        };
         let changes = diff_file(&path);
         PENDING_DIFFS.lock().push(DiffResult { path, changes });
-    });
+    }
 }
 
 /// Drain async diffs that have finished; the caller applies each to its doc by matching `path`.
@@ -640,6 +693,32 @@ pub fn insert_cached_signature(root: &str, signature: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_diff_requests_for_one_path_queue_once() {
+        let mut queue = DIFF_QUEUE.lock();
+        queue.waiting.clear();
+        queue.queued.clear();
+        // Pin the worker count at the cap so the requests stay queued and no
+        // subprocess is started by this test.
+        queue.workers = MAX_DIFF_WORKERS;
+        drop(queue);
+
+        for _ in 0..10 {
+            start_diff("/some/watched/file.rs");
+        }
+        start_diff("/some/watched/other.rs");
+
+        let mut queue = DIFF_QUEUE.lock();
+        assert_eq!(
+            queue.waiting.len(),
+            2,
+            "a burst for one path must not queue one diff per request"
+        );
+        queue.waiting.clear();
+        queue.queued.clear();
+        queue.workers = 0;
+    }
 
     #[test]
     fn parse_branch_handles_tracking_counters() {

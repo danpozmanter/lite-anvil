@@ -71,6 +71,10 @@ pub(crate) struct TokenCache {
     pub change_id: i64,
     /// True when a cold/deep syntax walk yielded and another frame is needed.
     pub pending: bool,
+    /// True when a line in the visible range was too long to tokenize within
+    /// one frame and was rendered as plain text. Surfaced in the status bar so
+    /// missing highlighting reads as a deliberate limit.
+    pub syntax_limited: bool,
 }
 
 impl Default for TokenCache {
@@ -83,6 +87,7 @@ impl Default for TokenCache {
             frontier_state: Vec::new(),
             change_id: -1,
             pending: false,
+            syntax_limited: false,
         }
     }
 }
@@ -124,6 +129,35 @@ pub(crate) struct OpenDoc {
     /// Rendered markdown preview state. Idle (zero-cost) until the user
     /// toggles preview on for this tab.
     pub preview: MarkdownPreviewState,
+    /// `path` as it was when the canonical form beside it was resolved.
+    /// Recomputed whenever `path` no longer matches, so a rename or save-as
+    /// cannot leave a stale mapping behind.
+    pub(crate) canonical_cache: std::cell::RefCell<(String, String)>,
+}
+
+/// The document's path with symlinks and `..` resolved, which is how a
+/// filesystem event is matched to a tab.
+///
+/// Memoized against `path`: a watcher burst would otherwise re-canonicalize
+/// every open document once per event, and canonicalizing is a syscall.
+pub(crate) fn doc_canonical_path(doc: &OpenDoc) -> String {
+    {
+        let cache = doc.canonical_cache.borrow();
+        if cache.0 == doc.path {
+            return cache.1.clone();
+        }
+    }
+    let canonical = canonicalize_path(&doc.path);
+    *doc.canonical_cache.borrow_mut() = (doc.path.clone(), canonical.clone());
+    canonical
+}
+
+/// Resolve a path for comparison, falling back to the path itself when it
+/// cannot be resolved (it may not exist yet).
+pub(crate) fn canonicalize_path(path: &str) -> String {
+    std::fs::canonicalize(path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string())
 }
 
 impl Drop for OpenDoc {
@@ -148,11 +182,235 @@ impl Drop for OpenDoc {
 /// fallback still runs so "edit then undo back to saved" correctly clears
 /// the dirty flag; above it, that niche optimization is sacrificed for
 /// responsiveness on multi-GB files.
-const DIRTY_STRICT_FALLBACK_BYTES: u64 = 8 * 1024 * 1024;
+///
+/// Deliberately independent of the large-file soft limit: the signature is
+/// recomputed once per edit, so its ceiling is set by what fits in an input
+/// frame, not by what the user considers a large file.
+const DIRTY_SIGNATURE_SCAN_LIMIT: u64 = 8 * 1024 * 1024;
 
-/// Files larger than this threshold load on a background thread with a
-/// progress overlay instead of blocking the UI.
+/// Default threshold above which a file loads on a background thread with a
+/// progress overlay instead of blocking the UI. A configured soft limit
+/// replaces it; see [`PerformancePolicy`].
 pub(crate) const BG_LOAD_THRESHOLD: u64 = 25 * 1024 * 1024;
+
+thread_local! {
+    /// Configured large-file settings for this editor thread, installed once
+    /// at startup. Every [`PerformancePolicy`] is resolved against it.
+    static LARGE_FILE: std::cell::RefCell<crate::editor::config::LargeFileConfig> =
+        std::cell::RefCell::new(crate::editor::config::LargeFileConfig::default());
+}
+
+/// Install the configured large-file settings for this editor thread.
+pub(crate) fn set_large_file_config(cfg: &crate::editor::config::LargeFileConfig) {
+    LARGE_FILE.with(|slot| *slot.borrow_mut() = cfg.clone());
+}
+
+/// Configured hard limit, consulted on every path that opens a file.
+pub(crate) fn hard_limit_mb() -> u32 {
+    LARGE_FILE.with(|cfg| cfg.borrow().hard_limit_mb)
+}
+
+/// Every size-derived performance decision for one document, resolved in one
+/// place from [`crate::editor::config::LargeFileConfig`] and the document's
+/// byte count.
+///
+/// Before this existed the editor consulted four unrelated byte constants and
+/// a config field that nothing read, so "large" meant a different size
+/// depending on which feature was asking. Anything that keeps its own
+/// threshold does so because its rationale is genuinely different, and says
+/// so where the threshold is defined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PerformancePolicy {
+    /// Document is over the configured soft limit.
+    pub large: bool,
+    /// Reject mutating commands and explain why.
+    pub read_only: bool,
+    /// Render without syntax highlighting.
+    pub plain_text: bool,
+    /// Suppress every language-server interaction for this document.
+    pub disable_lsp: bool,
+    /// Suppress completion, from both the language server and the document.
+    pub disable_autocomplete: bool,
+    /// Compare content signatures to answer "is this modified", rather than
+    /// trusting the change id alone.
+    pub signature_dirty_check: bool,
+    /// Longest line that is worth handing to the tokenizer.
+    pub syntax_line_limit_bytes: usize,
+}
+
+impl PerformancePolicy {
+    /// Resolve the policy for a document of `bytes` from an explicit config.
+    pub(crate) fn resolve(
+        bytes: u64,
+        cfg: &crate::editor::config::LargeFileConfig,
+    ) -> PerformancePolicy {
+        let large = cfg.soft_limit_mb != 0 && bytes > u64::from(cfg.soft_limit_mb) * 1024 * 1024;
+        PerformancePolicy {
+            large,
+            read_only: large && cfg.read_only,
+            plain_text: large && cfg.plain_text,
+            disable_lsp: large && cfg.disable_lsp,
+            disable_autocomplete: large && cfg.disable_autocomplete,
+            signature_dirty_check: bytes <= DIRTY_SIGNATURE_SCAN_LIMIT,
+            syntax_line_limit_bytes: (cfg.long_line_limit_kb as usize).saturating_mul(1024),
+        }
+    }
+
+    /// Resolve the policy for a document of `bytes` from the installed config.
+    pub(crate) fn for_bytes(bytes: u64) -> PerformancePolicy {
+        LARGE_FILE.with(|cfg| PerformancePolicy::resolve(bytes, &cfg.borrow()))
+    }
+
+    /// Byte size above which opening a file loads it on a background thread.
+    /// The configured soft limit governs when set, so a user who declares a
+    /// smaller "large file" size also gets the progress overlay sooner.
+    pub(crate) fn background_load_threshold() -> u64 {
+        LARGE_FILE.with(|cfg| {
+            let soft = cfg.borrow().soft_limit_mb;
+            if soft == 0 {
+                BG_LOAD_THRESHOLD
+            } else {
+                u64::from(soft) * 1024 * 1024
+            }
+        })
+    }
+}
+
+/// Longest line worth tokenizing, for render paths that see lines rather than
+/// documents. One generated or minified line can otherwise consume a whole
+/// input frame inside a single regex call that the frame budget cannot
+/// preempt, no matter how small the file containing it is.
+pub(crate) fn syntax_line_limit_bytes() -> usize {
+    LARGE_FILE.with(|cfg| (cfg.borrow().long_line_limit_kb as usize).saturating_mul(1024))
+}
+
+/// The performance policy for an open document.
+pub(crate) fn doc_policy(doc: &OpenDoc) -> PerformancePolicy {
+    PerformancePolicy::for_bytes(doc_bytes(doc))
+}
+
+/// Byte size of a document's buffer, or zero if it has none.
+pub(crate) fn doc_bytes(doc: &OpenDoc) -> u64 {
+    doc.view
+        .buffer_id
+        .and_then(|id| buffer::with_buffer(id, |b| Ok(b.total_bytes)).ok())
+        .unwrap_or(0)
+}
+
+/// Heap bytes one open document retains, by what holds them. Covers the
+/// allocations that scale with document size and session length; small fixed
+/// per-document state is not itemized.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DocMemory {
+    pub text: u64,
+    pub history: u64,
+    pub search_subject: u64,
+    pub token_cache: u64,
+    pub render_cache: u64,
+    pub preview: u64,
+}
+
+impl DocMemory {
+    pub(crate) fn total(&self) -> u64 {
+        self.text
+            + self.history
+            + self.search_subject
+            + self.token_cache
+            + self.render_cache
+            + self.preview
+    }
+}
+
+/// Measure what one open document is holding.
+pub(crate) fn doc_memory(doc: &OpenDoc) -> DocMemory {
+    let (text, history, search_subject) = doc
+        .view
+        .buffer_id
+        .and_then(|id| {
+            buffer::with_buffer(id, |b| {
+                Ok((b.text_bytes(), b.history_bytes(), b.search_bytes()))
+            })
+            .ok()
+        })
+        .unwrap_or((0, 0, 0));
+
+    let cache = doc.token_cache.borrow();
+    let token_cache = cache
+        .lines
+        .values()
+        .map(|line| {
+            let tokens = line
+                .tokens
+                .as_ref()
+                .map(|tokens| {
+                    tokens
+                        .iter()
+                        .map(|t| {
+                            (t.text.capacity()
+                                + std::mem::size_of::<crate::editor::tokenizer::Token>())
+                                as u64
+                        })
+                        .sum::<u64>()
+                })
+                .unwrap_or(0);
+            tokens + (line.start_state.capacity() + line.end_state.capacity()) as u64
+        })
+        .sum::<u64>()
+        + (cache.content_hashes.capacity() * std::mem::size_of::<u64>()) as u64
+        + cache
+            .checkpoints
+            .values()
+            .map(|state| state.capacity() as u64)
+            .sum::<u64>();
+
+    let render_cache = doc
+        .cached_render
+        .iter()
+        .map(|line| {
+            line.tokens
+                .iter()
+                .map(|t| {
+                    (t.text.capacity()
+                        + std::mem::size_of::<crate::editor::doc_view::RenderToken>())
+                        as u64
+                })
+                .sum::<u64>()
+        })
+        .sum::<u64>();
+
+    DocMemory {
+        text,
+        history,
+        search_subject,
+        token_cache,
+        render_cache,
+        preview: doc.preview.retained_bytes(),
+    }
+}
+
+/// What an external change to a document's file should cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExternalChange {
+    /// The bytes on disk match what the editor last wrote. We watch the parent
+    /// directory, so our own saves - notably notes-mode autosave - come back
+    /// as change events; comparing content is what tells them apart.
+    Echo,
+    /// The document has unsaved edits that adopting the file would discard.
+    AskUser,
+    /// Safe to adopt the file's contents.
+    Adopt,
+}
+
+/// Decide what a document should do about the contents now on disk.
+pub(crate) fn classify_external_change(doc: &OpenDoc, disk_signature: u32) -> ExternalChange {
+    if disk_signature == doc.saved_signature {
+        ExternalChange::Echo
+    } else if doc_is_modified(doc) {
+        ExternalChange::AskUser
+    } else {
+        ExternalChange::Adopt
+    }
+}
 
 /// Session data for save/restore.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -188,7 +446,7 @@ pub(crate) fn doc_is_modified(doc: &OpenDoc) -> bool {
                 return Ok(result);
             }
         }
-        if b.total_bytes > DIRTY_STRICT_FALLBACK_BYTES {
+        if !PerformancePolicy::for_bytes(b.total_bytes).signature_dirty_check {
             doc.dirty_cache.set(Some((b.change_id, true)));
             return Ok(true);
         }
@@ -239,20 +497,6 @@ pub(crate) fn check_file_size_limit(path: &str, hard_limit_mb: u32) -> Result<u6
     }
 }
 
-/// Whether a document exceeds the configured large-file soft limit.
-/// A zero limit disables soft-limit behavior.
-pub(crate) fn exceeds_soft_limit(doc: &OpenDoc, soft_limit_mb: u32) -> bool {
-    if soft_limit_mb == 0 {
-        return false;
-    }
-    let limit = u64::from(soft_limit_mb) * 1024 * 1024;
-    doc.view
-        .buffer_id
-        .and_then(|id| buffer::with_buffer(id, |b| Ok(b.total_bytes)).ok())
-        .map(|bytes| bytes > limit)
-        .unwrap_or(false)
-}
-
 fn open_file_into_with_tab_limit(
     path: &str,
     docs: &mut Vec<OpenDoc>,
@@ -273,9 +517,7 @@ fn open_file_into_with_tab_limit(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| normalize_path(path));
     let path = resolved.as_str();
-    if let Err(message) =
-        check_file_size_limit(path, crate::editor::main_loop::hard_file_limit_mb())
-    {
+    if let Err(message) = check_file_size_limit(path, hard_limit_mb()) {
         eprintln!("{message}");
         return false;
     }
@@ -320,6 +562,7 @@ fn open_file_into_with_tab_limit(
         dirty_cache: std::cell::Cell::new(None),
         token_cache: std::cell::RefCell::new(TokenCache::default()),
         preview: MarkdownPreviewState::default(),
+        canonical_cache: Default::default(),
     });
     true
 }
@@ -441,6 +684,7 @@ pub(crate) fn restore_project_session(
                 dirty_cache: std::cell::Cell::new(None),
                 token_cache: std::cell::RefCell::new(TokenCache::default()),
                 preview: MarkdownPreviewState::default(),
+                canonical_cache: Default::default(),
             });
         } else if open_file_into(file, docs, use_git) {
             autoreload.watch(file);
@@ -486,6 +730,161 @@ pub(crate) fn scroll_new_doc_to_line(docs: &mut [OpenDoc], line: usize, style_li
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn large_file_config(soft_limit_mb: u32) -> crate::editor::config::LargeFileConfig {
+        crate::editor::config::LargeFileConfig {
+            soft_limit_mb,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_external_change_matching_our_last_save_is_an_echo() {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        let mut doc = make_doc(buf_id);
+        doc.saved_signature = 12345;
+        assert_eq!(
+            classify_external_change(&doc, 12345),
+            ExternalChange::Echo,
+            "our own write must not be reported as an external change"
+        );
+    }
+
+    #[test]
+    fn an_external_change_to_an_unmodified_document_is_adopted() {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        let mut doc = make_doc(buf_id);
+        doc.saved_signature = 1;
+        doc.saved_change_id = buffer::with_buffer(buf_id, |b| Ok(b.change_id)).unwrap();
+        assert_eq!(classify_external_change(&doc, 2), ExternalChange::Adopt);
+    }
+
+    #[test]
+    fn an_external_change_to_a_modified_document_asks_the_user() {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        let _ = buffer::with_buffer_mut(buf_id, |b| {
+            b.lines = vec!["locally edited\n".to_string()];
+            b.change_id += 1;
+            Ok(())
+        });
+        let mut doc = make_doc(buf_id);
+        doc.saved_signature = 1;
+        doc.saved_change_id = 0;
+        assert_eq!(
+            classify_external_change(&doc, 2),
+            ExternalChange::AskUser,
+            "local edits must never be discarded without asking"
+        );
+    }
+
+    #[test]
+    fn doc_memory_accounts_for_the_document_text() {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        let _ = buffer::with_buffer_mut(buf_id, |b| {
+            b.lines = (0..1000).map(|i| format!("line {i}\n")).collect();
+            Ok(())
+        });
+        let doc = make_doc(buf_id);
+        let memory = doc_memory(&doc);
+        assert!(
+            memory.text >= 1000 * 6,
+            "text bytes must cover the line contents, got {}",
+            memory.text
+        );
+        assert_eq!(
+            memory.total(),
+            memory.text
+                + memory.history
+                + memory.search_subject
+                + memory.token_cache
+                + memory.render_cache
+                + memory.preview
+        );
+    }
+
+    #[test]
+    fn doc_memory_counts_undo_history_separately_from_text() {
+        let buf_id = buffer::insert_buffer(buffer::default_buffer_state());
+        let _ = buffer::with_buffer_mut(buf_id, |b| {
+            b.lines = vec!["original\n".to_string()];
+            buffer::push_undo(b);
+            b.lines = vec!["replaced\n".to_string()];
+            buffer::push_undo(b);
+            Ok(())
+        });
+        let doc = make_doc(buf_id);
+        let memory = doc_memory(&doc);
+        assert!(
+            memory.history > 0,
+            "an edited document must report its undo history"
+        );
+    }
+
+    #[test]
+    fn policy_below_the_soft_limit_leaves_every_feature_enabled() {
+        let cfg = large_file_config(20);
+        let policy = PerformancePolicy::resolve(1024 * 1024, &cfg);
+        assert!(!policy.large);
+        assert!(!policy.read_only);
+        assert!(!policy.plain_text);
+        assert!(!policy.disable_lsp);
+        assert!(!policy.disable_autocomplete);
+    }
+
+    #[test]
+    fn policy_above_the_soft_limit_applies_every_configured_restriction() {
+        let cfg = large_file_config(20);
+        let policy = PerformancePolicy::resolve(21 * 1024 * 1024, &cfg);
+        assert!(policy.large);
+        assert_eq!(policy.read_only, cfg.read_only);
+        assert_eq!(policy.plain_text, cfg.plain_text);
+        assert_eq!(policy.disable_lsp, cfg.disable_lsp);
+        assert_eq!(policy.disable_autocomplete, cfg.disable_autocomplete);
+    }
+
+    #[test]
+    fn a_zero_soft_limit_disables_large_file_behavior_entirely() {
+        let cfg = large_file_config(0);
+        let policy = PerformancePolicy::resolve(4 * 1024 * 1024 * 1024, &cfg);
+        assert!(!policy.large);
+        assert!(!policy.read_only);
+        assert!(!policy.plain_text);
+    }
+
+    #[test]
+    fn a_restriction_turned_off_in_config_stays_off_above_the_limit() {
+        let cfg = crate::editor::config::LargeFileConfig {
+            soft_limit_mb: 20,
+            read_only: false,
+            disable_lsp: false,
+            ..Default::default()
+        };
+        let policy = PerformancePolicy::resolve(21 * 1024 * 1024, &cfg);
+        assert!(policy.large);
+        assert!(!policy.read_only);
+        assert!(!policy.disable_lsp);
+    }
+
+    #[test]
+    fn the_long_line_limit_is_independent_of_document_size() {
+        let cfg = crate::editor::config::LargeFileConfig {
+            long_line_limit_kb: 32,
+            ..Default::default()
+        };
+        let small = PerformancePolicy::resolve(1024, &cfg);
+        let big = PerformancePolicy::resolve(u64::from(cfg.soft_limit_mb + 1) * 1024 * 1024, &cfg);
+        assert_eq!(small.syntax_line_limit_bytes, 32 * 1024);
+        assert_eq!(big.syntax_line_limit_bytes, 32 * 1024);
+    }
+
+    #[test]
+    fn the_signature_dirty_check_is_dropped_only_for_documents_too_big_to_rehash() {
+        let cfg = large_file_config(20);
+        assert!(PerformancePolicy::resolve(DIRTY_SIGNATURE_SCAN_LIMIT, &cfg).signature_dirty_check);
+        assert!(
+            !PerformancePolicy::resolve(DIRTY_SIGNATURE_SCAN_LIMIT + 1, &cfg).signature_dirty_check
+        );
+    }
 
     #[test]
     fn split_path_line_with_number() {
@@ -567,6 +966,7 @@ mod tests {
             dirty_cache: std::cell::Cell::new(None),
             token_cache: std::cell::RefCell::new(TokenCache::default()),
             preview: MarkdownPreviewState::default(),
+            canonical_cache: Default::default(),
         }
     }
 

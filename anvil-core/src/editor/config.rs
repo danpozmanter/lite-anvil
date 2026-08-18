@@ -80,6 +80,10 @@ pub struct NativeConfig {
 pub struct LargeFileConfig {
     pub soft_limit_mb: u32,
     pub hard_limit_mb: u32,
+    /// Lines longer than this (in bytes) trigger plain-text fallback
+    /// regardless of total file size. Prevents a single pathological line
+    /// from defeating the incremental tokenizer.
+    pub long_line_limit_kb: u32,
     pub read_only: bool,
     pub plain_text: bool,
     pub disable_lsp: bool,
@@ -452,6 +456,9 @@ impl Default for LargeFileConfig {
             // 4 GB hard cap. Files above this are refused.
             // Peak memory during load is ~2.5x the file size due to line splitting.
             hard_limit_mb: 4096,
+            // Lines above 64 KB fall back to plain text. Prevents a single
+            // pathological line from defeating the incremental tokenizer.
+            long_line_limit_kb: 64,
             read_only: true,
             plain_text: true,
             disable_lsp: true,

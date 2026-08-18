@@ -165,18 +165,18 @@ pub struct EditRecord {
 /// Max seconds between edits to merge them into one undo entry.
 pub const UNDO_MERGE_TIMEOUT: f64 = 1.0;
 
-/// Buffers larger than this byte threshold switch to "huge file mode": undo
-/// snapshots are disabled (`push_undo` becomes a no-op that only bumps
-/// `change_id`) and dirty-checking short-circuits to a change-id comparison
-/// instead of re-hashing the whole buffer every frame. 50 MB is large enough
-/// that small/medium source files keep full behavior, while 2 GB files stay
-/// responsive.
-pub const HUGE_FILE_THRESHOLD: u64 = 50 * 1024 * 1024;
+/// Byte threshold above which an undo group stops capturing a whole-document
+/// base snapshot. Above it, commands whose inverse is only recoverable by
+/// diffing against that snapshot are not undoable, because capturing it would
+/// cost a full copy of the document per group. Edits that describe their own
+/// inverse - typing, and anything else opening a group through
+/// [`push_undo_direct`] - stay undoable at every file size.
+pub const UNDO_SNAPSHOT_LIMIT: u64 = 50 * 1024 * 1024;
 
 /// Total-byte budget for the combined undo+redo stacks. When pushing a new
 /// snapshot would exceed this, oldest entries are evicted from the front of
 /// `undo` until the total drops back under the cap. Acts as a safety net for
-/// files just under `HUGE_FILE_THRESHOLD` that still get edited heavily.
+/// files just under `UNDO_SNAPSHOT_LIMIT` that still get edited heavily.
 pub const UNDO_MEMORY_BUDGET: usize = 64 * 1024 * 1024;
 
 /// An undo group waiting for its next boundary. Ordinary commands retain a
@@ -185,7 +185,6 @@ pub const UNDO_MEMORY_BUDGET: usize = 64 * 1024 * 1024;
 /// keystroke does not clone and later diff the whole document.
 pub enum PendingUndo {
     Snapshot {
-        base_text: String,
         base_selections: Vec<usize>,
         base_change_id: i64,
     },
@@ -207,6 +206,11 @@ pub struct BufferState {
     /// before an edit and committed to `undo` as a packed inverse record
     /// at the next group boundary, on undo, or on redo.
     pub pending: Option<PendingUndo>,
+    /// Content of the buffer when the open `PendingUndo::Snapshot` group
+    /// began, against which its inverse is computed at the group boundary.
+    /// Empty unless a snapshot group is open; the allocation moves from one
+    /// group to the next so consecutive groups reuse the same pages.
+    undo_base: String,
     pub change_id: i64,
     /// Earliest line affected by the mutation which produced
     /// `syntax_dirty_change_id`. Render caches use this watermark to avoid a
@@ -214,10 +218,10 @@ pub struct BufferState {
     pub syntax_dirty_from: usize,
     pub syntax_dirty_change_id: i64,
     /// Sum of the byte lengths of every line. Computed on load and refreshed
-    /// after undo/redo restores. Drives `is_huge()` which gates `push_undo`
-    /// into no-op mode on multi-GB files. Not maintained incrementally on
-    /// every edit — the 50 MB threshold has enough slack that a session's
-    /// worth of edits can't move a buffer across it.
+    /// after undo/redo restores. Drives `undo_snapshots_disabled()`, which
+    /// gates whole-document undo bases on multi-GB files. Not maintained
+    /// incrementally on every edit - the threshold has enough slack that a
+    /// session's worth of edits can't move a buffer across it.
     pub total_bytes: u64,
     pub crlf: bool,
     pub bom: BomType,
@@ -234,10 +238,35 @@ pub struct BufferState {
 }
 
 impl BufferState {
-    /// True when this buffer has crossed the huge-file threshold. Huge
-    /// buffers skip undo snapshots entirely and short-circuit dirty checks.
-    pub fn is_huge(&self) -> bool {
-        self.total_bytes > HUGE_FILE_THRESHOLD
+    /// Heap bytes held by the line vector.
+    pub fn text_bytes(&self) -> u64 {
+        self.lines.iter().map(|l| l.capacity() as u64).sum::<u64>()
+            + (self.lines.capacity() * std::mem::size_of::<String>()) as u64
+    }
+
+    /// Heap bytes held by the undo stack, the redo stack, and any open group.
+    pub fn history_bytes(&self) -> u64 {
+        let stacks: u64 = self
+            .undo
+            .iter()
+            .chain(self.redo.iter())
+            .map(|entry| entry.capacity() as u64)
+            .sum();
+        stacks + self.undo_base.capacity() as u64
+    }
+
+    /// Heap bytes held by the memoized whole-document search subject.
+    pub fn search_bytes(&self) -> u64 {
+        self.search_cache
+            .as_ref()
+            .map(|(_, subject)| subject.retained_bytes())
+            .unwrap_or(0)
+    }
+
+    /// True when this buffer is too large to capture a whole-document undo
+    /// base. Edit-native undo records are still kept; see [`UNDO_SNAPSHOT_LIMIT`].
+    pub fn undo_snapshots_disabled(&self) -> bool {
+        self.total_bytes > UNDO_SNAPSHOT_LIMIT
     }
 }
 
@@ -263,6 +292,7 @@ pub fn default_buffer_state() -> BufferState {
         undo: Vec::new(),
         redo: Vec::new(),
         pending: None,
+        undo_base: String::new(),
         change_id: 1,
         syntax_dirty_from: 1,
         syntax_dirty_change_id: -1,
@@ -930,6 +960,7 @@ pub fn reset_history(state: &mut BufferState) {
     state.undo.clear();
     state.redo.clear();
     state.pending = None;
+    state.undo_base = String::new();
     state.undo.shrink_to_fit();
     state.redo.shrink_to_fit();
 }
@@ -1300,34 +1331,17 @@ fn unpack_undo_entry(input: &[u8]) -> Result<(i64, Vec<usize>, Vec<EditRecord>),
 /// and suffix, snapped to UTF-8 boundaries, expressed as a remove of the
 /// current span followed by an insert of the base span. Columns are 1-based
 /// byte offsets, matching `apply_single_edit`.
+///
+/// The comparison runs against the line vector in place. Whole lines are
+/// matched with slice equality, which lowers to `memcmp`, and only the
+/// first and last differing lines are examined byte by byte, so a group
+/// boundary in a large document costs one pass at memory bandwidth rather
+/// than a second copy of the document plus a per-byte loop over it.
 fn diff_to_undo_edits(base_text: &str, current: &[String]) -> Vec<EditRecord> {
-    let cur_text: String = current.concat();
+    if current.is_empty() {
+        return Vec::new();
+    }
     let bb = base_text.as_bytes();
-    let cb = cur_text.as_bytes();
-
-    let max_common = bb.len().min(cb.len());
-    let mut start = 0;
-    while start < max_common && bb[start] == cb[start] {
-        start += 1;
-    }
-    while start > 0 && (!base_text.is_char_boundary(start) || !cur_text.is_char_boundary(start)) {
-        start -= 1;
-    }
-
-    let max_suffix = (bb.len() - start).min(cb.len() - start);
-    let mut suffix = 0;
-    while suffix < max_suffix && bb[bb.len() - 1 - suffix] == cb[cb.len() - 1 - suffix] {
-        suffix += 1;
-    }
-    while suffix > 0
-        && (!base_text.is_char_boundary(bb.len() - suffix)
-            || !cur_text.is_char_boundary(cb.len() - suffix))
-    {
-        suffix -= 1;
-    }
-
-    let base_end = bb.len() - suffix;
-    let cur_end = cb.len() - suffix;
 
     let mut line_starts = Vec::with_capacity(current.len());
     let mut acc = 0usize;
@@ -1335,10 +1349,102 @@ fn diff_to_undo_edits(base_text: &str, current: &[String]) -> Vec<EditRecord> {
         line_starts.push(acc);
         acc += line.len();
     }
-    let to_line_col = |offset: usize| -> (usize, usize) {
-        let i = line_starts
+    let cur_len = acc;
+
+    let line_index_of = |offset: usize| -> usize {
+        line_starts
             .partition_point(|&s| s <= offset)
-            .saturating_sub(1);
+            .saturating_sub(1)
+    };
+    // `offset` is a byte position in the concatenation of `current`.
+    let cur_is_char_boundary = |offset: usize| -> bool {
+        if offset >= cur_len {
+            return offset == cur_len;
+        }
+        let i = line_index_of(offset);
+        current[i].is_char_boundary(offset - line_starts[i])
+    };
+
+    let mut start = 0usize;
+    let mut prefix_line = 0usize;
+    while prefix_line < current.len() {
+        let line = current[prefix_line].as_bytes();
+        let end = start + line.len();
+        if end > bb.len() || &bb[start..end] != line {
+            break;
+        }
+        start = end;
+        prefix_line += 1;
+    }
+    if prefix_line < current.len() {
+        let line = current[prefix_line].as_bytes();
+        let max = line.len().min(bb.len() - start);
+        let mut i = 0;
+        while i < max && bb[start + i] == line[i] {
+            i += 1;
+        }
+        start += i;
+    }
+    while start > 0 && (!base_text.is_char_boundary(start) || !cur_is_char_boundary(start)) {
+        start -= 1;
+    }
+
+    let max_suffix = (bb.len() - start).min(cur_len - start);
+    let mut suffix = 0usize;
+    let mut suffix_line = current.len();
+    while suffix_line > 0 && suffix < max_suffix {
+        let line = current[suffix_line - 1].as_bytes();
+        if line.len() > max_suffix - suffix {
+            break;
+        }
+        let hi = bb.len() - suffix;
+        if &bb[hi - line.len()..hi] != line {
+            break;
+        }
+        suffix += line.len();
+        suffix_line -= 1;
+    }
+    if suffix_line > 0 && suffix < max_suffix {
+        let line = current[suffix_line - 1].as_bytes();
+        let room = (max_suffix - suffix).min(line.len());
+        let mut i = 0;
+        while i < room && bb[bb.len() - suffix - 1 - i] == line[line.len() - 1 - i] {
+            i += 1;
+        }
+        suffix += i;
+    }
+    while suffix > 0
+        && (!base_text.is_char_boundary(bb.len() - suffix)
+            || !cur_is_char_boundary(cur_len - suffix))
+    {
+        suffix -= 1;
+    }
+
+    let mut base_end = bb.len() - suffix;
+    let mut cur_end = cur_len - suffix;
+
+    // Every line carries its terminator, so the offset just past the last
+    // line's `\n` has no column to name it. A change reaching the end of the
+    // document is therefore described one byte earlier: both sides end with
+    // that same terminator whenever the change reaches it, so sliding the
+    // window left by it names the identical replacement.
+    if cur_end == cur_len
+        && start > 0
+        && base_end > 0
+        && cur_len > 0
+        && bb[base_end - 1] == b'\n'
+        && {
+            let i = line_index_of(cur_end - 1);
+            current[i].as_bytes()[cur_end - 1 - line_starts[i]] == b'\n'
+        }
+    {
+        start -= 1;
+        cur_end -= 1;
+        base_end -= 1;
+    }
+
+    let to_line_col = |offset: usize| -> (usize, usize) {
+        let i = line_index_of(offset);
         // Convert the within-line byte offset to a 1-based character column so
         // the undo record's columns match the editor's character convention.
         let byte_in_line = (offset - line_starts[i]).min(current[i].len());
@@ -1375,18 +1481,35 @@ fn diff_to_undo_edits(base_text: &str, current: &[String]) -> Vec<EditRecord> {
 /// Commit the in-progress undo group (if any) to the undo stack as a
 /// compact packed inverse record, diffing the captured base against the
 /// current buffer.
-fn finalize_pending(state: &mut BufferState) {
+///
+/// Returns the snapshot base's now-empty allocation so a group opening
+/// immediately afterwards can refill it, rather than releasing pages the
+/// next capture would have to fault back in. Dropping the returned value
+/// releases them.
+#[must_use = "the returned allocation is reused by the next group"]
+fn finalize_pending(state: &mut BufferState) -> String {
     let Some(pending) = state.pending.take() else {
-        return;
+        return std::mem::take(&mut state.undo_base);
     };
     let entry = match pending {
         PendingUndo::Snapshot {
-            base_text,
             base_selections,
             base_change_id,
         } => {
-            let edits = diff_to_undo_edits(&base_text, &state.lines);
-            pack_undo_entry(base_change_id, &base_selections, &edits)
+            let base = std::mem::take(&mut state.undo_base);
+            let edits = diff_to_undo_edits(&base, &state.lines);
+            // A group can close without the command having changed anything
+            // (an empty paste, a guard that rejected the edit after opening
+            // the group). Recording it would spend the user's next undo on a
+            // record that restores nothing.
+            if edits.is_empty() {
+                return reusable(base);
+            }
+            let entry = pack_undo_entry(base_change_id, &base_selections, &edits);
+            state.undo.push(entry);
+            clamp_history(&mut state.undo);
+            trim_history_to_budget(state);
+            return reusable(base);
         }
         PendingUndo::Direct {
             base_selections,
@@ -1397,6 +1520,13 @@ fn finalize_pending(state: &mut BufferState) {
     state.undo.push(entry);
     clamp_history(&mut state.undo);
     trim_history_to_budget(state);
+    std::mem::take(&mut state.undo_base)
+}
+
+/// Empty a base buffer while keeping its capacity.
+fn reusable(mut base: String) -> String {
+    base.clear();
+    base
 }
 
 /// Open a new undo group, capturing the pre-edit content as its base.
@@ -1406,7 +1536,7 @@ fn finalize_pending(state: &mut BufferState) {
 /// the edit rather than the whole document. Consecutive single-character
 /// inserts merge into one group via `push_undo_mergeable`.
 ///
-/// On buffers over `HUGE_FILE_THRESHOLD` this becomes a no-op that only
+/// On buffers over `UNDO_SNAPSHOT_LIMIT` this becomes a no-op that only
 /// advances `change_id` and clears the redo stack - at multi-GB file sizes
 /// even capturing the base would lock up the editor. Callers don't need to
 /// special-case huge files; the function handles it.
@@ -1418,8 +1548,14 @@ pub fn push_undo(state: &mut BufferState) {
         .min()
         .unwrap_or(1)
         .max(1);
-    if state.is_huge() {
+    if state.undo_snapshots_disabled() {
+        // This command's inverse is not being recorded, so every record
+        // already on the stack describes positions in a document this edit is
+        // about to change. Truncate the history rather than leave entries that
+        // would replay against content they were not taken from.
         state.pending = None;
+        state.undo_base = String::new();
+        state.undo.clear();
         state.redo.clear();
         state.change_id += 1;
         state.syntax_dirty_from = dirty_line;
@@ -1427,9 +1563,13 @@ pub fn push_undo(state: &mut BufferState) {
         state.last_edit = None;
         return;
     }
-    finalize_pending(state);
+    let mut base = finalize_pending(state);
+    base.reserve(state.lines.iter().map(String::len).sum::<usize>());
+    for line in &state.lines {
+        base.push_str(line);
+    }
+    state.undo_base = base;
     state.pending = Some(PendingUndo::Snapshot {
-        base_text: state.lines.concat(),
         base_selections: state.selections.clone(),
         base_change_id: state.change_id,
     });
@@ -1442,9 +1582,13 @@ pub fn push_undo(state: &mut BufferState) {
 
 /// Push undo for a single-char insert, merging consecutive keystrokes.
 ///
-/// Returns `true` if the edit was merged (no new snapshot pushed), meaning the
+/// Returns `true` if the edit was merged (no new group opened), meaning the
 /// caller should proceed with the insert but skip `push_undo`. Returns `false`
-/// if a new snapshot was pushed normally.
+/// if a new group was opened normally.
+///
+/// The group records the inverse of the insert directly, so this path costs
+/// the same on a multi-GB buffer as on a one-line one and stays available
+/// above [`UNDO_SNAPSHOT_LIMIT`].
 pub fn push_undo_mergeable(
     state: &mut BufferState,
     line: usize,
@@ -1473,16 +1617,10 @@ pub fn push_undo_mergeable(
         state.last_edit = Some((now, line, col, true, true));
         return false;
     }
-    if state.is_huge() {
-        state.pending = None;
-        state.redo.clear();
-        state.change_id += 1;
-        state.syntax_dirty_from = line.max(1);
-        state.syntax_dirty_change_id = state.change_id;
-        state.last_edit = Some((now, line, col, true, has_selection));
-        return false;
-    }
-    finalize_pending(state);
+    // No size gate here: a direct record describes its own inverse from the
+    // (line, col) it is given, so opening this group costs the record and
+    // nothing that scales with the document.
+    drop(finalize_pending(state));
     state.pending = Some(PendingUndo::Direct {
         base_selections: state.selections.clone(),
         base_change_id: state.change_id,
@@ -1506,7 +1644,7 @@ pub fn push_undo_mergeable(
 /// Undo the most recent edit by replaying its packed inverse record onto
 /// the buffer and pushing the corresponding forward record onto redo.
 pub fn undo(state: &mut BufferState) {
-    finalize_pending(state);
+    drop(finalize_pending(state));
     let Some(entry) = state.undo.pop() else {
         return;
     };
@@ -1539,7 +1677,7 @@ pub fn undo(state: &mut BufferState) {
 
 /// Redo the most recently undone edit, the mirror of `undo`.
 pub fn redo(state: &mut BufferState) {
-    finalize_pending(state);
+    drop(finalize_pending(state));
     let Some(entry) = state.redo.pop() else {
         return;
     };
@@ -1723,6 +1861,11 @@ pub struct SearchSubject {
 }
 
 impl SearchSubject {
+    /// Heap bytes this subject retains.
+    pub fn retained_bytes(&self) -> u64 {
+        (self.text.capacity() + self.line_starts.capacity() * std::mem::size_of::<usize>()) as u64
+    }
+
     /// Concatenate `lines` and record each line's byte offset within the result.
     pub fn build(lines: &[String]) -> Self {
         let text: String = lines.concat();
@@ -2508,6 +2651,7 @@ mod tests {
         push_undo(&mut state);
         state.lines = vec!["edited\n".to_string()];
         push_undo(&mut state);
+        state.lines = vec!["edited twice\n".to_string()];
         undo(&mut state);
 
         assert!(!state.undo.is_empty());
@@ -2649,7 +2793,7 @@ mod tests {
     fn push_undo_is_noop_on_huge_buffer() {
         let mut state = default_buffer_state();
         state.lines = vec!["big\n".to_string()];
-        state.total_bytes = HUGE_FILE_THRESHOLD + 1;
+        state.total_bytes = UNDO_SNAPSHOT_LIMIT + 1;
         let cid_before = state.change_id;
         push_undo(&mut state);
         assert!(state.undo.is_empty(), "huge buffers must not snapshot");
@@ -2658,6 +2802,169 @@ mod tests {
             cid_before + 1,
             "change_id must still advance so dirty-check sees the edit"
         );
+    }
+
+    #[test]
+    fn a_group_that_changed_nothing_does_not_consume_an_undo() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["text\n".to_string()];
+        state.selections = vec![1, 1, 1, 1];
+        push_undo(&mut state);
+        state.lines = vec!["edited\n".to_string()];
+        // A command that opened a group and then changed nothing.
+        push_undo(&mut state);
+        undo(&mut state);
+        assert_eq!(
+            state.lines[0], "text\n",
+            "the first undo must reach the edit, not an empty group"
+        );
+    }
+
+    #[test]
+    fn typing_stays_undoable_above_the_snapshot_limit() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["big\n".to_string()];
+        state.selections = vec![1, 1, 1, 1];
+        state.total_bytes = UNDO_SNAPSHOT_LIMIT + 1;
+        assert!(!push_undo_mergeable(&mut state, 1, 1, false));
+        apply_insert_internal(&mut state.lines, &mut state.selections, 1, 1, "X");
+        assert_eq!(state.lines[0], "Xbig\n");
+        undo(&mut state);
+        assert_eq!(
+            state.lines[0], "big\n",
+            "an edit that records its own inverse must undo at any file size"
+        );
+    }
+
+    #[test]
+    fn unrecordable_command_truncates_history_above_the_snapshot_limit() {
+        let mut state = default_buffer_state();
+        state.lines = vec!["big\n".to_string()];
+        state.selections = vec![1, 1, 1, 1];
+        state.total_bytes = UNDO_SNAPSHOT_LIMIT + 1;
+        push_undo_mergeable(&mut state, 1, 1, false);
+        apply_insert_internal(&mut state.lines, &mut state.selections, 1, 1, "X");
+        // A command whose inverse cannot be recorded at this size follows.
+        push_undo(&mut state);
+        state.lines = vec!["rewritten\n".to_string()];
+        assert!(
+            state.undo.is_empty() && state.pending.is_none(),
+            "records taken before an unrecorded edit must not survive it"
+        );
+        undo(&mut state);
+        assert_eq!(state.lines[0], "rewritten\n", "undo must be a no-op here");
+    }
+
+    /// Replay `diff_to_undo_edits` onto `current` and return the result, which
+    /// must reproduce `base` exactly for the record to be a valid inverse.
+    fn replay_undo_diff(base: &str, current: &[String]) -> String {
+        let edits = diff_to_undo_edits(base, current);
+        let mut lines = current.to_vec();
+        let mut selections = vec![1usize, 1, 1, 1];
+        for edit in &edits {
+            apply_single_edit(&mut lines, &mut selections, edit);
+        }
+        lines.concat()
+    }
+
+    /// Split into buffer lines that retain their terminators, matching how
+    /// `load_file` stores them.
+    fn as_lines(text: &str) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut rest = text;
+        while let Some(pos) = rest.find('\n') {
+            lines.push(rest[..=pos].to_string());
+            rest = &rest[pos + 1..];
+        }
+        if !rest.is_empty() {
+            lines.push(rest.to_string());
+        }
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines
+    }
+
+    #[test]
+    fn undo_diff_reproduces_base_for_edits_anywhere_in_the_document() {
+        let base = "alpha\nbeta\ngamma\ndelta\nepsilon\n";
+        let cases = [
+            "alpha\nbeta\ngamma\ndelta\nepsilon\n",
+            "Xalpha\nbeta\ngamma\ndelta\nepsilon\n",
+            "alpha\nbeta\ngamma\ndelta\nepsilonX\n",
+            "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\n",
+            "alpha\ngamma\ndelta\nepsilon\n",
+            "alpha\nbeta\nGAMMA\ndelta\nepsilon\n",
+            "alpha\nbeta\ngamma\ndelta\n",
+            "completely different\n",
+            "alpha\nbeta\nga\nmma\ndelta\nepsilon\n",
+            "alpha\nbeta\ngamma\ndelta\nepsilon\n\n",
+        ];
+        for case in cases {
+            assert_eq!(
+                replay_undo_diff(base, &as_lines(case)),
+                base,
+                "undo of {case:?} must restore the base"
+            );
+            assert_eq!(
+                replay_undo_diff(case, &as_lines(base)),
+                case,
+                "redo direction of {case:?} must restore it"
+            );
+        }
+    }
+
+    #[test]
+    fn undo_diff_restores_a_line_appended_at_the_end_of_the_document() {
+        // The offset past the last line's terminator has no column, so a
+        // change reaching the end of the document is the case most likely to
+        // produce an unaddressable position.
+        let base = "one\ntwo\n";
+        assert_eq!(replay_undo_diff(base, &as_lines("one\ntwo\nthree\n")), base);
+        assert_eq!(replay_undo_diff(base, &as_lines("one\n")), base);
+        assert_eq!(replay_undo_diff(base, &as_lines("one\ntwo\n\n")), base);
+        assert_eq!(replay_undo_diff(base, &as_lines("one\ntwoX\n")), base);
+    }
+
+    #[test]
+    fn undo_diff_reproduces_base_across_utf8_boundaries() {
+        // Multi-byte characters on both sides of the changed span, and a
+        // change that shares a leading byte with what it replaced.
+        let cases: [(&str, &str); 5] = [
+            ("café über\nstraße\n", "café ober\nstraße\n"),
+            ("日本語のテキスト\n行2\n", "日本語のテスト\n行2\n"),
+            ("aé\n", "aê\n"),
+            ("emoji 🐛 line\n", "emoji 🐝 line\n"),
+            ("mixed é🐛ß\nsecond\n", "mixed é🐝ß\nsecond\n"),
+        ];
+        for (base, current) in cases {
+            assert_eq!(
+                replay_undo_diff(base, &as_lines(current)),
+                base,
+                "undo of {current:?} must restore {base:?}"
+            );
+            assert_eq!(
+                replay_undo_diff(current, &as_lines(base)),
+                current,
+                "the reverse direction must hold too"
+            );
+        }
+    }
+
+    #[test]
+    fn undo_diff_is_proportional_to_the_changed_span() {
+        // A one-character edit deep in a large document must produce a record
+        // sized to the edit, not to the document.
+        let mut lines: Vec<String> = (0..4000).map(|i| format!("line {i} of text\n")).collect();
+        let base: String = lines.concat();
+        lines[3500] = "line 3500 of TEXT\n".to_string();
+        let edits = diff_to_undo_edits(&base, &lines);
+        let recorded: usize = edits.iter().map(|e| e.text.len()).sum();
+        assert!(
+            recorded < 64,
+            "a single-word edit recorded {recorded} bytes of text"
+        );
+        assert_eq!(replay_undo_diff(&base, &lines), base);
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub mod picker;
 #[cfg(unix)]
 pub mod process;
 pub mod regex;
+pub(crate) mod reload;
 pub mod status_view;
 pub mod storage;
 pub mod style;

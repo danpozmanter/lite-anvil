@@ -79,6 +79,26 @@ pub struct MarkdownPreviewState {
     pub code_tokens: Vec<Option<Vec<Vec<crate::editor::tokenizer::Token>>>>,
 }
 
+impl MarkdownPreviewState {
+    /// Heap bytes this preview retains. Zero while preview is off, since
+    /// nothing is parsed until the user opens the pane.
+    pub fn retained_bytes(&self) -> u64 {
+        let layout = (self.layout.capacity() * std::mem::size_of::<LayoutEntry>()) as u64;
+        let code: u64 = self
+            .code_tokens
+            .iter()
+            .flatten()
+            .flatten()
+            .flatten()
+            .map(|token| {
+                (token.text.capacity() + std::mem::size_of::<crate::editor::tokenizer::Token>())
+                    as u64
+            })
+            .sum();
+        layout + code
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LayoutEntry {
     pub y: f64,

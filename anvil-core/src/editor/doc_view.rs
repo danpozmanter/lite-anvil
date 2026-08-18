@@ -1537,10 +1537,6 @@ const TOKEN_CACHE_MARGIN: usize = 1000;
 /// Sparse lexical state checkpoints keep deep-view reconstruction bounded
 /// without retaining a heap-backed token record for every source line.
 const TOKEN_CHECKPOINT_INTERVAL: usize = 128;
-/// Individual lines above this size render as plain text. This prevents one
-/// minified or generated line from consuming an entire input frame inside a
-/// single regex call which cannot be preempted by the frame budget.
-const TOKENIZE_MAX_LINE_BYTES: usize = 64 * 1024;
 /// Maximum syntax work performed by one render-line build. Cold/deep walks
 /// yield after this budget and continue on the next frame while plain text is
 /// displayed immediately.
@@ -1584,6 +1580,10 @@ pub(crate) fn build_render_lines(
     token_cache: Option<&std::cell::RefCell<crate::editor::open_doc::TokenCache>>,
 ) -> Vec<RenderLine> {
     let _perf = crate::editor::perf::span("build_render_lines");
+    // A line above this size renders as plain text however small the file is:
+    // one minified or generated line would otherwise consume an entire input
+    // frame inside a single regex call, which the frame budget cannot preempt.
+    let max_line_bytes = crate::editor::open_doc::syntax_line_limit_bytes();
     let line_h = style.code_font_height * 1.2;
     let visible_lines = ((dv.rect().h / line_h).ceil() as usize).max(1);
     let hint_color = SYNTAX_COLORS.with(|s| {
@@ -1649,6 +1649,7 @@ pub(crate) fn build_render_lines(
                 cache.change_id = b.change_id;
             }
             cache.pending = false;
+            cache.syntax_limited = false;
         }
 
         // Reconstruct the state entering the viewport from the nearest sparse
@@ -1679,7 +1680,7 @@ pub(crate) fn build_render_lines(
                     break;
                 }
                 let raw = b.lines.get(ln - 1).map(String::as_str).unwrap_or("");
-                if raw.len() <= TOKENIZE_MAX_LINE_BYTES {
+                if raw.len() <= max_line_bytes {
                     let (_, end) = tokenizer::tokenize_line_with_state(syntax, raw, &state);
                     state = end;
                 }
@@ -1718,7 +1719,7 @@ pub(crate) fn build_render_lines(
                     };
                     if let Some(cached) = cached {
                         syntax_tokens = Some(cached);
-                    } else if raw_line.len() <= TOKENIZE_MAX_LINE_BYTES
+                    } else if raw_line.len() <= max_line_bytes
                         && syntax_started.elapsed() < TOKENIZE_FRAME_BUDGET
                     {
                         let start_state = state.clone();
@@ -1745,10 +1746,12 @@ pub(crate) fn build_render_lines(
                             cache.frontier_state.clone_from(&state);
                         }
                         syntax_tokens = Some(arc);
-                    } else if raw_line.len() <= TOKENIZE_MAX_LINE_BYTES {
+                    } else if raw_line.len() <= max_line_bytes {
                         cache_cell.borrow_mut().pending = true;
+                    } else {
+                        cache_cell.borrow_mut().syntax_limited = true;
                     }
-                } else if raw_line.len() <= TOKENIZE_MAX_LINE_BYTES {
+                } else if raw_line.len() <= max_line_bytes {
                     let (computed, end) =
                         tokenizer::tokenize_line_with_state(syntax, raw_line, &state);
                     state = end;

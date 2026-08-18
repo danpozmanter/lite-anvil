@@ -32,7 +32,6 @@ use notify::{Event, RecursiveMode, Watcher};
 thread_local! {
     static SINGLE_FILE_MODE: Cell<bool> = const { Cell::new(false) };
     static MAX_OPEN_TABS: Cell<usize> = const { Cell::new(8) };
-    static HARD_FILE_LIMIT_MB: Cell<u32> = const { Cell::new(4096) };
 }
 
 /// Whether the editor is running in single-file mode (Nano-Anvil).
@@ -48,10 +47,6 @@ fn use_git() -> bool {
 pub(crate) fn can_open_another_tab(_current: usize) -> bool {
     // The open tab limit has been removed; any number of tabs may be open.
     true
-}
-
-pub(crate) fn hard_file_limit_mb() -> u32 {
-    HARD_FILE_LIMIT_MB.with(Cell::get)
 }
 
 /// Commands which can change the active document's content or edit metadata.
@@ -717,7 +712,7 @@ pub fn run(
     let single_file_mode = !subsystems.has_sidebar();
     SINGLE_FILE_MODE.with(|c| c.set(single_file_mode));
     MAX_OPEN_TABS.with(|c| c.set(config.max_tabs.max(1) as usize));
-    HARD_FILE_LIMIT_MB.with(|c| c.set(config.large_file.hard_limit_mb));
+    crate::editor::open_doc::set_large_file_config(&config.large_file);
     if single_file_mode {
         crate::renderer::font::set_glyph_cache_limit(1024);
         crate::renderer::font::set_skip_prewarm(true);
@@ -901,9 +896,9 @@ pub fn run(
     // Open files from CLI args. Per-tab state and session/file I/O live
     // in `crate::editor::open_doc`.
     use crate::editor::open_doc::{
-        BG_LOAD_THRESHOLD, OpenDoc, check_file_size_limit, doc_is_modified, nag_msg_close,
-        nag_msg_quit, open_file_into, project_session_key, restore_project_session,
-        save_project_session, scroll_new_doc_to_line, split_path_line,
+        OpenDoc, check_file_size_limit, doc_is_modified, nag_msg_close, nag_msg_quit,
+        open_file_into, project_session_key, restore_project_session, save_project_session,
+        scroll_new_doc_to_line, split_path_line,
     };
 
     let mut docs: Vec<OpenDoc> = Vec::new();
@@ -988,6 +983,7 @@ pub fn run(
                             cached_rect_w: -1.0,
                             cached_rect_h: -1.0,
                             dirty_cache: std::cell::Cell::new(None),
+                            canonical_cache: Default::default(),
                             token_cache: std::cell::RefCell::new(
                                 crate::editor::open_doc::TokenCache::default(),
                             ),
@@ -1031,6 +1027,7 @@ pub fn run(
             dirty_cache: std::cell::Cell::new(None),
             token_cache: std::cell::RefCell::new(crate::editor::open_doc::TokenCache::default()),
             preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
+            canonical_cache: Default::default(),
         });
     }
 
@@ -1084,6 +1081,10 @@ pub fn run(
     // Dropdown menu shown when the tab bar overflows — lists every open tab
     // so they stay reachable even when their labels don't fit on screen.
     let mut tab_dropdown_open: bool = false;
+    let mut tab_layout = TabLayout::default();
+    /// How often the opt-in memory report is emitted.
+    const MEMORY_REPORT_INTERVAL_SECS: u64 = 10;
+    let mut last_memory_report = Instant::now();
     // Suppresses the hover tooltip after a tab click until the mouse leaves
     // the tab bar; prevents the tooltip from lingering on the selected tab.
     let mut tab_tooltip_suppressed: bool = false;
@@ -2099,6 +2100,82 @@ pub fn run(
         }
     }
 
+    /// Send `didOpen` for one document and ask for its diagnostics. Does
+    /// nothing if the tab has since closed or the document is already open.
+    fn announce_document_to_lsp(
+        tid: u64,
+        lsp_state: &mut LspState,
+        docs: &[crate::editor::open_doc::OpenDoc],
+        path: &str,
+    ) {
+        let uri = path_to_uri(path);
+        if lsp_state.opened_documents.contains(&uri) {
+            return;
+        }
+        let Some(doc) = docs.iter().find(|doc| doc.path == path) else {
+            return;
+        };
+        if crate::editor::open_doc::doc_policy(doc).disable_lsp {
+            return;
+        }
+        let Some(buf_id) = doc.view.buffer_id else {
+            return;
+        };
+        let text = buffer::with_buffer(buf_id, |b| Ok(b.lines.join(""))).unwrap_or_default();
+        let _ = lsp::send_message(
+            tid,
+            &lsp_did_open(&uri, lsp_language_id(&lsp_state.filetype), &text),
+        );
+        lsp_state.opened_documents.insert(uri.clone());
+        lsp_state.document_texts.insert(uri.clone(), text);
+        request_lsp_diagnostics(tid, lsp_state, &uri);
+    }
+
+    /// Measured tab-bar geometry: one entry per tab as
+    /// `(x, width, displayed label, full label)`, plus the total width the
+    /// tabs would need without truncation.
+    ///
+    /// Measuring a label means asking the font for its width, and the labels
+    /// are built with allocation. Both would otherwise be repeated for every
+    /// open tab on every redraw, including redraws caused by a blinking
+    /// cursor, so the result is kept until something it depends on changes.
+    #[derive(Default)]
+    struct TabLayout {
+        signature: u64,
+        full_total: f64,
+        rects: std::sync::Arc<Vec<(f64, f64, String, String)>>,
+    }
+
+    /// Everything the measured geometry depends on: the tabs themselves, the
+    /// space they are laid out in, and the metrics used to measure them.
+    fn tab_layout_signature(
+        docs: &[crate::editor::open_doc::OpenDoc],
+        width: f64,
+        sidebar_w: f64,
+        close_w: f64,
+        style: &crate::editor::style_ctx::StyleContext,
+    ) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        docs.len().hash(&mut hasher);
+        for doc in docs {
+            doc.name.hash(&mut hasher);
+            doc_is_modified(doc).hash(&mut hasher);
+        }
+        for value in [
+            width,
+            sidebar_w,
+            close_w,
+            style.font_height,
+            style.padding_x,
+            style.divider_size,
+        ] {
+            value.to_bits().hash(&mut hasher);
+        }
+        style.font.hash(&mut hasher);
+        hasher.finish()
+    }
+
     fn request_lsp_diagnostics(tid: u64, lsp_state: &mut LspState, uri: &str) {
         if !lsp_state.pull_diagnostics {
             return;
@@ -3016,18 +3093,8 @@ pub fn run(
                                                     info_message = Some((msg, Instant::now()));
                                                 }
                                                 Ok(sz) => {
-                                                    let configured_bg_threshold = if config
-                                                        .large_file
-                                                        .soft_limit_mb
-                                                        == 0
-                                                    {
-                                                        BG_LOAD_THRESHOLD
-                                                    } else {
-                                                        u64::from(
-                                                            config.large_file.soft_limit_mb,
-                                                        ) * 1024
-                                                            * 1024
-                                                    };
+                                                    let configured_bg_threshold =
+                                                        crate::editor::open_doc::PerformancePolicy::background_load_threshold();
                                                     if sz > configured_bg_threshold
                                                         && load_job.is_none()
                                                     {
@@ -5699,16 +5766,9 @@ pub fn run(
                         redraw = true;
                         continue;
                     }
-                    if config.large_file.read_only
-                        && docs
-                            .get(active_tab)
-                            .map(|doc| {
-                                crate::editor::open_doc::exceeds_soft_limit(
-                                    doc,
-                                    config.large_file.soft_limit_mb,
-                                )
-                            })
-                            .unwrap_or(false)
+                    if docs
+                        .get(active_tab)
+                        .is_some_and(|doc| crate::editor::open_doc::doc_policy(doc).read_only)
                     {
                         info_message = Some((
                             "Large file is read-only by configuration".to_string(),
@@ -5817,11 +5877,8 @@ pub fn run(
                                 && docs
                                     .get(active_tab)
                                     .map(|doc| {
-                                        !(config.large_file.disable_autocomplete
-                                            && crate::editor::open_doc::exceeds_soft_limit(
-                                                doc,
-                                                config.large_file.soft_limit_mb,
-                                            ))
+                                        !(crate::editor::open_doc::doc_policy(doc)
+                                            .disable_autocomplete)
                                     })
                                     .unwrap_or(false)
                             {
@@ -7409,11 +7466,8 @@ pub fn run(
                                     .find(|r| *x >= r.x1 && *x <= r.x2 && *y >= r.y1 && *y <= r.y2)
                                     .cloned();
                                 if let Some(cb) = cb {
-                                    let large_read_only = config.large_file.read_only
-                                        && crate::editor::open_doc::exceeds_soft_limit(
-                                            doc,
-                                            config.large_file.soft_limit_mb,
-                                        );
+                                    let large_read_only =
+                                        crate::editor::open_doc::doc_policy(doc).read_only;
                                     if large_read_only {
                                         info_message = Some((
                                             "Large file is read-only by configuration".to_string(),
@@ -7624,11 +7678,8 @@ pub fn run(
                                     && *x < dvr.x + dvr.w
                                     && *y >= dvr.y
                                     && *y < dvr.y + dvr.h;
-                                let large_read_only = config.large_file.read_only
-                                    && crate::editor::open_doc::exceeds_soft_limit(
-                                        doc,
-                                        config.large_file.soft_limit_mb,
-                                    );
+                                let large_read_only =
+                                    crate::editor::open_doc::doc_policy(doc).read_only;
                                 if in_editor && !large_read_only {
                                     let line_h = style.code_font_height * 1.2;
                                     let gutter_w = dv.gutter_width;
@@ -8423,11 +8474,7 @@ pub fn run(
             && lsp_state.should_attempt_spawn()
             && let Some(doc) = docs.get(active_tab)
             && !doc.path.is_empty()
-            && !(config.large_file.disable_lsp
-                && crate::editor::open_doc::exceeds_soft_limit(
-                    doc,
-                    config.large_file.soft_limit_mb,
-                ))
+            && !(crate::editor::open_doc::doc_policy(doc).disable_lsp)
         {
             try_start_lsp(
                 &doc.path,
@@ -8474,6 +8521,7 @@ pub fn run(
                             cached_rect_w: -1.0,
                             cached_rect_h: -1.0,
                             dirty_cache: std::cell::Cell::new(None),
+                            canonical_cache: Default::default(),
                             token_cache: std::cell::RefCell::new(
                                 crate::editor::open_doc::TokenCache::default(),
                             ),
@@ -8801,36 +8849,34 @@ pub fn run(
                                 {
                                     let _ = lsp::send_message(tid, &notification);
                                 }
-                                // Send didOpen only for files matching the LSP filetype.
-                                for doc in &docs {
-                                    if doc.path.is_empty() {
-                                        continue;
-                                    }
-                                    let ext = doc.path.rsplit('.').next().unwrap_or("");
-                                    let Some(ft) = ext_to_lsp_filetype(ext) else {
-                                        continue;
-                                    };
-                                    if ft != lsp_state.filetype {
-                                        continue;
-                                    }
-                                    if let Some(buf_id) = doc.view.buffer_id {
-                                        let text =
-                                            buffer::with_buffer(buf_id, |b| Ok(b.lines.join("")))
-                                                .unwrap_or_default();
-                                        let uri = path_to_uri(&doc.path);
-                                        let _ = lsp::send_message(
-                                            tid,
-                                            &lsp_did_open(
-                                                &uri,
-                                                lsp_language_id(&lsp_state.filetype),
-                                                &text,
-                                            ),
-                                        );
-                                        lsp_state.opened_documents.insert(uri.clone());
-                                        lsp_state.document_texts.insert(uri.clone(), text);
-                                        request_lsp_diagnostics(tid, &mut lsp_state, &uri);
-                                    }
+                                // Announce files matching the LSP filetype.
+                                // The active tab goes now, so the file the
+                                // user is looking at is served immediately;
+                                // the rest queue and drain a few per frame.
+                                let mut to_open: Vec<String> = docs
+                                    .iter()
+                                    .filter(|doc| {
+                                        !doc.path.is_empty()
+                                            && ext_to_lsp_filetype(
+                                                doc.path.rsplit('.').next().unwrap_or(""),
+                                            ) == Some(lsp_state.filetype.as_str())
+                                    })
+                                    .map(|doc| doc.path.clone())
+                                    .collect();
+                                if let Some(active_path) =
+                                    docs.get(active_tab).map(|doc| doc.path.clone())
+                                    && let Some(pos) =
+                                        to_open.iter().position(|p| *p == active_path)
+                                {
+                                    let active_path = to_open.remove(pos);
+                                    announce_document_to_lsp(
+                                        tid,
+                                        &mut lsp_state,
+                                        &docs,
+                                        &active_path,
+                                    );
                                 }
+                                lsp_state.pending_did_open.extend(to_open);
                                 // Request inlay hints only for the active file if it matches LSP.
                                 if let Some(doc) = docs.get(active_tab) {
                                     let ext = doc.path.rsplit('.').next().unwrap_or("");
@@ -9539,11 +9585,7 @@ pub fn run(
         // place.
         if subsystems.has_lsp() && lsp_state.transport_id.is_some() && lsp_state.initialized {
             if let Some(doc) = docs.get(active_tab) {
-                let lsp_allowed = !(config.large_file.disable_lsp
-                    && crate::editor::open_doc::exceeds_soft_limit(
-                        doc,
-                        config.large_file.soft_limit_mb,
-                    ));
+                let lsp_allowed = !(crate::editor::open_doc::doc_policy(doc).disable_lsp);
                 if !doc.path.is_empty() && lsp_allowed {
                     let ext = doc.path.rsplit('.').next().unwrap_or("");
                     let is_lsp_file = ext_to_lsp_filetype(ext)
@@ -9572,6 +9614,22 @@ pub fn run(
             }
         }
 
+        // LSP: announce a bounded number of queued documents per frame, so a
+        // session's worth of restored tabs never lands in one frame.
+        if subsystems.has_lsp() && lsp_state.initialized {
+            if let Some(tid) = lsp_state.transport_id {
+                /// Documents announced per frame. Each one joins and
+                /// serializes a whole buffer.
+                const DID_OPEN_PER_FRAME: usize = 2;
+                for _ in 0..DID_OPEN_PER_FRAME {
+                    let Some(path) = lsp_state.pending_did_open.pop_front() else {
+                        break;
+                    };
+                    announce_document_to_lsp(tid, &mut lsp_state, &docs, &path);
+                }
+            }
+        }
+
         // LSP: flush debounced didChange after 300ms of no changes.
         if subsystems.has_lsp() {
             if let Some(last) = lsp_state.last_change {
@@ -9584,11 +9642,8 @@ pub fn run(
                             let file_path = uri_to_path(&uri);
                             if let Some(doc) = docs.iter().find(|d| d.path == file_path) {
                                 let ext = doc.path.rsplit('.').next().unwrap_or("");
-                                let is_lsp_file = !(config.large_file.disable_lsp
-                                    && crate::editor::open_doc::exceeds_soft_limit(
-                                        doc,
-                                        config.large_file.soft_limit_mb,
-                                    ))
+                                let is_lsp_file = !(crate::editor::open_doc::doc_policy(doc)
+                                    .disable_lsp)
                                     && ext_to_lsp_filetype(ext)
                                         .map(|ft| ft == lsp_state.filetype)
                                         .unwrap_or(false);
@@ -9997,88 +10052,80 @@ pub fn run(
             }
             status_view.update(&uctx);
 
-            // Autoreload: check for external file changes.
-            let changed_paths = autoreload.poll_changed();
-            for changed in &changed_paths {
-                // Canonicalize to match doc paths.
-                let canonical = std::fs::canonicalize(changed)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| changed.clone());
-                for doc in docs.iter_mut() {
-                    let doc_canon = std::fs::canonicalize(&doc.path)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| doc.path.clone());
-                    if doc_canon != canonical {
-                        continue;
-                    }
-                    let Some(buf_id) = doc.view.buffer_id else {
-                        break;
+            // Autoreload: check for external file changes. A watcher event is
+            // only a hint; reading the file to answer it happens on a worker,
+            // and the result is applied below against the document as it
+            // stands when the read lands.
+            for changed in autoreload.poll_changed() {
+                let canonical = crate::editor::open_doc::canonicalize_path(&changed);
+                let Some(doc) = docs
+                    .iter()
+                    .find(|doc| crate::editor::open_doc::doc_canonical_path(doc) == canonical)
+                else {
+                    continue;
+                };
+                if crate::editor::open_doc::doc_policy(doc).large {
+                    // The reload prompt leaves the choice with the user and
+                    // does the work only when it is explicitly accepted.
+                    nag = Nag::ReloadFromDisk {
+                        path: doc.path.clone(),
                     };
-                    let path = doc.path.clone();
-                    if crate::editor::open_doc::exceeds_soft_limit(
-                        doc,
-                        config.large_file.soft_limit_mb,
-                    ) {
-                        // Avoid an unsolicited full read, decode, and hash on
-                        // the UI thread for large files. The existing reload
-                        // prompt leaves the choice with the user and performs
-                        // the work only when explicitly accepted.
-                        nag = Nag::ReloadFromDisk { path };
-                        redraw = true;
-                        break;
-                    }
-                    // We watch the parent directory, so our own writes --
-                    // notably notes-mode autosave -- echo back as change
-                    // events too. A watcher event is only a hint to check;
-                    // the authoritative test is whether the bytes on disk
-                    // differ from what we last persisted. Read the file and
-                    // compare its signature against the one recorded at our
-                    // last save: if they match, this is the echo of our own
-                    // write, so there is nothing to reload or warn about.
-                    let mut disk_state = buffer::default_buffer_state();
-                    if buffer::load_file(&mut disk_state, &path).is_err() {
-                        break;
-                    }
-                    let disk_sig = buffer::content_signature(&disk_state.lines);
-                    if disk_sig == doc.saved_signature {
-                        break;
-                    }
-                    // The bytes on disk genuinely differ from our last save.
-                    if doc_is_modified(doc) {
+                    redraw = true;
+                    continue;
+                }
+                crate::editor::reload::probe(&doc.path);
+            }
+
+            for disk in crate::editor::reload::drain() {
+                let canonical = crate::editor::open_doc::canonicalize_path(&disk.path);
+                let Some(doc) = docs
+                    .iter_mut()
+                    .find(|doc| crate::editor::open_doc::doc_canonical_path(doc) == canonical)
+                else {
+                    continue;
+                };
+                let Some(buf_id) = doc.view.buffer_id else {
+                    continue;
+                };
+                use crate::editor::open_doc::ExternalChange;
+                match crate::editor::open_doc::classify_external_change(doc, disk.signature) {
+                    ExternalChange::Echo => continue,
+                    ExternalChange::AskUser => {
                         // Local edits would be lost by an automatic reload.
-                        nag = Nag::ReloadFromDisk { path };
-                    } else {
-                        // No local edits: adopt the external content. We
-                        // already loaded it above, so move it straight in.
+                        nag = Nag::ReloadFromDisk {
+                            path: doc.path.clone(),
+                        };
+                    }
+                    ExternalChange::Adopt => {
+                        let _perf = crate::editor::perf::span("external_reload_apply");
+                        // No local edits: adopt the external content, which the
+                        // worker has already read.
                         let _ = buffer::with_buffer_mut(buf_id, |b| {
-                            b.lines = disk_state.lines;
-                            // `default_buffer_state()` resets change_id to 1;
-                            // a just-opened buffer also sits at 1, so the
-                            // doc-view render cache would hit on stale lines.
-                            // Bump past the current value to invalidate every
-                            // downstream cache.
+                            b.lines = disk.lines;
+                            // `default_buffer_state()` resets change_id to 1; a
+                            // just-opened buffer also sits at 1, so the doc-view
+                            // render cache would hit on stale lines. Bump past the
+                            // current value to invalidate every downstream cache.
                             b.change_id = b.change_id.wrapping_add(1).max(1);
+                            b.total_bytes = b.lines.iter().map(|l| l.len() as u64).sum();
+                            buffer::reset_history(b);
                             Ok(())
                         });
-                        // Force the render cache to rebuild next frame rather
-                        // than relying on the change_id comparison to catch
-                        // the bump.
+                        // Force the render cache to rebuild next frame rather than
+                        // relying on the change_id comparison to catch the bump.
                         doc.cached_change_id = -1;
                         doc.cached_render = std::sync::Arc::new(Vec::new());
                         crate::window::force_invalidate();
-                        // Realign the "saved" markers with what is now on
-                        // disk so the next external change is judged against
-                        // the correct baseline.
-                        if let Ok((cid, sig)) = buffer::with_buffer(buf_id, |b| {
-                            Ok((b.change_id, buffer::content_signature(&b.lines)))
-                        }) {
+                        // Realign the "saved" markers with what is now on disk so
+                        // the next external change is judged against the correct
+                        // baseline.
+                        if let Ok(cid) = buffer::with_buffer(buf_id, |b| Ok(b.change_id)) {
                             doc.saved_change_id = cid;
-                            doc.saved_signature = sig;
+                            doc.saved_signature = disk.signature;
                         }
                     }
-                    redraw = true;
-                    break;
                 }
+                redraw = true;
             }
 
             // Sidebar watcher: refresh when files are created/deleted/renamed.
@@ -10284,7 +10331,10 @@ pub fn run(
                     let (crlf, huge) = doc
                         .view
                         .buffer_id
-                        .and_then(|id| buffer::with_buffer(id, |b| Ok((b.crlf, b.is_huge()))).ok())
+                        .and_then(|id| {
+                            buffer::with_buffer(id, |b| Ok((b.crlf, b.undo_snapshots_disabled())))
+                                .ok()
+                        })
                         .unwrap_or((false, false));
                     let le = if crlf { "CRLF" } else { "LF" };
                     let mode = if overwrite_mode { "OVR" } else { "INS" };
@@ -10296,7 +10346,10 @@ pub fn run(
                         le.to_string(),
                     ];
                     if huge {
-                        right_parts.push("No Undo".to_string());
+                        right_parts.push("Limited Undo".to_string());
+                    }
+                    if doc.token_cache.borrow().syntax_limited {
+                        right_parts.push("Syntax limited".to_string());
                     }
                     if doc_is_modified(doc) {
                         right_parts.push("modified".to_string());
@@ -10387,7 +10440,8 @@ pub fn run(
                 let mut tab_hover: Option<usize> = None;
                 let mut tab_overlay_tbh: f64 = 0.0;
                 let mut tab_overlay_overflow: bool = false;
-                let mut tab_overlay_rects: Vec<(f64, f64, String, String)> = Vec::new();
+                let mut tab_overlay_rects: std::sync::Arc<Vec<(f64, f64, String, String)>> =
+                    std::sync::Arc::new(Vec::new());
                 let mut tab_overlay_btn_right: f64 = width;
                 let mut tab_overlay_btn_w: f64 = 0.0;
 
@@ -10407,23 +10461,59 @@ pub fn run(
                     let close_w = draw_ctx.font_width(style.icon_font, "C") + style.padding_x;
                     let dropdown_btn_w = (style.font_height + style.padding_x * 2.0).ceil();
 
-                    // Measure full-width tab bar (no truncation) to decide whether to
-                    // enter overflow mode. Reserving the dropdown button space keeps
-                    // the decision stable once overflow is on.
+                    // Measure the full-width tab bar (no truncation) to decide
+                    // whether to enter overflow mode, then lay the tabs out.
+                    // Reserving the dropdown button space keeps the decision
+                    // stable once overflow is on. Both passes are measurement,
+                    // so they are done once per change rather than per frame.
                     let avail_full = (width - sidebar_w).max(0.0);
-                    let mut full_total = 0.0_f64;
-                    for doc in docs.iter() {
-                        let label = if doc_is_modified(doc) {
-                            format!("*{}", doc.name)
-                        } else {
-                            doc.name.clone()
+                    let signature = tab_layout_signature(&docs, width, sidebar_w, close_w, &style);
+                    if tab_layout.signature != signature {
+                        let mut full_total = 0.0_f64;
+                        for doc in docs.iter() {
+                            let label = if doc_is_modified(doc) {
+                                format!("*{}", doc.name)
+                            } else {
+                                doc.name.clone()
+                            };
+                            full_total += draw_ctx.font_width(style.font, &label)
+                                + style.padding_x * 2.0
+                                + close_w
+                                + style.divider_size;
+                        }
+                        let overflow = full_total > avail_full;
+                        let mut rects: Vec<(f64, f64, String, String)> =
+                            Vec::with_capacity(docs.len());
+                        let mut tx = sidebar_w;
+                        for doc in docs.iter() {
+                            let full_label = if doc_is_modified(doc) {
+                                format!("*{}", doc.name)
+                            } else {
+                                doc.name.clone()
+                            };
+                            let display_label = if overflow {
+                                let base = truncate_tab_name(&doc.name, 10);
+                                if doc_is_modified(doc) {
+                                    format!("*{base}")
+                                } else {
+                                    base
+                                }
+                            } else {
+                                full_label.clone()
+                            };
+                            let tw = draw_ctx.font_width(style.font, &display_label)
+                                + style.padding_x * 2.0
+                                + close_w;
+                            rects.push((tx, tw, display_label, full_label));
+                            tx += tw + style.divider_size;
+                        }
+                        tab_layout = TabLayout {
+                            signature,
+                            full_total,
+                            rects: std::sync::Arc::new(rects),
                         };
-                        full_total += draw_ctx.font_width(style.font, &label)
-                            + style.padding_x * 2.0
-                            + close_w
-                            + style.divider_size;
                     }
-                    let tabs_overflow = full_total > avail_full;
+                    let tabs_overflow = tab_layout.full_total > avail_full;
                     if !tabs_overflow {
                         tab_dropdown_open = false;
                     }
@@ -10437,37 +10527,12 @@ pub fn run(
                     tab_overlay_btn_right = width;
                     tab_overlay_btn_w = dropdown_btn_w;
 
-                    // Cache displayed labels (with truncation when overflowing) and
-                    // per-tab rects so the tooltip pass below and the hit-tests can
-                    // reuse them without recomputing widths.
-                    let mut tab_rects: Vec<(f64, f64, String, String)> =
-                        Vec::with_capacity(docs.len());
-
-                    let mut tx = sidebar_w;
-                    for (i, doc) in docs.iter().enumerate() {
-                        let full_label = if doc_is_modified(doc) {
-                            format!("*{}", doc.name)
-                        } else {
-                            doc.name.clone()
-                        };
-                        let display_label = if tabs_overflow {
-                            let base = truncate_tab_name(&doc.name, 10);
-                            if doc_is_modified(doc) {
-                                format!("*{base}")
-                            } else {
-                                base
-                            }
-                        } else {
-                            full_label.clone()
-                        };
-                        let tw = draw_ctx.font_width(style.font, &display_label)
-                            + style.padding_x * 2.0
-                            + close_w;
-                        tab_rects.push((tx, tw, display_label.clone(), full_label.clone()));
+                    let tab_rects = std::sync::Arc::clone(&tab_layout.rects);
+                    for (i, (tx, tw, display_label, _)) in tab_rects.iter().enumerate() {
+                        let (tx, tw) = (*tx, *tw);
                         // Don't draw tabs that fall entirely past the dropdown limit;
                         // they're still reachable via the dropdown menu.
                         if tx >= tabs_right_limit {
-                            tx += tw + style.divider_size;
                             continue;
                         }
                         let bg = if i == active_tab {
@@ -10490,7 +10555,7 @@ pub fn run(
                         let text_y_tab = accent_h + (tbh - accent_h - style.font_height) / 2.0;
                         draw_ctx.draw_text(
                             style.font,
-                            &display_label,
+                            display_label,
                             tx + style.padding_x,
                             text_y_tab,
                             fg,
@@ -10540,7 +10605,6 @@ pub fn run(
                         {
                             tab_hover = Some(i);
                         }
-                        tx += tw + style.divider_size;
                     }
                     if mouse_y >= tbh {
                         tab_tooltip_suppressed = false;
@@ -11103,15 +11167,12 @@ pub fn run(
                     let dv = &doc.view;
                     if let Some(buf_id) = dv.buffer_id {
                         let ext = doc.path.rsplit('.').next().unwrap_or("");
-                        let exceeds_soft_limit = crate::editor::open_doc::exceeds_soft_limit(
-                            doc,
-                            config.large_file.soft_limit_mb,
-                        );
+                        let policy = crate::editor::open_doc::doc_policy(doc);
                         // Compile-on-demand and bump MRU. Evict the LRU
                         // entry once the cache exceeds SYNTAX_CACHE_CAP
                         // so memory doesn't grow unbounded on sessions
                         // that touch many file types.
-                        let compiled_opt = if exceeds_soft_limit && config.large_file.plain_text {
+                        let compiled_opt = if policy.plain_text {
                             None
                         } else {
                             let ext_owned = ext.to_string();
@@ -11149,7 +11210,7 @@ pub fn run(
                         } else {
                             None
                         };
-                        let is_lsp_file = !(exceeds_soft_limit && config.large_file.disable_lsp)
+                        let is_lsp_file = !policy.disable_lsp
                             && ext_to_lsp_filetype(ext)
                                 .map(|ft| ft == lsp_state.filetype)
                                 .unwrap_or(false);
@@ -11311,11 +11372,7 @@ pub fn run(
                         test_badges.clear();
                         if !doc.path.is_empty()
                             && crate::editor::test_runner::supports_test_discovery(&doc.path)
-                            && !(config.large_file.plain_text
-                                && crate::editor::open_doc::exceeds_soft_limit(
-                                    doc,
-                                    config.large_file.soft_limit_mb,
-                                ))
+                            && !(crate::editor::open_doc::doc_policy(doc).plain_text)
                         {
                             // Rescan only when the file or its content changed;
                             // detection probes the filesystem and discovery
@@ -11408,11 +11465,7 @@ pub fn run(
                         syntax_pending_after_frame = doc.token_cache.borrow().pending;
                         // Draw bracket match underlines at cursor position.
                         if let Some(buf_id) = dv.buffer_id
-                            && !(config.large_file.plain_text
-                                && crate::editor::open_doc::exceeds_soft_limit(
-                                    doc,
-                                    config.large_file.soft_limit_mb,
-                                ))
+                            && !(crate::editor::open_doc::doc_policy(doc).plain_text)
                         {
                             let bracket = buffer::with_buffer(buf_id, |b| {
                                 Ok(crate::editor::picker::bracket_pair(
@@ -11666,11 +11719,7 @@ pub fn run(
                 // editor view when enabled on the active doc). Runs after
                 // the normal doc draw so it renders into its own rect.
                 if let Some(doc) = docs.get_mut(active_tab) {
-                    let preview_suppressed = config.large_file.plain_text
-                        && crate::editor::open_doc::exceeds_soft_limit(
-                            doc,
-                            config.large_file.soft_limit_mb,
-                        );
+                    let preview_suppressed = crate::editor::open_doc::doc_policy(doc).plain_text;
                     if !preview_suppressed && doc.preview.enabled && doc.preview.rect.w > 0.0 {
                         if let Some(buf_id) = doc.view.buffer_id {
                             // Reparse the source when the buffer changes.
@@ -13710,6 +13759,14 @@ pub fn run(
         // smooth. Otherwise sleep longer: input and worker-pushed wake-up
         // events return from the blocked wait immediately, so only idle CPU is
         // affected, never responsiveness.
+        // Periodic memory telemetry, off unless ANVIL_PERF is set.
+        if crate::editor::perf::enabled()
+            && last_memory_report.elapsed().as_secs() >= MEMORY_REPORT_INTERVAL_SECS
+        {
+            crate::editor::perf::report_memory(&docs);
+            last_memory_report = Instant::now();
+        }
+
         let busy = last_draw.elapsed().as_secs_f64() < 0.3
             || terminal.visible
             || load_job.is_some()
@@ -13717,7 +13774,8 @@ pub fn run(
             || git_status_job.is_some()
             || git_blame_job.is_some()
             || git_log_job.is_some()
-            || update_check_job.is_some();
+            || update_check_job.is_some()
+            || !lsp_state.pending_did_open.is_empty();
         let timeout = if busy { frame_interval } else { idle_wait };
         crate::window::wait_event(Some(timeout));
     }

@@ -27,6 +27,47 @@ impl Drop for PerfSpan {
     }
 }
 
+/// Whether opt-in timings and reports are enabled.
+#[inline]
+pub(crate) fn enabled() -> bool {
+    *ENABLED
+}
+
+/// Report what the open documents are retaining, one line per document plus a
+/// total. Answers "which tab is holding the memory" without a profiler, and is
+/// the evidence any future cache budget should be set from.
+pub(crate) fn report_memory(docs: &[crate::editor::open_doc::OpenDoc]) {
+    if !enabled() {
+        return;
+    }
+    let mut total = 0u64;
+    for doc in docs {
+        let memory = crate::editor::open_doc::doc_memory(doc);
+        total += memory.total();
+        eprintln!(
+            "anvil_perf memory doc={} total_kb={} text_kb={} history_kb={} search_kb={} \
+tokens_kb={} render_kb={} preview_kb={}",
+            if doc.name.is_empty() {
+                "untitled"
+            } else {
+                &doc.name
+            },
+            memory.total() / 1024,
+            memory.text / 1024,
+            memory.history / 1024,
+            memory.search_subject / 1024,
+            memory.token_cache / 1024,
+            memory.render_cache / 1024,
+            memory.preview / 1024,
+        );
+    }
+    eprintln!(
+        "anvil_perf memory docs={} total_kb={}",
+        docs.len(),
+        total / 1024
+    );
+}
+
 #[inline]
 pub(crate) fn span(stage: &'static str) -> Option<PerfSpan> {
     (*ENABLED).then(|| PerfSpan {

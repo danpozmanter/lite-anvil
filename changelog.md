@@ -1,5 +1,20 @@
 # Change Log
 
+## [2.16.0] - 2026-08-18 - Large-file and many-file performance.
+
+* An editing command in a large document no longer pauses at its undo boundary: closing one undo group and opening the next takes 0.5 ms at 5 MB, 3.4 ms at 20 MB, and 9.0 ms at 49 MB, down from 3.8 ms, 15.1 ms, and 37.4 ms. The group's inverse is computed against the line buffer directly instead of building a second copy of the document and walking it a byte at a time, and one group's working buffer is handed to the next instead of being released and faulted back in.
+* Typing stays undoable in files above 50 MB, where undo was previously switched off entirely. A command whose inverse cannot be recorded at that size now truncates the history instead of leaving records that would replay against content they were not taken from; the status bar reports "Limited Undo" for such a document.
+* Fixed undo of a line added or removed at the very end of a document leaving a stray blank line behind.
+* Fixed a command that opened an undo group without changing anything consuming the next undo, so undo now always reaches the last real edit.
+* Reloading a file after an external change no longer leaves the old undo history, whose recorded positions referred to the replaced content.
+* Every size-derived decision for a document - read-only, plain-text rendering, language-server and completion suppression, background loading, and dirty-checking - now comes from one policy resolved from the configured soft limit, rather than four unrelated byte constants that disagreed about what "large" meant.
+* Lines too long to highlight within a frame are configurable through `large_file.long_line_limit_kb`, and the status bar reports "Syntax limited" instead of silently dropping the highlighting.
+* An external change to a watched file is read and fingerprinted on a worker thread rather than on the editor's thread, and a file is matched to its tab without canonicalizing every open path on every event.
+* A git operation that touches many open files runs at most four diffs at a time, and repeated requests for one file while it waits collapse into one.
+* Starting a language server announces the file you are looking at immediately and the rest a couple per frame, instead of serializing every matching open document in the frame that finishes initialization.
+* The tab bar measures its labels only when the tabs, the window, or the font change, instead of measuring every label twice on every redraw.
+* Added opt-in memory telemetry: with `ANVIL_PERF=1` the editor reports what each open document retains - text, undo history, search subject, token cache, render cache, and preview - every ten seconds.
+
 ## [2.15.11] - 2026-08-13 - Language-server crash containment and fixes.
 
 * Fixed the editor being killed by a language server that replies with overlapping text edits, which a formatting or quick-fix response from a crashing server can contain. Such edits are now applied in document order and the overlapping ones dropped, instead of splicing past the end of the text and taking the whole editor down with unsaved work in it.

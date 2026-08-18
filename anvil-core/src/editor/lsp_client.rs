@@ -91,6 +91,11 @@ pub(crate) struct LspState {
     pub diagnostic_result_ids: HashMap<String, String>,
     /// Document URIs already announced to the active server with `didOpen`.
     pub opened_documents: HashSet<String>,
+    /// Paths still to be announced, drained a few per frame. Announcing a
+    /// document means joining and serializing its whole text, so opening a
+    /// session's worth of tabs at once would put that work for every tab into
+    /// the frame that finishes initialization.
+    pub pending_did_open: std::collections::VecDeque<String>,
     /// Text last sent to each opened document. Incremental-sync servers need
     /// this to express a whole-document replacement as a valid ranged edit.
     pub document_texts: HashMap<String, String>,
@@ -161,6 +166,7 @@ impl LspState {
             pull_diagnostics: false,
             diagnostic_result_ids: HashMap::new(),
             opened_documents: HashSet::new(),
+            pending_did_open: std::collections::VecDeque::new(),
             document_texts: HashMap::new(),
             incremental_sync: false,
             diagnostic_retry_at: None,
@@ -255,6 +261,7 @@ impl LspState {
         self.pending_request_uris.clear();
         self.pending_request_change_ids.clear();
         self.opened_documents.clear();
+        self.pending_did_open.clear();
         self.document_texts.clear();
         self.diagnostic_result_ids.clear();
     }
@@ -1539,6 +1546,19 @@ mod tests {
         let req = lsp_inlay_hint_request(1, "file:///x.rs", 0, 50);
         assert_eq!(req["params"]["range"]["start"]["line"], 0);
         assert_eq!(req["params"]["range"]["end"]["line"], 49);
+    }
+
+    #[test]
+    fn forgetting_a_server_drops_documents_still_queued_for_announcement() {
+        let mut s = LspState::new();
+        s.opened_documents.insert("file:///a.gos".to_string());
+        s.pending_did_open.push_back("/b.gos".to_string());
+        s.forget_server_state();
+        assert!(s.opened_documents.is_empty());
+        assert!(
+            s.pending_did_open.is_empty(),
+            "a replacement server must not be sent documents queued for the old one"
+        );
     }
 
     #[test]

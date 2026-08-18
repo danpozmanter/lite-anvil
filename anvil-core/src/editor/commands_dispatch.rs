@@ -12,13 +12,9 @@
 
 {
 let block_large_file_edit = is_document_mutation_command(&cmd)
-    && config.large_file.read_only
     && docs
         .get(active_tab)
-        .map(|doc| {
-            crate::editor::open_doc::exceeds_soft_limit(doc, config.large_file.soft_limit_mb)
-        })
-        .unwrap_or(false);
+        .is_some_and(|doc| crate::editor::open_doc::doc_policy(doc).read_only);
 if block_large_file_edit {
     info_message = Some((
         "Large file is read-only by configuration".to_string(),
@@ -328,6 +324,7 @@ match cmd.as_str() {
                 crate::editor::open_doc::TokenCache::default(),
             ),
             preview: crate::editor::markdown_preview::MarkdownPreviewState::default(),
+            canonical_cache: Default::default(),
         });
         active_tab = docs.len() - 1;
     }
