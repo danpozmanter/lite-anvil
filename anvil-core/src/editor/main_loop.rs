@@ -11187,13 +11187,8 @@ pub fn run(
                                 .entry(ext_owned)
                                 .or_insert_with(|| {
                                     let filename = doc.path.rsplit('/').next().unwrap_or(&doc.path);
-                                    let entry = crate::editor::syntax::match_syntax_entry(
-                                        filename,
-                                        &syntax_index,
-                                    )?;
-                                    let def = entry.load_full()?;
-                                    match tokenizer::compile_from_definition(&def) {
-                                        Ok(cs) => Some(cs),
+                                    match tokenizer::compile_for_filename(filename, &syntax_index) {
+                                        Ok(compiled) => compiled,
                                         Err(e) => {
                                             log_to_file(
                                                 userdir,
@@ -11768,13 +11763,12 @@ pub fn run(
                                         let compiled_opt = compiled_syntax_cache
                                             .entry(ext_owned.clone())
                                             .or_insert_with(|| {
-                                                let entry =
-                                                    crate::editor::syntax::match_syntax_entry(
-                                                        &pseudo,
-                                                        &syntax_index,
-                                                    )?;
-                                                let def = entry.load_full()?;
-                                                tokenizer::compile_from_definition(&def).ok()
+                                                tokenizer::compile_for_filename(
+                                                    &pseudo,
+                                                    &syntax_index,
+                                                )
+                                                .ok()
+                                                .flatten()
                                             })
                                             .as_ref()?;
                                         // Touch MRU so preview-only highlights

@@ -1,6 +1,16 @@
 # Change Log
 
-## [2.16.1] - 2026-08-20 - New language highlighting and LSP server support.
+## [2.16.2] - 2026-08-19 - Embedded-language highlighting.
+
+* JavaScript and CSS inside HTML `<script>` and `<style>` blocks are highlighted, as are the embedded blocks in Vue and Svelte files and fenced code blocks in Markdown source.
+* `.html`, `.htm`, `.php3`, `CMakeLists.txt`, `meson.build`, `build.ninja`, `Dockerfile.<name>`, `.env.<name>`, `.c++`, and `.h++` files are recognised and highlighted; filename matching now follows the grammar's Lua pattern instead of comparing a literal suffix.
+* Grammar patterns spelling "up to the closing delimiter" as Lua's lazy `-` quantifier work: `#include <...>` in C and C++, `[section]` in INI, `[table]` in TOML, and HTML attributes in Markdown.
+* LaTeX `%` comments end at their line instead of colouring the rest of the file.
+* Markdown headings and horizontal rules are highlighted.
+* Erlang macro references (`?NAME`) are highlighted.
+* Corrected Ada comment, Gleam and Haskell `<-` operator, C++ `.c++`/`.h++`, and Markdown ``` \`\`\`c++ ``` patterns that escaped their Lua metacharacters incorrectly.
+
+## [2.16.1] - 2026-08-19 - New language highlighting and LSP server support.
 
 * Added syntax highlighting for Perl, GraphQL, Mojo, Visual Basic, Ada, LaTeX, and Java Properties (`.properties`). Added an explicit JSON grammar (`.json`, `.jsonc`, `.json5`, `.hjson`) so JSON files are no longer covered implicitly by the JavaScript grammar.
 * `.cljs` extension covered via the existing Clojure grammar.

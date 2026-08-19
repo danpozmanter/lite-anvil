@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::editor::error::RegexError;
-use crate::editor::syntax::{PatternSpec, SubSyntaxSpec, SyntaxDefinition, TokenType};
+use crate::editor::syntax::{PatternSpec, SubSyntaxSpec, SyntaxDefinition, SyntaxEntry, TokenType};
 
 /// A single token produced by the tokenizer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -746,9 +746,17 @@ fn lua_class_to_regex(ch: char) -> &'static str {
     }
 }
 
+/// Translate a Lua pattern into the PCRE2 dialect the matchers run on.
+///
+/// `quantifiable` tracks whether the element just emitted can carry a
+/// quantifier. Lua's `-`, `?`, `*`, and `+` are quantifiers only after such an
+/// element; elsewhere (pattern start, after an alternation bar, a group open,
+/// or a zero-width frontier) they stand for themselves, which is how operator
+/// patterns like `->` and CSS's leading `-?` sign are written.
 fn lua_pattern_to_regex(pat: &str) -> String {
     let mut out = String::new();
     let mut chars = pat.chars().peekable();
+    let mut quantifiable = false;
     while let Some(ch) = chars.next() {
         if ch == '%' {
             if let Some(&next) = chars.peek() {
@@ -795,6 +803,7 @@ fn lua_pattern_to_regex(pat: &str) -> String {
                         out.push_str("])(?=[");
                         out.push_str(&set);
                         out.push_str("])");
+                        quantifiable = false;
                     }
                 } else if next == 'b' {
                     // %bxy balanced match -- approximate.
@@ -803,8 +812,10 @@ fn lua_pattern_to_regex(pat: &str) -> String {
                             out.push('\\');
                         }
                         out.push(open);
+                        quantifiable = true;
                     }
                 } else {
+                    quantifiable = true;
                     let expanded = lua_class_to_regex(next);
                     if expanded.is_empty() {
                         // Literal escape.
@@ -819,6 +830,7 @@ fn lua_pattern_to_regex(pat: &str) -> String {
             }
         } else if ch == '[' {
             // Character class -- need to handle %x inside brackets.
+            quantifiable = true;
             out.push('[');
             while let Some(&c) = chars.peek() {
                 if c == ']' {
@@ -845,11 +857,36 @@ fn lua_pattern_to_regex(pat: &str) -> String {
                     out.push(c);
                 }
             }
+        } else if ch == '-' && quantifiable {
+            // Lua spells the lazy zero-or-more quantifier `-`; PCRE2 spells
+            // it `*?`. `.-` is how a grammar reaches "up to the closing
+            // delimiter", as in HTML's `<script ...>` open tag.
+            out.push_str("*?");
+            quantifiable = false;
+        } else if ch == '\n' {
+            // A grammar spells "to the end of the line" as a literal newline;
+            // the tokenizer's subject is one line with its terminator removed,
+            // so the end-of-subject anchor is where that lands.
+            out.push('$');
+            quantifiable = false;
+        } else if matches!(ch, '?' | '*' | '+') && !quantifiable {
+            // A quantifier with nothing to quantify is a literal character.
+            out.push('\\');
+            out.push(ch);
+            quantifiable = true;
         } else {
+            quantifiable = !matches!(ch, '?' | '*' | '+' | '|' | '^' | '$' | '(');
             out.push(ch);
         }
     }
     out
+}
+
+/// Compile a Lua pattern into a regex, for callers matching a single string
+/// (such as a syntax entry's `files` pattern against a filename) rather than
+/// tokenizing. `None` when the translated pattern is not a valid regex.
+pub fn compile_lua_pattern(pattern: &str) -> Option<Regex> {
+    compile_regex(&lua_pattern_to_regex(pattern)).ok()
 }
 
 /// Build a `MatcherDef` from a pattern or regex string.
@@ -1336,8 +1373,94 @@ fn finalize_state(mut state: Vec<u16>) -> Vec<u8> {
     encode_state(&state)
 }
 
-/// Compile a `SyntaxDefinition` (from `native::syntax`) into a `CompiledSyntax`.
+/// Compile the grammar the syntax index matches for `filename`, resolving the
+/// embedded-language selectors it references (e.g. `.js` and `.css` inside
+/// HTML's `<script>` and `<style>` blocks) so the tokenizer descends into them.
+///
+/// `Ok(None)` means no grammar in `index` matches `filename`. An embedded
+/// grammar that fails to load or compile is left unresolved rather than
+/// failing the host grammar.
+pub fn compile_for_filename(
+    filename: &str,
+    index: &[SyntaxEntry],
+) -> Result<Option<CompiledSyntax>, RegexError> {
+    compile_for_filename_inner(filename, index, &mut Resolution::default())
+}
+
+/// Bookkeeping for one `compile_for_filename` call.
+#[derive(Default)]
+struct Resolution {
+    /// Selectors already compiled, so a language two grammars both embed is
+    /// compiled once and shared.
+    compiled: HashMap<String, Option<Arc<CompiledSyntax>>>,
+    /// Selectors being compiled further up the recursion. A grammar reachable
+    /// from itself through an embedding chain leaves that one edge unresolved
+    /// instead of recursing forever.
+    pending: Vec<String>,
+}
+
+fn compile_for_filename_inner(
+    filename: &str,
+    index: &[SyntaxEntry],
+    state: &mut Resolution,
+) -> Result<Option<CompiledSyntax>, RegexError> {
+    let Some(entry) = crate::editor::syntax::match_syntax_entry(filename, index) else {
+        return Ok(None);
+    };
+    let Some(def) = entry.load_full() else {
+        return Ok(None);
+    };
+
+    let mut subs: HashMap<String, Arc<CompiledSyntax>> = HashMap::new();
+    for selector in crate::editor::syntax::collect_subsyntax_selectors(&def) {
+        if state.pending.contains(&selector) {
+            continue;
+        }
+        if let Some(cached) = state.compiled.get(&selector) {
+            if let Some(compiled) = cached {
+                subs.insert(selector, compiled.clone());
+            }
+            continue;
+        }
+        // A selector names the embedded language the way a filename does, by
+        // extension, so the index matches it against a synthetic name.
+        let pseudo = format!("embedded{selector}");
+        state.pending.push(selector.clone());
+        let compiled = compile_for_filename_inner(&pseudo, index, state);
+        state.pending.pop();
+        let compiled = compiled.ok().flatten().map(Arc::new);
+        state.compiled.insert(selector.clone(), compiled.clone());
+        if let Some(compiled) = compiled {
+            subs.insert(selector, compiled);
+        }
+    }
+
+    compile_from_definition_with(&def, &mut |sel| subs.get(sel).cloned()).map(Some)
+}
+
+/// Compile a `SyntaxDefinition` (from `native::syntax`) into a `CompiledSyntax`,
+/// leaving selector sub-syntax references unresolved.
+///
+/// A grammar that embeds another language names it by selector (e.g.
+/// `"syntax": ".js"` on HTML's `<script>` pair). Those stay as
+/// `SyntaxRef::Selector`, which the tokenizer cannot descend into, so embedded
+/// code renders with the host grammar's token type. Use
+/// [`compile_from_definition_with`] to supply the embedded grammars.
 pub fn compile_from_definition(def: &SyntaxDefinition) -> Result<CompiledSyntax, RegexError> {
+    compile_from_definition_with(def, &mut |_| None)
+}
+
+/// Compile a `SyntaxDefinition`, resolving each selector sub-syntax reference
+/// through `resolve`.
+///
+/// `resolve` is called once per distinct selector, as it appears in a pattern's
+/// `"syntax"` field (e.g. `".js"`). Returning `None` leaves that reference
+/// unresolved, so a resolver that only knows some of the embedded languages
+/// still yields a usable host grammar.
+pub fn compile_from_definition_with(
+    def: &SyntaxDefinition,
+    resolve: &mut dyn FnMut(&str) -> Option<Arc<CompiledSyntax>>,
+) -> Result<CompiledSyntax, RegexError> {
     let mut patterns = Vec::new();
 
     for rule in &def.patterns {
@@ -1379,9 +1502,12 @@ pub fn compile_from_definition(def: &SyntaxDefinition) -> Result<CompiledSyntax,
         };
 
         let syntax_ref = match &rule.syntax {
-            Some(SubSyntaxSpec::Selector(name)) => Some(SyntaxRef::Selector(name.clone())),
+            Some(SubSyntaxSpec::Selector(name)) => match resolve(name) {
+                Some(compiled) => Some(SyntaxRef::Inline(compiled)),
+                None => Some(SyntaxRef::Selector(name.clone())),
+            },
             Some(SubSyntaxSpec::Inline(sub_def)) => {
-                let sub_compiled = compile_from_definition(sub_def)?;
+                let sub_compiled = compile_from_definition_with(sub_def, resolve)?;
                 Some(SyntaxRef::Inline(Arc::new(sub_compiled)))
             }
             None => None,
@@ -1529,6 +1655,166 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].text, "  if");
         assert_eq!(tokens[0].token_type.as_ref(), "keyword");
+    }
+
+    #[test]
+    fn html_script_descends_into_javascript() {
+        use crate::editor::syntax::load_syntax_assets;
+        // `load_syntax_assets` appends `assets/syntax`, so pass the repo
+        // `data` directory (a sibling of the anvil-core crate).
+        let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
+        let defs = load_syntax_assets(&data_dir);
+        let js_def = defs
+            .iter()
+            .find(|d| d.name == "JavaScript")
+            .expect("JavaScript grammar");
+        let html_def = defs
+            .iter()
+            .find(|d| d.name == "HTML")
+            .expect("HTML grammar");
+
+        let js = Arc::new(compile_from_definition(js_def).unwrap());
+        let html =
+            compile_from_definition_with(html_def, &mut |sel| (sel == ".js").then(|| js.clone()))
+                .unwrap();
+
+        let line = "<script>var x = 1;</script>";
+        let (tokens, _state) = tokenize_line_with_state(&html, line, &[]);
+        let joined: String = tokens.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(joined, line, "tokens must round-trip the line");
+        assert!(
+            tokens
+                .iter()
+                .any(|t| &*t.token_type == "keyword" && t.text.trim() == "var"),
+            "expected JS keyword 'var' inside <script>, got: {:?}",
+            tokens
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn compile_for_filename_highlights_js_and_css_inside_html() {
+        // The whole path an opened .html file takes: index lookup, embedded
+        // selector resolution, then tokenizing a <script>/<style> body.
+        let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
+        let index = crate::editor::syntax::load_syntax_index(&data_dir);
+        let html = compile_for_filename("index.html", &index)
+            .expect("HTML grammar compiles")
+            .expect("HTML grammar matches index.html");
+
+        for (line, needle, kind) in [
+            ("<script>var x = 1;</script>", "var", "keyword"),
+            ("<style>a { color: red; }</style>", "color", "keyword"),
+        ] {
+            let (tokens, _) = tokenize_line_with_state(&html, line, &[]);
+            let joined: String = tokens.iter().map(|t| t.text.as_str()).collect();
+            assert_eq!(joined, line, "tokens must round-trip the line");
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| &*t.token_type == kind && t.text.trim() == needle),
+                "expected {needle:?} as {kind} in {line:?}, got: {:?}",
+                tokens
+                    .iter()
+                    .map(|t| (&*t.token_type, t.text.as_str()))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_javascript_spans_multiple_lines() {
+        let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
+        let index = crate::editor::syntax::load_syntax_index(&data_dir);
+        let html = compile_for_filename("index.html", &index).unwrap().unwrap();
+
+        let lines = ["<script>", "  function f() { return 1; }", "</script>"];
+        let mut state: Vec<u8> = Vec::new();
+        let mut inner = Vec::new();
+        for line in lines {
+            let (tokens, next) = tokenize_line_with_state(&html, line, &state);
+            state = next;
+            inner.push(tokens);
+        }
+        assert!(
+            inner[1]
+                .iter()
+                .any(|t| &*t.token_type == "keyword" && t.text.trim() == "function"),
+            "JS inside a multi-line <script> must stay highlighted, got: {:?}",
+            inner[1]
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn line_terminating_pattern_ends_at_the_line() {
+        // A grammar writes "to the end of the line" as a literal newline,
+        // which the tokenizer's per-line subject does not carry: LaTeX closes
+        // its `%` comment that way, and Markdown ends a heading that way.
+        let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
+        let index = crate::editor::syntax::load_syntax_index(&data_dir);
+
+        let tex = compile_for_filename("paper.tex", &index).unwrap().unwrap();
+        let (_, state) = tokenize_line_with_state(&tex, "% a comment", &[]);
+        let (tokens, _) = tokenize_line_with_state(&tex, "\\section{Hello}", &state);
+        assert!(
+            tokens.iter().all(|t| &*t.token_type != "comment"),
+            "a LaTeX comment must not continue past its line, got: {:?}",
+            tokens
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
+        );
+
+        let md = compile_for_filename("notes.md", &index).unwrap().unwrap();
+        let tokens = tokenize_line(&md, "# Title");
+        assert_eq!(
+            tokens.first().map(|t| (&*t.token_type, t.text.as_str())),
+            Some(("keyword", "# Title"))
+        );
+    }
+
+    #[test]
+    fn every_bundled_grammar_pattern_compiles_to_a_regex() {
+        // A matcher whose regex fails to compile degrades to the `LuaPattern`
+        // variant, which `regex_find` never matches -- the pattern is silently
+        // dead. Nothing in the bundled grammars may land there.
+        let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
+        let mut dead = Vec::new();
+        for def in crate::editor::syntax::load_syntax_assets(&data_dir) {
+            let compiled = match compile_from_definition(&def) {
+                Ok(c) => c,
+                Err(e) => panic!("{} failed to compile: {e:?}", def.name),
+            };
+            for pattern in &compiled.patterns {
+                let matchers: Vec<&MatcherDef> = match &pattern.matcher {
+                    PatternMatcher::Single(m) => vec![m],
+                    PatternMatcher::Pair { open, close, .. } => vec![open, close],
+                };
+                for m in matchers {
+                    if let MatcherKind::LuaPattern { code } = &m.kind {
+                        dead.push(format!("{}: {code}", def.name));
+                    }
+                }
+            }
+        }
+        assert!(
+            dead.is_empty(),
+            "patterns that compile to no regex: {dead:#?}"
+        );
+    }
+
+    #[test]
+    fn lua_lazy_quantifier_becomes_non_greedy_star() {
+        // Lua's `-` quantifier has no regex spelling of its own; emitted as a
+        // literal it makes `<script ...>` unmatchable and the tokenizer never
+        // reaches the embedded grammar.
+        assert_eq!(lua_pattern_to_regex("<!%-%-.-%-%->"), "<!--.*?-->");
+        assert_eq!(lua_pattern_to_regex("%[%[.-%]%]"), "\\[\\[.*?\\]\\]");
     }
 
     #[test]

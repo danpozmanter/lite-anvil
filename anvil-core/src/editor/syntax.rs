@@ -1,5 +1,7 @@
+use pcre2::bytes::Regex;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 /// A single syntax-highlighting pattern rule.
 #[derive(Debug, Clone)]
@@ -80,6 +82,21 @@ impl Default for SyntaxDefinition {
             space_handling: true,
         }
     }
+}
+
+/// The distinct embedded-language selectors this definition references, in
+/// first-appearance order (e.g. `.js` and `.css` for HTML).
+pub fn collect_subsyntax_selectors(def: &SyntaxDefinition) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for rule in &def.patterns {
+        if let Some(SubSyntaxSpec::Selector(selector)) = &rule.syntax {
+            if seen.insert(selector.clone()) {
+                out.push(selector.clone());
+            }
+        }
+    }
+    out
 }
 
 /// Resolved value from the JSON graph (string, number, bool, array, object, or null).
@@ -276,6 +293,9 @@ fn parse_pattern_rule(gv: &GraphValue) -> Result<PatternRule, String> {
     }
 
     if let Some(s) = gv.get("syntax") {
+        // A grammar names an embedded language by file extension. The
+        // referenced grammar lives in another asset, so it stays a `Selector`
+        // until `tokenizer::compile_for_filename` has the index to resolve it.
         match s {
             GraphValue::Str(name) => {
                 rule.syntax = Some(SubSyntaxSpec::Selector(name.clone()));
@@ -541,24 +561,43 @@ fn resolve_shallow_ref(nodes: &serde_json::Map<String, JsonValue>, value: &JsonV
     }
 }
 
+thread_local! {
+    /// Compiled form of each `files` pattern, keyed by its source text. The
+    /// bundled grammars contribute a couple hundred distinct patterns, and
+    /// filename matching runs on every document open, comment-toggle, and
+    /// status-bar refresh, so the regex compiler runs once per pattern.
+    static FILE_PATTERNS: RefCell<HashMap<String, Option<Regex>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Whether `filename` satisfies one `files` entry.
+///
+/// A `files` entry is a Lua pattern anchored on the filename's tail, such as
+/// `%.html?$`, `%.php%d?$`, or `CMakeLists%.txt$`, so it is matched the same
+/// way the grammar's own patterns are rather than compared as a literal
+/// suffix.
+fn file_pattern_matches(pattern: &str, filename: &str) -> bool {
+    FILE_PATTERNS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache
+            .entry(pattern.to_string())
+            .or_insert_with(|| crate::editor::tokenizer::compile_lua_pattern(pattern))
+            .as_ref()
+            .and_then(|re| re.is_match(filename.as_bytes()).ok())
+            .unwrap_or(false)
+    })
+}
+
 /// Match a `SyntaxEntry` to a filename by checking `files` patterns.
 pub fn match_syntax_entry<'a>(
     filename: &str,
     entries: &'a [SyntaxEntry],
 ) -> Option<&'a SyntaxEntry> {
     entries.iter().find(|entry| {
-        entry.files.iter().any(|pattern| {
-            if let Some(ext_part) = pattern.strip_prefix("%.") {
-                let ext = ext_part.trim_end_matches('$');
-                filename.ends_with(&format!(".{ext}"))
-            } else if let Some(name_part) = pattern.strip_prefix('%') {
-                let name = name_part.trim_end_matches('$');
-                filename.ends_with(name)
-            } else {
-                let clean = pattern.trim_end_matches('$');
-                filename.ends_with(clean)
-            }
-        })
+        entry
+            .files
+            .iter()
+            .any(|pattern| file_pattern_matches(pattern, filename))
     })
 }
 
@@ -888,6 +927,33 @@ mod tests {
         );
         let joined: String = toks.iter().map(|t| t.text.as_str()).collect();
         assert_eq!(joined, raw_line);
+    }
+
+    #[test]
+    fn match_syntax_entry_handles_lua_pattern_files_entries() {
+        // `files` entries are Lua patterns, not literal suffixes: `?` makes
+        // the preceding element optional, `%d` is a digit class, `[...]+` a
+        // repeated set, and a pattern may name a whole filename.
+        let entries = load_syntax_index(&data_dir());
+        for (filename, expected) in [
+            ("index.html", "HTML"),
+            ("page.htm", "HTML"),
+            ("index.php", "PHP"),
+            ("index.php3", "PHP"),
+            ("CMakeLists.txt", "CMake"),
+            ("meson.build", "Meson"),
+            ("Dockerfile.dev", "Dockerfile"),
+            ("app.d.ts", "TypeScript"),
+            ("main.c++", "C++"),
+            ("main.h++", "C++"),
+        ] {
+            let matched = match_syntax_entry(filename, &entries);
+            assert_eq!(
+                matched.map(|e| e.name.as_str()),
+                Some(expected),
+                "{filename} should match {expected}"
+            );
+        }
     }
 
     #[test]

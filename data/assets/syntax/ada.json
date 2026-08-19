@@ -176,7 +176,7 @@
 },
   "3": {
   "kind": "array",
-  "values": ["--", "\n"]
+  "values": ["%-%-", "\n"]
 },
   "4": {
   "kind": "array",
@@ -211,7 +211,7 @@
   "6": {
   "kind": "object",
   "values": {
-  "pattern": "--.*",
+  "pattern": "%-%-.*",
   "type": "comment"
 }
 },
@@ -226,7 +226,7 @@
 },
   "8": {
   "kind": "array",
-  "values": ["--", "\n"]
+  "values": ["%-%-", "\n"]
 },
   "9": {
   "kind": "object",
