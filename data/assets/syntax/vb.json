@@ -1,0 +1,299 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "'",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Visual Basic",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["\"\"\"", "\"\"\"", "\""]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "&[hH][%da-fA-F]+&?",
+  "type": "number"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": "&[oO][0-7]+&?",
+  "type": "number"
+}
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d,]*%.?[%d_]*[eE]?[%+%-]?[%d]*[fFdD!#&SILR@]?",
+  "type": "number"
+}
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!&^%?%.()]+",
+  "type": "operator"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[%(]",
+  "type": "function"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "AddHandler": "keyword",
+  "AddressOf": "keyword",
+  "Alias": "keyword",
+  "And": "keyword",
+  "AndAlso": "keyword",
+  "As": "keyword",
+  "Boolean": "keyword2",
+  "ByRef": "keyword",
+  "Byte": "keyword2",
+  "ByVal": "keyword",
+  "Call": "keyword",
+  "Case": "keyword",
+  "Catch": "keyword",
+  "CBool": "keyword2",
+  "CByte": "keyword2",
+  "CChar": "keyword2",
+  "CDate": "keyword2",
+  "CDbl": "keyword2",
+  "CDec": "keyword2",
+  "Char": "keyword2",
+  "CInt": "keyword2",
+  "Class": "keyword",
+  "CLng": "keyword2",
+  "CObj": "keyword2",
+  "Const": "keyword",
+  "Continue": "keyword",
+  "CSByte": "keyword2",
+  "CShort": "keyword2",
+  "CSng": "keyword2",
+  "CStr": "keyword2",
+  "CType": "keyword2",
+  "CUInt": "keyword2",
+  "CULng": "keyword2",
+  "CUShort": "keyword2",
+  "Date": "keyword2",
+  "Decimal": "keyword2",
+  "Declare": "keyword",
+  "Default": "keyword",
+  "Delegate": "keyword",
+  "Dim": "keyword",
+  "DirectCast": "keyword2",
+  "Do": "keyword",
+  "Double": "keyword2",
+  "Each": "keyword",
+  "Else": "keyword",
+  "ElseIf": "keyword",
+  "End": "keyword",
+  "Enum": "keyword",
+  "Error": "keyword",
+  "Event": "keyword",
+  "Exit": "keyword",
+  "False": "literal",
+  "Finally": "keyword",
+  "For": "keyword",
+  "Friend": "keyword",
+  "Function": "keyword",
+  "Get": "keyword",
+  "GetType": "keyword2",
+  "Global": "keyword",
+  "GoSub": "keyword",
+  "GoTo": "keyword",
+  "Handles": "keyword",
+  "If": "keyword",
+  "Implements": "keyword",
+  "Imports": "keyword",
+  "In": "keyword",
+  "Inherits": "keyword",
+  "Integer": "keyword2",
+  "Interface": "keyword",
+  "Is": "keyword",
+  "IsNot": "keyword",
+  "Let": "keyword",
+  "Lib": "keyword",
+  "Like": "keyword",
+  "Long": "keyword2",
+  "Loop": "keyword",
+  "Me": "keyword2",
+  "Mod": "keyword",
+  "Module": "keyword",
+  "MustInherit": "keyword",
+  "MustOverride": "keyword",
+  "MyBase": "keyword2",
+  "MyClass": "keyword2",
+  "Namespace": "keyword",
+  "Narrowing": "keyword",
+  "New": "keyword",
+  "Next": "keyword",
+  "Not": "keyword",
+  "Nothing": "literal",
+  "NotInheritable": "keyword",
+  "NotOverridable": "keyword",
+  "Object": "keyword2",
+  "Of": "keyword",
+  "On": "keyword",
+  "Operator": "keyword",
+  "Option": "keyword",
+  "Optional": "keyword",
+  "Or": "keyword",
+  "OrElse": "keyword",
+  "Overloads": "keyword",
+  "Overridable": "keyword",
+  "Overrides": "keyword",
+  "ParamArray": "keyword",
+  "Partial": "keyword",
+  "Private": "keyword",
+  "Property": "keyword",
+  "Protected": "keyword",
+  "Public": "keyword",
+  "RaiseEvent": "keyword",
+  "ReadOnly": "keyword",
+  "ReDim": "keyword",
+  "REM": "keyword",
+  "RemoveHandler": "keyword",
+  "Resume": "keyword",
+  "Return": "keyword",
+  "SByte": "keyword2",
+  "Select": "keyword",
+  "Set": "keyword",
+  "Shadows": "keyword",
+  "Shared": "keyword",
+  "Short": "keyword2",
+  "Single": "keyword2",
+  "Static": "keyword",
+  "Step": "keyword",
+  "Stop": "keyword",
+  "String": "keyword2",
+  "Structure": "keyword",
+  "Sub": "keyword",
+  "SyncLock": "keyword",
+  "Then": "keyword",
+  "Throw": "keyword",
+  "To": "keyword",
+  "True": "literal",
+  "Try": "keyword",
+  "TryCast": "keyword2",
+  "UInteger": "keyword2",
+  "ULong": "keyword2",
+  "UShort": "keyword2",
+  "Until": "keyword",
+  "Using": "keyword",
+  "Variant": "keyword2",
+  "Wend": "keyword",
+  "When": "keyword",
+  "While": "keyword",
+  "Widening": "keyword",
+  "With": "keyword",
+  "WithEvents": "keyword",
+  "WriteOnly": "keyword",
+  "Xor": "keyword",
+  "Yield": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["'", "'\n"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.vb$", "%.vbs$", "%.bas$", "%.cls$", "%.frm$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "'.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["^[%s]*REM ", "\n"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

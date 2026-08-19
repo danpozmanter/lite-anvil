@@ -608,8 +608,39 @@ pub fn builtin_specs() -> Vec<LspSpec> {
         lsp_spec(
             "bash_language_server",
             &["bash-language-server", "start"],
-            &["bash"],
+            &["bash", "zsh"],
             &[".git"],
+        ),
+        lsp_spec(
+            "perl_navigator",
+            &["perlnavigator"],
+            &["perl"],
+            &["Makefile.PL", "Build.PL", "cpanfile", "dist.ini", ".git"],
+        ),
+        lsp_spec(
+            "ada_language_server",
+            &["ada_language_server"],
+            &["ada"],
+            &["*.gpr", ".git"],
+        ),
+        lsp_spec(
+            "graphql_language_server",
+            &["graphql-lsp", "server", "-m", "streamable-http"],
+            &["graphql"],
+            &[
+                ".graphqlrc",
+                ".graphqlrc.json",
+                ".graphqlrc.yaml",
+                ".graphqlrc.yml",
+                "package.json",
+                ".git",
+            ],
+        ),
+        lsp_spec(
+            "mojo_lsp",
+            &["mojo", "lsp-server"],
+            &["mojo"],
+            &["mojoproject.toml", "magic.lock", ".git"],
         ),
     ]
 }

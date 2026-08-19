@@ -1,5 +1,13 @@
 # Change Log
 
+## [2.16.1] - 2026-08-20 - New language highlighting and LSP server support.
+
+* Added syntax highlighting for Perl, GraphQL, Mojo, Visual Basic, Ada, LaTeX, and Java Properties (`.properties`). Added an explicit JSON grammar (`.json`, `.jsonc`, `.json5`, `.hjson`) so JSON files are no longer covered implicitly by the JavaScript grammar.
+* `.cljs` extension covered via the existing Clojure grammar.
+* Added built-in LSP support for Perl (`perlnavigator`), GraphQL (`graphql-lsp`), Ada (`ada_language_server`), and Mojo (`mojo lsp-server`).
+* Zsh and POSIX `sh` files now use the built-in `bash-language-server` via the existing Bash grammar, with `zsh`/`sh` extensions mapped to the `shellscript` LSP language id.
+* Removed Haxe highlighting and LSP support (`haxe-language-server`).
+
 ## [2.16.0] - 2026-08-18 - Large-file and many-file performance.
 
 * An editing command in a large document no longer pauses at its undo boundary: closing one undo group and opening the next takes 0.5 ms at 5 MB, 3.4 ms at 20 MB, and 9.0 ms at 49 MB, down from 3.8 ms, 15.1 ms, and 37.4 ms. The group's inverse is computed against the line buffer directly instead of building a second copy of the document and walking it a byte at a time, and one group's working buffer is handed to the next instead of being released and faulted back in.

@@ -632,6 +632,14 @@ pub(crate) fn ext_to_lsp_filetype(ext: &str) -> Option<&'static str> {
         "clj" | "cljc" | "cljs" | "edn" => Some("clojure"),
         "cr" => Some("crystal"),
         "sh" | "bash" | "zsh" => Some("bash"),
+        "pl" | "pm" | "pod" => Some("perl"),
+        "vb" | "vbs" | "bas" | "cls" | "frm" => Some("vb"),
+        "adb" | "ads" | "ada" => Some("ada"),
+        "tex" | "latex" | "ltx" | "dtx" | "sty" => Some("latex"),
+        "properties" => Some("properties"),
+        "json" | "jsonc" | "json5" | "hjson" => Some("json"),
+        "graphql" | "gql" | "graphqls" => Some("graphql"),
+        "mojo" => Some("mojo"),
         _ => None,
     }
 }
@@ -646,6 +654,7 @@ pub(crate) fn lsp_language_id(filetype: &str) -> &str {
         "jsx" => "javascriptreact",
         "tsx" => "typescriptreact",
         "bash" => "shellscript",
+        "zsh" => "shellscript",
         other => other,
     }
 }

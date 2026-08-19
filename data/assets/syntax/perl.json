@@ -1,0 +1,281 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "#",
+  "files": {
+  "$ref": "4"
+},
+  "name": "Perl",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["'", "'", "\\"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "13"
+},
+  "type": "string"
+}
+},
+  "13": {
+  "kind": "array",
+  "values": ["q{", "}", "\\"]
+},
+  "14": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "15"
+},
+  "type": "string"
+}
+},
+  "15": {
+  "kind": "array",
+  "values": ["qq{", "}", "\\"]
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%$@][%a_][%w_]*",
+  "type": "keyword2"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%$@][{][%w_]+[}]",
+  "type": "keyword2"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%$@][%d]+",
+  "type": "keyword2"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "%d[%d_]*%.?[%d_]*[eE][%+%-]?[%d_]*",
+  "type": "number"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "ARGV": "keyword2",
+  "DATA": "keyword2",
+  "END": "keyword2",
+  "STDOUT": "keyword2",
+  "STDERR": "keyword2",
+  "STDIN": "keyword2",
+  "abs": "keyword2",
+  "and": "keyword",
+  "bless": "keyword",
+  "chomp": "keyword2",
+  "chop": "keyword2",
+  "chr": "keyword2",
+  "close": "keyword2",
+  "cmp": "keyword",
+  "continue": "keyword",
+  "cos": "keyword2",
+  "default": "keyword",
+  "delete": "keyword",
+  "die": "keyword2",
+  "do": "keyword",
+  "each": "keyword2",
+  "else": "keyword",
+  "elsif": "keyword",
+  "eq": "keyword",
+  "exists": "keyword",
+  "exit": "keyword2",
+  "exp": "keyword2",
+  "for": "keyword",
+  "foreach": "keyword",
+  "ge": "keyword",
+  "grep": "keyword2",
+  "gt": "keyword",
+  "if": "keyword",
+  "keys": "keyword2",
+  "last": "keyword",
+  "le": "keyword",
+  "length": "keyword2",
+  "lt": "keyword",
+  "map": "keyword2",
+  "my": "keyword",
+  "ne": "keyword",
+  "next": "keyword",
+  "no": "keyword",
+  "not": "keyword",
+  "or": "keyword",
+  "our": "keyword",
+  "package": "keyword",
+  "pop": "keyword2",
+  "print": "keyword2",
+  "printf": "keyword2",
+  "push": "keyword2",
+  "rand": "keyword2",
+  "redo": "keyword",
+  "ref": "keyword2",
+  "return": "keyword",
+  "reverse": "keyword2",
+  "scalar": "keyword2",
+  "shift": "keyword2",
+  "sort": "keyword2",
+  "split": "keyword2",
+  "sprintf": "keyword2",
+  "sqrt": "keyword2",
+  "sub": "keyword",
+  "substr": "keyword2",
+  "system": "keyword2",
+  "unless": "keyword",
+  "unshift": "keyword2",
+  "until": "keyword",
+  "use": "keyword",
+  "values": "keyword2",
+  "warn": "keyword2",
+  "while": "keyword",
+  "xor": "keyword"
+}
+},
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": "0x[%da-fA-F_]+",
+  "type": "number"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "0b[01_]+",
+  "type": "number"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-=/%*%%<>!~|&%^%?%.:]+",
+  "type": "operator"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*%f[(]",
+  "type": "function"
+}
+},
+  "24": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["=", "=cut"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.pl$", "%.pm$", "%.t$", "%.pod$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "7"
+}, {
+  "$ref": "9"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "14"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "21"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}, {
+  "$ref": "24"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": "#.*",
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "8"
+},
+  "type": "comment"
+}
+},
+  "8": {
+  "kind": "array",
+  "values": ["^=", "=cut"]
+},
+  "9": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "10"
+},
+  "type": "string"
+}
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}

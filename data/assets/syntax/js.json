@@ -293,7 +293,7 @@
 },
   "4": {
   "kind": "array",
-  "values": ["%.js$", "%.json$", "%.cson$", "%.mjs$", "%.cjs$"]
+  "values": ["%.js$", "%.cson$", "%.mjs$", "%.cjs$"]
 },
   "40": {
   "kind": "object",

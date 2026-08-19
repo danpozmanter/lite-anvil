@@ -1,0 +1,184 @@
+{
+  "syntax": {
+  "graph": {
+  "nodes": {
+  "1": {
+  "kind": "object",
+  "values": {
+  "block_comment": {
+  "$ref": "3"
+},
+  "comment": "%",
+  "files": {
+  "$ref": "4"
+},
+  "name": "LaTeX",
+  "patterns": {
+  "$ref": "5"
+},
+  "symbols": {
+  "$ref": "2"
+}
+}
+},
+  "10": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "11"
+},
+  "type": "string"
+}
+},
+  "11": {
+  "kind": "array",
+  "values": ["``", "''"]
+},
+  "12": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\\\[|",
+  "type": "operator"
+}
+},
+  "13": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "14"
+},
+  "type": "keyword"
+}
+},
+  "14": {
+  "kind": "array",
+  "values": ["$", "$"]
+},
+  "15": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\\\[%a@]+",
+  "type": "function"
+}
+},
+  "16": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%{%}]",
+  "type": "operator"
+}
+},
+  "17": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%[%]]",
+  "type": "operator"
+}
+},
+  "18": {
+  "kind": "object",
+  "values": {
+  "pattern": "[&]",
+  "type": "operator"
+}
+},
+  "19": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%a_][%w_]*",
+  "type": "symbol"
+}
+},
+  "2": {
+  "kind": "object",
+  "values": {
+  "\\begin": "keyword",
+  "\\chapter": "keyword",
+  "\\def": "keyword",
+  "\\edef": "keyword",
+  "\\else": "keyword",
+  "\\end": "keyword",
+  "\\fi": "keyword",
+  "\\footnote": "keyword2",
+  "\\gdef": "keyword",
+  "\\if": "keyword",
+  "\\include": "keyword",
+  "\\includegraphics": "keyword2",
+  "\\input": "keyword",
+  "\\item": "keyword",
+  "\\label": "keyword2",
+  "\\newcommand": "keyword",
+  "\\paragraph": "keyword",
+  "\\part": "keyword",
+  "\\renewcommand": "keyword",
+  "\\section": "keyword",
+  "\\subparagraph": "keyword",
+  "\\subsection": "keyword",
+  "\\subsubsection": "keyword",
+  "\\usepackage": "keyword",
+  "\\xdef": "keyword"
+}
+},
+  "3": {
+  "kind": "array",
+  "values": ["\\begin{comment}", "\\end{comment}"]
+},
+  "4": {
+  "kind": "array",
+  "values": ["%.tex$", "%.latex$", "%.ltx$", "%.dtx$", "%.sty$", "%.aux$", "%.bbl$"]
+},
+  "5": {
+  "kind": "array",
+  "values": [{
+  "$ref": "6"
+}, {
+  "$ref": "8"
+}, {
+  "$ref": "10"
+}, {
+  "$ref": "13"
+}, {
+  "$ref": "15"
+}, {
+  "$ref": "16"
+}, {
+  "$ref": "17"
+}, {
+  "$ref": "18"
+}, {
+  "$ref": "19"
+}]
+},
+  "6": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "7"
+},
+  "type": "comment"
+}
+},
+  "7": {
+  "kind": "array",
+  "values": ["%%", "\n"]
+},
+  "8": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "9"
+},
+  "type": "string"
+}
+},
+  "9": {
+  "kind": "array",
+  "values": ["\"", "\""]
+}
+}
+},
+  "root": {
+  "$ref": "1"
+}
+}
+}
