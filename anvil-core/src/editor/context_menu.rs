@@ -85,7 +85,7 @@ impl ContextMenu {
             y - 1.0,
             max_w + 2.0,
             total_h + 2.0,
-            style.divider.to_array(),
+            style.muted_on(style.divider, style.background),
         );
         ctx.draw_rect(x, y, max_w, total_h, style.background.to_array());
 
@@ -98,19 +98,23 @@ impl ContextMenu {
                     sep_y,
                     max_w - style.padding_x * 2.0,
                     1.0,
-                    style.divider.to_array(),
+                    style.muted_on(style.divider, style.background),
                 );
                 iy += item_h;
                 continue;
             }
             let is_selected = self.selected == Some(i);
-            if is_selected {
-                ctx.draw_rect(x, iy, max_w, item_h, style.selection.to_array());
-            }
-            let color = if is_selected {
-                style.accent.to_array()
+            let surface = if is_selected {
+                let fill = style.row_fill_on(style.selection, style.background);
+                ctx.draw_rect(x, iy, max_w, item_h, fill.to_array());
+                fill
             } else {
-                style.text.to_array()
+                style.background
+            };
+            let color = if is_selected {
+                style.text_on(style.accent, surface)
+            } else {
+                style.text_on(style.text, surface)
             };
             ctx.draw_text(
                 style.font,
@@ -126,7 +130,7 @@ impl ContextMenu {
                     info,
                     x + max_w - info_w - style.padding_x,
                     iy + (item_h - style.font_height) / 2.0,
-                    style.dim.to_array(),
+                    style.muted_on(style.dim, surface),
                 );
             }
             iy += item_h;

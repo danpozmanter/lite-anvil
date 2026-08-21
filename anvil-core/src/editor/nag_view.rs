@@ -109,7 +109,7 @@ impl NagView {
                 &text,
                 text_x,
                 oy + (self.show_height - style.font_height) / 2.0,
-                style.nagbar_text.to_array(),
+                style.nag_text(),
             );
             text_x = adv + style.padding_x;
         }
@@ -129,7 +129,7 @@ impl NagView {
                 line,
                 text_x,
                 msg_y + text_y_offset,
-                style.nagbar_text.to_array(),
+                style.nag_text(),
             );
             msg_y += lh;
         }
@@ -142,13 +142,7 @@ impl NagView {
             let fy = button.y + border_width;
 
             // Button border.
-            ctx.draw_rect(
-                button.x,
-                button.y,
-                button.w,
-                button.h,
-                style.nagbar_text.to_array(),
-            );
+            ctx.draw_rect(button.x, button.y, button.w, button.h, style.nag_text());
             // Button fill.
             ctx.draw_rect(fx, fy, fw, fh, style.nagbar.to_array());
 
@@ -159,26 +153,14 @@ impl NagView {
                 let lx = fx + underline_margin + halfuw - (halfuw * self.underline_progress);
                 let ly = fy + fh - underline_margin - underline_width;
                 let drawn_w = uw * self.underline_progress;
-                ctx.draw_rect(
-                    lx,
-                    ly,
-                    drawn_w,
-                    underline_width,
-                    style.nagbar_text.to_array(),
-                );
+                ctx.draw_rect(lx, ly, drawn_w, underline_width, style.nag_text());
             }
 
             // Button text centered.
             let text_w = ctx.font_width(style.font, &button.text);
             let text_x = fx + (fw - text_w) / 2.0;
             let text_y = fy + (fh - style.font_height) / 2.0;
-            ctx.draw_text(
-                style.font,
-                &button.text,
-                text_x,
-                text_y,
-                style.nagbar_text.to_array(),
-            );
+            ctx.draw_text(style.font, &button.text, text_x, text_y, style.nag_text());
         }
     }
 }

@@ -9,6 +9,7 @@ pub mod cmdview;
 pub mod common;
 pub mod config;
 pub mod context_menu;
+pub mod contrast;
 pub mod doc_view;
 pub mod draw_context;
 pub mod empty_view;

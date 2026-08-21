@@ -9,6 +9,11 @@ use std::path::Path;
 pub struct NativeConfig {
     #[serde(skip)]
     pub verbose: bool,
+    /// Why the user's `config.toml` could not be read, when it exists but
+    /// failed to load. Carried so the editor can tell the user their
+    /// settings are not in effect instead of quietly running on defaults.
+    #[serde(skip)]
+    pub load_error: Option<String>,
     pub fps: u32,
     pub max_log_items: u32,
     pub message_timeout: u32,
@@ -250,7 +255,16 @@ pub struct DisabledTransitions {
 
 impl Default for NativeConfig {
     fn default() -> Self {
-        Self::with_defaults(1.0, "Linux", "data")
+        // Serde fills a parsed config's missing fields from this value, and
+        // `load_or_default` resolves font paths against the real data
+        // directory afterwards. Font paths must therefore stay unset here:
+        // a baked-in directory is non-None, so it survives that resolution
+        // and leaves a relative path that only loads when the process runs
+        // from the install root.
+        Self {
+            fonts: FontsConfig::default(),
+            ..Self::with_defaults(1.0, "Linux", "data")
+        }
     }
 }
 
@@ -264,6 +278,7 @@ impl NativeConfig {
         };
         Self {
             verbose: false,
+            load_error: None,
             fps: 60,
             max_log_items: 800,
             message_timeout: 5,
@@ -340,8 +355,10 @@ impl NativeConfig {
                     config
                 }
                 Err(e) => {
-                    log::warn!("{e}");
-                    Self::with_defaults(scale, platform, datadir)
+                    log::error!("{e}");
+                    let mut config = Self::with_defaults(scale, platform, datadir);
+                    config.load_error = Some(e);
+                    config
                 }
             }
         } else {
@@ -717,6 +734,42 @@ mod tests {
         assert!(toml_str.contains("theme = \"dark_default\""));
         assert!(toml_str.contains("indent_size = 2"));
         assert!(toml_str.contains("tab_type = \"soft\""));
+    }
+
+    #[test]
+    fn load_or_default_reports_a_config_it_could_not_parse() {
+        let dir = std::env::temp_dir().join("anvil_bad_config_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "theme = { name = \"summer\" }\n").unwrap();
+        let config = NativeConfig::load_or_default(dir.to_str().unwrap(), 1.0, "Linux", "data");
+        assert!(
+            config.load_error.is_some(),
+            "a config that fails to parse must say so"
+        );
+        assert_eq!(config.theme, "dark_default");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_parsed_config_resolves_fonts_under_the_real_data_dir() {
+        let dir = std::env::temp_dir().join("anvil_font_path_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "theme = \"summer\"\n").unwrap();
+        let config =
+            NativeConfig::load_or_default(dir.to_str().unwrap(), 1.0, "Linux", "/opt/anvil/data");
+        assert_eq!(config.theme, "summer");
+        for (slot, spec) in [
+            ("ui", &config.fonts.ui),
+            ("code", &config.fonts.code),
+            ("icon", &config.fonts.icon),
+        ] {
+            let path = spec.path.as_deref().unwrap_or_default();
+            assert!(
+                Path::new(path).is_absolute() && path.contains("/opt/anvil/data"),
+                "{slot} font resolved to {path:?}, which does not sit under the data dir"
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

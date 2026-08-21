@@ -400,6 +400,10 @@ struct PixFmt {
     gshift: u8,
     bshift: u8,
     ashift: u8,
+    /// Zero for a format with no alpha channel (`XRGB8888` and friends).
+    /// SDL reports `Ashift = 0` for those, which aliases another component's
+    /// byte, so the alpha term only takes part when this mask is non-zero.
+    amask: u32,
 }
 
 impl PixFmt {
@@ -410,23 +414,31 @@ impl PixFmt {
                 gshift: (*details).Gshift,
                 bshift: (*details).Bshift,
                 ashift: (*details).Ashift,
+                amask: (*details).Amask,
             }
         }
     }
 
     fn pack(&self, r: u8, g: u8, b: u8, a: u8) -> u32 {
-        (r as u32) << self.rshift
-            | (g as u32) << self.gshift
-            | (b as u32) << self.bshift
-            | (a as u32) << self.ashift
+        let rgb = (r as u32) << self.rshift | (g as u32) << self.gshift | (b as u32) << self.bshift;
+        if self.amask == 0 {
+            rgb
+        } else {
+            rgb | (a as u32) << self.ashift
+        }
     }
 
     fn unpack(&self, px: u32) -> (u8, u8, u8, u8) {
+        let a = if self.amask == 0 {
+            255
+        } else {
+            ((px >> self.ashift) & 0xFF) as u8
+        };
         (
             ((px >> self.rshift) & 0xFF) as u8,
             ((px >> self.gshift) & 0xFF) as u8,
             ((px >> self.bshift) & 0xFF) as u8,
-            ((px >> self.ashift) & 0xFF) as u8,
+            a,
         )
     }
 }
@@ -876,6 +888,50 @@ mod tests {
         (0xE000..0xF8FF)
             .find(|&cp| seti.lock().get_glyph(cp).defined && !lilex.lock().get_glyph(cp).defined)
             .expect("seti.ttf maps private-use codepoints Lilex lacks")
+    }
+
+    /// SDL's `XRGB8888` reports `Ashift = 0`, which is also blue's shift.
+    fn xrgb8888() -> PixFmt {
+        PixFmt {
+            rshift: 16,
+            gshift: 8,
+            bshift: 0,
+            ashift: 0,
+            amask: 0,
+        }
+    }
+
+    fn argb8888() -> PixFmt {
+        PixFmt {
+            rshift: 16,
+            gshift: 8,
+            bshift: 0,
+            ashift: 24,
+            amask: 0xFF00_0000,
+        }
+    }
+
+    #[test]
+    fn packing_an_alphaless_format_leaves_blue_alone() {
+        let fmt = xrgb8888();
+        let px = fmt.pack(31, 31, 31, 255);
+        assert_eq!(fmt.unpack(px), (31, 31, 31, 255));
+    }
+
+    #[test]
+    fn packing_an_alphaless_format_round_trips_every_gray() {
+        let fmt = xrgb8888();
+        for v in 0..=255u8 {
+            let px = fmt.pack(v, v, v, 255);
+            assert_eq!(fmt.unpack(px), (v, v, v, 255), "gray {v} did not survive");
+        }
+    }
+
+    #[test]
+    fn packing_an_alpha_format_keeps_the_alpha_channel() {
+        let fmt = argb8888();
+        let px = fmt.pack(10, 20, 30, 40);
+        assert_eq!(fmt.unpack(px), (10, 20, 30, 40));
     }
 
     #[test]

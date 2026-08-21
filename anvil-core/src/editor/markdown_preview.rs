@@ -77,6 +77,13 @@ pub struct MarkdownPreviewState {
     /// otherwise. Populated by the main loop after each reparse so draws
     /// don't pay the tokenize cost every frame.
     pub code_tokens: Vec<Option<Vec<Vec<crate::editor::tokenizer::Token>>>>,
+    /// Where the current selection was pressed, in content coordinates -
+    /// the pane's top-left corner plus the scroll offset - so the selection
+    /// stays anchored to the text while the pane scrolls.
+    pub sel_anchor: Option<(f64, f64)>,
+    /// Where the current selection currently reaches, in content
+    /// coordinates. Equal to `sel_anchor` until the pointer moves.
+    pub sel_head: Option<(f64, f64)>,
 }
 
 impl MarkdownPreviewState {
@@ -97,6 +104,149 @@ impl MarkdownPreviewState {
             .sum();
         layout + code
     }
+}
+
+/// A rendered document walked by the draw pass, plus everything that pass
+/// hands back: the interactive regions, the selection highlight it paints,
+/// and the selected text it collects.
+struct Sink<'a> {
+    links: &'a mut Vec<LinkRegion>,
+    checkboxes: &'a mut Vec<CheckboxRegion>,
+    /// Ordered selection bounds in screen coordinates, `(x0, y0, x1, y1)`,
+    /// where `(x0, y0)` reads before `(x1, y1)`.
+    selection: Option<(f64, f64, f64, f64)>,
+    /// Fill painted behind the selected part of each fragment.
+    highlight: [u8; 4],
+    /// Set when the pass exists to assemble [`Self::picked`] rather than to
+    /// paint; the draw pass leaves it false and skips the string building.
+    collecting: bool,
+    /// Selected text in reading order, ready for the clipboard.
+    picked: String,
+    /// Separator the next fragment joins with, set by whichever block-level
+    /// code opens a new line, cell, or paragraph. A fragment consumes it and
+    /// falls back to the separator the inline layout used.
+    pending_sep: Option<&'static str>,
+    /// Right edge and line top of the previously highlighted fragment, so a
+    /// run of selected words fills the gaps between them instead of painting
+    /// one patch per word.
+    run_end: Option<(f64, f64)>,
+    /// Screen point the pass is looking for a fragment under.
+    probe: Option<(f64, f64)>,
+    /// Screen box of the fragment the probe landed in.
+    hit: Option<(f64, f64, f64, f64)>,
+}
+
+impl Sink<'_> {
+    /// Open a new line, cell, or block in the collected text.
+    fn separate(&mut self, sep: &'static str) {
+        self.pending_sep = Some(sep);
+    }
+
+    /// Paint the selection highlight behind a text fragment that is about to
+    /// be drawn at `(x, y)`, and collect the selected part of it. `word_sep`
+    /// is what joins this fragment to the previous one when no block-level
+    /// separator is pending.
+    #[allow(clippy::too_many_arguments)]
+    fn emit(
+        &mut self,
+        ctx: &mut dyn DrawContext,
+        font: u64,
+        text: &str,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        word_sep: &'static str,
+    ) {
+        if let Some((px, py)) = self.probe
+            && px >= x
+            && px < x + w
+            && py >= y
+            && py < y + h
+        {
+            self.hit = Some((x, y, x + w, y + h));
+        }
+        let Some(sel) = self.selection else {
+            return;
+        };
+        // A pending separator is consumed by the first SELECTED fragment
+        // after it, so an unselected run of words cannot swallow the line
+        // break the next selected fragment needs.
+        let Some((from, to)) = fragment_selection(ctx, font, text, x, y, w, h, sel) else {
+            return;
+        };
+        let sep = self.pending_sep.take().unwrap_or(word_sep);
+        let hl_x = x + ctx.font_width(font, &text[..from]);
+        let hl_end = hl_x + ctx.font_width(font, &text[from..to]);
+        // Reach back to the previous highlighted fragment on this line so
+        // the space between two selected words is covered too.
+        let hl_left = match self.run_end {
+            Some((prev_end, prev_y)) if prev_y == y && from == 0 && prev_end <= hl_x => prev_end,
+            _ => hl_x,
+        };
+        ctx.draw_rect(hl_left, y, hl_end - hl_left, h, self.highlight);
+        self.run_end = if to == text.len() {
+            Some((hl_end, y))
+        } else {
+            None
+        };
+        if self.collecting {
+            if !self.picked.is_empty() {
+                self.picked.push_str(sep);
+            }
+            self.picked.push_str(&text[from..to]);
+        }
+    }
+}
+
+/// Byte range of `text` the selection covers, given the screen box the
+/// fragment occupies. `None` when the fragment lies outside the selection.
+#[allow(clippy::too_many_arguments)]
+fn fragment_selection(
+    ctx: &dyn DrawContext,
+    font: u64,
+    text: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    sel: (f64, f64, f64, f64),
+) -> Option<(usize, usize)> {
+    let (sx, sy, ex, ey) = sel;
+    if ey < y || sy >= y + h {
+        return None;
+    }
+    let from = if sy < y {
+        0
+    } else if sx >= x + w {
+        text.len()
+    } else {
+        char_offset_at(ctx, font, text, x, sx)
+    };
+    let to = if ey >= y + h {
+        text.len()
+    } else if ex <= x {
+        0
+    } else {
+        char_offset_at(ctx, font, text, x, ex)
+    };
+    if from >= to { None } else { Some((from, to)) }
+}
+
+/// Byte offset of the character boundary in `text` nearest to screen x
+/// `px`, for a fragment drawn at `x` in `font`.
+fn char_offset_at(ctx: &dyn DrawContext, font: u64, text: &str, x: f64, px: f64) -> usize {
+    let mut best = 0usize;
+    let mut best_d = (px - x).abs();
+    for (i, ch) in text.char_indices() {
+        let boundary = i + ch.len_utf8();
+        let d = (px - (x + ctx.font_width(font, &text[..boundary]))).abs();
+        if d < best_d {
+            best_d = d;
+            best = boundary;
+        }
+    }
+    best
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -775,7 +925,7 @@ fn draw_inlines(
     base_lh: f64,
     forced_color: Option<[u8; 4]>,
     style: &StyleContext,
-    link_regions: &mut Vec<LinkRegion>,
+    sink: &mut Sink<'_>,
     strike_through: bool,
 ) -> f64 {
     if spans.is_empty() || max_x <= x0 {
@@ -792,6 +942,7 @@ fn draw_inlines(
             y += base_lh;
             last = false;
             ws_pending = false;
+            sink.separate("\n");
             continue;
         }
         let font = if span.code { code } else { base_font };
@@ -826,6 +977,16 @@ fn draw_inlines(
                 bg[3] = 180;
                 ctx.draw_rect(wx0 - 2.0, y, ww + 4.0, base_lh, bg);
             }
+            sink.emit(
+                ctx,
+                font,
+                word,
+                wx0,
+                y,
+                ww,
+                base_lh,
+                if needs_space { " " } else { "" },
+            );
             x = ctx.draw_text(font, word, wx0, y, col);
             // Synthetic bold: draw a second time offset by one pixel so the
             // glyph strokes thicken. Cheap and font-agnostic — we don't ship a
@@ -843,7 +1004,7 @@ fn draw_inlines(
                 ctx.draw_rect(wx0, mid_y, (x - wx0).max(1.0), 1.0, col);
             }
             if let Some(href) = &span.href {
-                link_regions.push(LinkRegion {
+                sink.links.push(LinkRegion {
                     x1: wx0,
                     y1: y,
                     x2: x,
@@ -874,8 +1035,7 @@ fn draw_block(
     style: &StyleContext,
     pane_clip: Rect,
     code_tokens: Option<&Vec<Vec<crate::editor::tokenizer::Token>>>,
-    link_regions: &mut Vec<LinkRegion>,
-    checkbox_regions: &mut Vec<CheckboxRegion>,
+    sink: &mut Sink<'_>,
     depth: usize,
 ) {
     if depth >= MAX_RENDER_DEPTH {
@@ -908,7 +1068,7 @@ fn draw_block(
                 hlh,
                 Some(color),
                 style,
-                link_regions,
+                sink,
                 false,
             );
             if *level <= 2 {
@@ -926,17 +1086,7 @@ fn draw_block(
         }
         Block::Paragraph { inlines } => {
             draw_inlines(
-                ctx,
-                inlines,
-                x,
-                y,
-                max_x,
-                body,
-                lh,
-                None,
-                style,
-                link_regions,
-                false,
+                ctx, inlines, x, y, max_x, body, lh, None, style, sink, false,
             );
         }
         Block::Code { text, .. } => {
@@ -957,14 +1107,19 @@ fn draw_block(
                 // Tokenized path: colour each run using the active theme's
                 // syntax palette so ```lang fences read like the editor does.
                 for (line_idx, line) in text.split('\n').enumerate() {
+                    sink.separate("\n");
                     if let Some(tokens) = lines.get(line_idx) {
                         let mut tx = text_x;
                         for tok in tokens {
                             let color =
                                 crate::editor::doc_view::syntax_color(&tok.token_type, style);
+                            let tw = ctx.font_width(style.code_font, &tok.text);
+                            sink.emit(ctx, style.code_font, &tok.text, tx, cy, tw, clh, "");
                             tx = ctx.draw_text(style.code_font, &tok.text, tx, cy, color);
                         }
                     } else {
+                        let lw = ctx.font_width(style.code_font, line);
+                        sink.emit(ctx, style.code_font, line, text_x, cy, lw, clh, "");
                         ctx.draw_text(style.code_font, line, text_x, cy, style.text.to_array());
                     }
                     cy += clh;
@@ -976,6 +1131,9 @@ fn draw_block(
                 // syntax behind it, which misled readers.
                 let code_color = style.text.to_array();
                 for line in text.split('\n') {
+                    sink.separate("\n");
+                    let lw = ctx.font_width(style.code_font, line);
+                    sink.emit(ctx, style.code_font, line, text_x, cy, lw, clh, "");
                     ctx.draw_text(style.code_font, line, text_x, cy, code_color);
                     cy += clh;
                 }
@@ -1012,8 +1170,7 @@ fn draw_block(
                     style,
                     pane_clip,
                     None,
-                    link_regions,
-                    checkbox_regions,
+                    sink,
                     depth + 1,
                 );
                 cur_y += block_height(ctx, sub, max_x - inner_x, style, depth + 1);
@@ -1027,34 +1184,14 @@ fn draw_block(
             ordered,
             start,
         } => draw_list(
-            ctx,
-            items,
-            *ordered,
-            *start,
-            x,
-            y,
-            max_x,
-            style,
-            pane_clip,
-            link_regions,
-            checkbox_regions,
-            depth,
+            ctx, items, *ordered, *start, x, y, max_x, style, pane_clip, sink, depth,
         ),
         Block::Table {
             alignments,
             head,
             rows,
         } => draw_table(
-            ctx,
-            alignments,
-            head,
-            rows,
-            x,
-            y,
-            max_x,
-            style,
-            pane_clip,
-            link_regions,
+            ctx, alignments, head, rows, x, y, max_x, style, pane_clip, sink,
         ),
     }
 }
@@ -1070,8 +1207,7 @@ fn draw_list(
     max_x: f64,
     style: &StyleContext,
     pane_clip: Rect,
-    link_regions: &mut Vec<LinkRegion>,
-    checkbox_regions: &mut Vec<CheckboxRegion>,
+    sink: &mut Sink<'_>,
     depth: usize,
 ) {
     let lh = style.font_height;
@@ -1089,6 +1225,7 @@ fn draw_list(
         if !first {
             cur_y += item_gap;
         }
+        sink.separate("\n");
         // Always draw the bullet/number/checkbox inside the fixed gutter so
         // the content column width stays constant. This keeps measurement
         // (`block_height` uses `width - LIST_GUTTER`) consistent with draw.
@@ -1122,7 +1259,7 @@ fn draw_list(
                 ctx.draw_rect(box_x + inset, box_y + inset, fill, fill, accent_color);
             }
             if let Some(src) = item.source_start {
-                checkbox_regions.push(CheckboxRegion {
+                sink.checkboxes.push(CheckboxRegion {
                     x1: box_x,
                     y1: box_y,
                     x2: box_x + box_size,
@@ -1131,11 +1268,17 @@ fn draw_list(
                     checked,
                 });
             }
-        } else if ordered {
-            let bullet = format!("{}.", start_num + i as u64);
-            ctx.draw_text(body, &bullet, x + LIST_MARKER_INSET, cur_y, dim_color);
         } else {
-            ctx.draw_text(body, "\u{2022}", x + LIST_MARKER_INSET, cur_y, dim_color);
+            let bullet = if ordered {
+                format!("{}.", start_num + i as u64)
+            } else {
+                "\u{2022}".to_string()
+            };
+            let bw = ctx.font_width(body, &bullet);
+            let bx = x + LIST_MARKER_INSET;
+            sink.emit(ctx, body, &bullet, bx, cur_y, bw, lh, "");
+            ctx.draw_text(body, &bullet, bx, cur_y, dim_color);
+            sink.separate(" ");
         }
 
         let ih = inlines_height(ctx, &item.spans, max_x - content_x, body, lh, style);
@@ -1154,7 +1297,7 @@ fn draw_list(
             lh,
             item_color,
             style,
-            link_regions,
+            sink,
             item_checked,
         );
         cur_y += ih.max(lh);
@@ -1171,8 +1314,7 @@ fn draw_list(
                 style,
                 pane_clip,
                 None,
-                link_regions,
-                checkbox_regions,
+                sink,
                 depth + 1,
             );
             cur_y += block_height(ctx, sub, max_x - content_x, style, depth + 1);
@@ -1192,7 +1334,7 @@ fn draw_table(
     max_x: f64,
     style: &StyleContext,
     pane_clip: Rect,
-    link_regions: &mut Vec<LinkRegion>,
+    sink: &mut Sink<'_>,
 ) {
     let n_cols = alignments.len().max(head.len()).max(1);
     let lh = style.font_height;
@@ -1225,7 +1367,7 @@ fn draw_table(
             lh,
             style,
             pane_clip,
-            link_regions,
+            sink,
         );
         restore_pane_clip(ctx, pane_clip);
         cur_y += h;
@@ -1247,7 +1389,7 @@ fn draw_table(
             lh,
             style,
             pane_clip,
-            link_regions,
+            sink,
         );
         restore_pane_clip(ctx, pane_clip);
         cur_y += h;
@@ -1296,11 +1438,12 @@ fn draw_table_row(
     lh: f64,
     style: &StyleContext,
     pane_clip: Rect,
-    link_regions: &mut Vec<LinkRegion>,
+    sink: &mut Sink<'_>,
 ) {
     for i in 0..n_cols {
         let cx = x + col_w * i as f64;
         if let Some(cell) = cells.get(i) {
+            sink.separate(if i == 0 { "\n" } else { "\t" });
             // Clip so long content can't spill into the next column, while
             // still respecting the preview pane bounds.
             set_intersected_clip_rect(
@@ -1321,7 +1464,7 @@ fn draw_table_row(
                 lh,
                 forced_color,
                 style,
-                link_regions,
+                sink,
                 false,
             );
         }
@@ -1351,6 +1494,88 @@ fn restore_pane_clip(ctx: &mut dyn DrawContext, pane_clip: Rect) {
 }
 
 // ── Top-level draw + URL helpers ─────────────────────────────────────────
+
+/// Where the block list is placed for one render pass.
+#[derive(Clone, Copy)]
+struct Geometry {
+    pane: Rect,
+    inner_x: f64,
+    inner_max_x: f64,
+    base_y: f64,
+}
+
+impl Geometry {
+    /// Screen position of a content-space point.
+    fn screen_of(&self, (cx, cy): (f64, f64)) -> (f64, f64) {
+        (cx + self.inner_x - PAD, cy + self.base_y)
+    }
+}
+
+/// Walk the block list, drawing into `ctx` and feeding `sink`. `cull` skips
+/// blocks outside the pane, which is what the draw pass wants; the pass that
+/// assembles the selected text walks everything so content scrolled out of
+/// view is still part of the range.
+#[allow(clippy::too_many_arguments)]
+fn render_blocks(
+    ctx: &mut dyn DrawContext,
+    blocks: &[Block],
+    layout: &[LayoutEntry],
+    code_tokens: &[Option<Vec<Vec<crate::editor::tokenizer::Token>>>],
+    style: &StyleContext,
+    geom: Geometry,
+    sink: &mut Sink<'_>,
+    cull: bool,
+) {
+    let pane = geom.pane;
+    restore_pane_clip(ctx, pane);
+    for (i, blk) in blocks.iter().enumerate() {
+        let Some(entry) = layout.get(i) else {
+            continue;
+        };
+        let sy = geom.base_y + entry.y;
+        if cull {
+            if sy + entry.h < pane.y {
+                continue;
+            }
+            if sy > pane.y + pane.h {
+                break;
+            }
+        }
+        sink.separate("\n\n");
+        let tokens = code_tokens.get(i).and_then(|o| o.as_ref());
+        draw_block(
+            ctx,
+            blk,
+            geom.inner_x,
+            sy,
+            geom.inner_max_x,
+            style,
+            pane,
+            tokens,
+            sink,
+            0,
+        );
+        // Re-apply the preview clip after every block. `draw_block` may
+        // leave the clip narrowed (tables set per-cell clips for spill
+        // protection), and without this the next block would render into
+        // a tiny stale rect and silently disappear. This is specifically
+        // what was cutting off content after the first table in README.md.
+        restore_pane_clip(ctx, pane);
+    }
+}
+
+/// The selection in screen coordinates, ordered so the first point reads
+/// before the second. `None` when nothing is selected.
+fn selection_bounds(state: &MarkdownPreviewState, geom: Geometry) -> Option<(f64, f64, f64, f64)> {
+    let (anchor, head) = (state.sel_anchor?, state.sel_head?);
+    let (ax, ay) = geom.screen_of(anchor);
+    let (hx, hy) = geom.screen_of(head);
+    if (ay, ax) <= (hy, hx) {
+        Some((ax, ay, hx, hy))
+    } else {
+        Some((hx, hy, ax, ay))
+    }
+}
 
 /// Draw the preview inside the given rect, recomputing layout when the
 /// width has changed. Resets and repopulates `link_regions` /
@@ -1385,9 +1610,6 @@ pub fn draw(
     // frame so stale pixels from the previous frame can't leak through.
     ctx.draw_rect(px, py, pw, ph, style.background.to_array());
 
-    state.link_regions.clear();
-    state.checkbox_regions.clear();
-
     // Publish the geometry the rest of the frame's content is placed in, so
     // scroll clamping and the main loop's scrollbar hit-tests agree with what
     // is drawn here.
@@ -1401,57 +1623,44 @@ pub fn draw(
     state.scroll_y = state.scroll_y.clamp(0.0, max_scroll_y(state));
     state.scroll_x = state.scroll_x.clamp(0.0, max_scroll_x(state));
 
-    // Snap scroll to a whole pixel before computing block positions. The
-    // lerp used by the main loop produces fractional scroll values and
-    // `draw_text` truncates to i32 — without snapping, glyphs can sit
-    // half a pixel above the background clear, leaving ghost rows below
-    // the last legitimate line.
-    let scroll_y_snap = state.scroll_y.floor();
-    let scroll_x_snap = state.scroll_x.floor();
-    let inner_x = px + PAD - scroll_x_snap;
-    let inner_max_x = px + pw - PAD - scroll_x_snap;
-    let base_y = py - scroll_y_snap;
+    let geom = pane_geometry(state);
+    let selection = selection_bounds(state, geom);
+    // Same fill the document pane uses, so a selection reads the same on
+    // both sides of the split.
+    let highlight = style.selection.to_array();
 
-    // Clip content to the preview rect.
-    let pane_clip = Rect {
-        x: px,
-        y: py,
-        w: pw,
-        h: ph,
+    let MarkdownPreviewState {
+        blocks,
+        layout,
+        code_tokens,
+        link_regions,
+        checkbox_regions,
+        ..
+    } = state;
+    link_regions.clear();
+    checkbox_regions.clear();
+    let mut sink = Sink {
+        links: link_regions,
+        checkboxes: checkbox_regions,
+        selection,
+        highlight,
+        collecting: false,
+        picked: String::new(),
+        pending_sep: None,
+        run_end: None,
+        probe: None,
+        hit: None,
     };
-    restore_pane_clip(ctx, pane_clip);
-    for (i, blk) in state.blocks.iter().enumerate() {
-        let Some(entry) = state.layout.get(i) else {
-            continue;
-        };
-        let sy = base_y + entry.y;
-        if sy + entry.h < py {
-            continue;
-        }
-        if sy > py + ph {
-            break;
-        }
-        let tokens = state.code_tokens.get(i).and_then(|o| o.as_ref());
-        draw_block(
-            ctx,
-            blk,
-            inner_x,
-            sy,
-            inner_max_x,
-            style,
-            pane_clip,
-            tokens,
-            &mut state.link_regions,
-            &mut state.checkbox_regions,
-            0,
-        );
-        // Re-apply the preview clip after every block. `draw_block` may
-        // leave the clip narrowed (tables set per-cell clips for spill
-        // protection), and without this the next block would render into
-        // a tiny stale rect and silently disappear. This is specifically
-        // what was cutting off content after the first table in README.md.
-        restore_pane_clip(ctx, pane_clip);
-    }
+    render_blocks(
+        ctx,
+        blocks,
+        layout,
+        code_tokens,
+        style,
+        geom,
+        &mut sink,
+        true,
+    );
 
     // Scrollbars — mirror the main text panel so the preview also gets
     // vertical and horizontal scrollbars when its content overflows the
@@ -1468,6 +1677,185 @@ pub fn draw(
         ctx.draw_rect(bar.track.x, bar.track.y, bar.track.w, bar.track.h, sb_track);
         ctx.draw_rect(bar.thumb.x, bar.thumb.y, bar.thumb.w, bar.thumb.h, sb_thumb);
     }
+}
+
+/// The placement the last draw used, rebuilt from the published pane rect
+/// and the current scroll so hit-tests and the copy pass line up with what
+/// the reader sees.
+fn pane_geometry(state: &MarkdownPreviewState) -> Geometry {
+    // Scroll is snapped to a whole pixel before block positions are
+    // computed: the lerp used by the main loop produces fractional values
+    // and `draw_text` truncates to i32, so an unsnapped origin leaves glyphs
+    // half a pixel above the background clear.
+    let pane = state.content_rect;
+    let scroll_x = state.scroll_x.floor();
+    let scroll_y = state.scroll_y.floor();
+    Geometry {
+        pane,
+        inner_x: pane.x + PAD - scroll_x,
+        inner_max_x: pane.x + pane.w - PAD - scroll_x,
+        base_y: pane.y - scroll_y,
+    }
+}
+
+/// A draw context that measures exactly as the real one but paints nothing.
+/// Lets the selection pass reuse the layout code that draws the document.
+struct MeasureOnly<'a>(&'a mut dyn DrawContext);
+
+impl DrawContext for MeasureOnly<'_> {
+    fn draw_rect(&mut self, _: f64, _: f64, _: f64, _: f64, _: [u8; 4]) {}
+    fn draw_text(&mut self, font_id: u64, text: &str, x: f64, _: f64, _: [u8; 4]) -> f64 {
+        x + self.0.font_width(font_id, text)
+    }
+    fn set_clip_rect(&mut self, _: f64, _: f64, _: f64, _: f64) {}
+    fn font_height(&self, font_id: u64) -> f64 {
+        self.0.font_height(font_id)
+    }
+    fn font_width(&self, font_id: u64, text: &str) -> f64 {
+        self.0.font_width(font_id, text)
+    }
+    fn draw_image(&mut self, _: &std::sync::Arc<Vec<u8>>, _: i32, _: i32, _: f64, _: f64) {}
+}
+
+// ── Selection ────────────────────────────────────────────────────────────
+
+/// Content-space position of a screen point inside the pane. Content space
+/// is the pane's top-left corner plus the scroll offset, so a point keeps
+/// pointing at the same text as the pane scrolls.
+pub fn point_to_content(state: &MarkdownPreviewState, x: f64, y: f64) -> (f64, f64) {
+    let geom = pane_geometry(state);
+    (x - (geom.inner_x - PAD), y - geom.base_y)
+}
+
+impl MarkdownPreviewState {
+    /// Whether the pane holds a selection that covers at least one character.
+    pub fn has_selection(&self) -> bool {
+        match (self.sel_anchor, self.sel_head) {
+            (Some(a), Some(h)) => a != h,
+            _ => false,
+        }
+    }
+
+    /// Drop the selection.
+    pub fn clear_selection(&mut self) {
+        self.sel_anchor = None;
+        self.sel_head = None;
+    }
+
+    /// Anchor a new selection at a screen point.
+    pub fn begin_selection(&mut self, x: f64, y: f64) {
+        let p = point_to_content(self, x, y);
+        self.sel_anchor = Some(p);
+        self.sel_head = Some(p);
+    }
+
+    /// Extend the anchored selection to a screen point.
+    pub fn extend_selection(&mut self, x: f64, y: f64) {
+        if self.sel_anchor.is_some() {
+            self.sel_head = Some(point_to_content(self, x, y));
+        }
+    }
+
+    /// Select the whole document.
+    pub fn select_all(&mut self) {
+        self.sel_anchor = Some((-1.0, -1.0));
+        self.sel_head = Some((
+            self.content_width + PAD + 1.0,
+            self.content_height + PAD + 1.0,
+        ));
+    }
+}
+
+/// Select the word under a screen point, or the whole visual line it sits
+/// on when `whole_line` is set. Returns false when the point is not over
+/// any text, leaving the selection untouched.
+pub fn select_at(
+    ctx: &mut dyn DrawContext,
+    state: &mut MarkdownPreviewState,
+    style: &StyleContext,
+    x: f64,
+    y: f64,
+    whole_line: bool,
+) -> bool {
+    let geom = pane_geometry(state);
+    let mut links = Vec::new();
+    let mut checkboxes = Vec::new();
+    let mut sink = Sink {
+        links: &mut links,
+        checkboxes: &mut checkboxes,
+        selection: None,
+        highlight: [0, 0, 0, 0],
+        collecting: false,
+        picked: String::new(),
+        pending_sep: None,
+        run_end: None,
+        probe: Some((x, y)),
+        hit: None,
+    };
+    let mut measure = MeasureOnly(ctx);
+    render_blocks(
+        &mut measure,
+        &state.blocks,
+        &state.layout,
+        &state.code_tokens,
+        style,
+        geom,
+        &mut sink,
+        true,
+    );
+    let Some((x0, y0, x1, y1)) = sink.hit else {
+        return false;
+    };
+    // Anchor both ends on the fragment's own vertical midpoint so the range
+    // covers exactly the line band the fragment was drawn in.
+    let mid = (y0 + y1) / 2.0;
+    let (left, right) = if whole_line {
+        (geom.pane.x - 1.0, geom.pane.x + state.content_width + PAD)
+    } else {
+        (x0, x1)
+    };
+    state.sel_anchor = Some(point_to_content(state, left, mid));
+    state.sel_head = Some(point_to_content(state, right, mid));
+    true
+}
+
+/// The selected text, assembled in reading order. Walks the whole document,
+/// so a selection that extends past the visible pane still copies in full.
+pub fn selected_text(
+    ctx: &mut dyn DrawContext,
+    state: &MarkdownPreviewState,
+    style: &StyleContext,
+) -> String {
+    let geom = pane_geometry(state);
+    let Some(selection) = selection_bounds(state, geom) else {
+        return String::new();
+    };
+    let mut links = Vec::new();
+    let mut checkboxes = Vec::new();
+    let mut sink = Sink {
+        links: &mut links,
+        checkboxes: &mut checkboxes,
+        selection: Some(selection),
+        highlight: [0, 0, 0, 0],
+        collecting: true,
+        picked: String::new(),
+        pending_sep: None,
+        run_end: None,
+        probe: None,
+        hit: None,
+    };
+    let mut measure = MeasureOnly(ctx);
+    render_blocks(
+        &mut measure,
+        &state.blocks,
+        &state.layout,
+        &state.code_tokens,
+        style,
+        geom,
+        &mut sink,
+        false,
+    );
+    sink.picked
 }
 
 /// Open a URL in the OS default browser.
@@ -1603,6 +1991,188 @@ mod tests {
             h,
         };
         state
+    }
+
+    /// Copy what `draw` would show as selected between two content points.
+    fn copy_between(state: &mut MarkdownPreviewState, from: (f64, f64), to: (f64, f64)) -> String {
+        let mut ctx = FixedMetrics;
+        state.sel_anchor = Some(from);
+        state.sel_head = Some(to);
+        selected_text(&mut ctx, state, &test_style())
+    }
+
+    #[test]
+    fn selecting_nothing_copies_nothing() {
+        let mut ctx = FixedMetrics;
+        let state = laid_out("hello world", 400.0, 200.0);
+        assert_eq!(selected_text(&mut ctx, &state, &test_style()), "");
+        assert!(!state.has_selection());
+    }
+
+    #[test]
+    fn dragging_across_a_paragraph_copies_its_words() {
+        let mut state = laid_out("alpha beta gamma", 400.0, 200.0);
+        let copied = copy_between(&mut state, (0.0, PAD), (1000.0, PAD + LINE_H));
+        assert_eq!(copied, "alpha beta gamma");
+    }
+
+    #[test]
+    fn a_partial_drag_copies_only_the_covered_characters() {
+        let mut state = laid_out("alpha beta", 400.0, 200.0);
+        // The first block sits at (PAD, PAD) in content space; take the
+        // first three glyphs of "alpha".
+        let mid = PAD + LINE_H / 2.0;
+        let start = (PAD, mid);
+        let end = (PAD + 3.0 * CHAR_W, mid);
+        assert_eq!(copy_between(&mut state, start, end), "alp");
+    }
+
+    #[test]
+    fn selecting_backwards_copies_the_same_text() {
+        let mut state = laid_out("alpha beta", 400.0, 200.0);
+        let mid = PAD + LINE_H / 2.0;
+        let a = (PAD, mid);
+        let b = (PAD + 5.0 * CHAR_W, mid);
+        assert_eq!(
+            copy_between(&mut state, b, a),
+            copy_between(&mut state, a, b)
+        );
+    }
+
+    #[test]
+    fn select_all_copies_every_block_separated_by_blank_lines() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("first para\n\nsecond para", 400.0, 200.0);
+        state.select_all();
+        let copied = selected_text(&mut ctx, &state, &test_style());
+        assert_eq!(copied, "first para\n\nsecond para");
+    }
+
+    #[test]
+    fn select_all_keeps_code_block_lines_on_their_own_lines() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("```\nlet a = 1\nlet b = 2\n```", 400.0, 200.0);
+        state.select_all();
+        let copied = selected_text(&mut ctx, &state, &test_style());
+        assert!(
+            copied.contains("let a = 1\nlet b = 2"),
+            "code lines should keep their breaks, got {copied:?}"
+        );
+    }
+
+    #[test]
+    fn select_all_reaches_content_scrolled_out_of_view() {
+        let mut ctx = FixedMetrics;
+        let source: String = (0..60)
+            .map(|i| format!("line{i}\n\n"))
+            .collect::<Vec<_>>()
+            .join("");
+        // A pane far shorter than the content, so the draw pass would cull
+        // almost all of it.
+        let mut state = laid_out(&source, 400.0, 40.0);
+        state.select_all();
+        let copied = selected_text(&mut ctx, &state, &test_style());
+        assert!(copied.starts_with("line0"), "got {copied:?}");
+        assert!(copied.ends_with("line59"), "got {copied:?}");
+    }
+
+    #[test]
+    fn a_table_copies_as_tab_separated_rows() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("| a | b |\n| - | - |\n| 1 | 2 |", 600.0, 400.0);
+        state.select_all();
+        let copied = selected_text(&mut ctx, &state, &test_style());
+        assert!(copied.contains("a\tb"), "got {copied:?}");
+        assert!(copied.contains("1\t2"), "got {copied:?}");
+    }
+
+    #[test]
+    fn a_list_copies_one_item_per_line_with_its_bullet() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("- one\n- two", 400.0, 200.0);
+        state.select_all();
+        let copied = selected_text(&mut ctx, &state, &test_style());
+        assert!(copied.contains("\u{2022} one"), "got {copied:?}");
+        assert!(copied.contains("\u{2022} two"), "got {copied:?}");
+        assert!(
+            copied.contains("one\n"),
+            "items need their own lines: {copied:?}"
+        );
+    }
+
+    #[test]
+    fn a_selection_survives_scrolling_the_pane() {
+        let mut state = laid_out("alpha beta\n\ngamma delta", 400.0, 200.0);
+        let mid = PAD + LINE_H / 2.0;
+        let before = copy_between(&mut state, (PAD, mid), (1000.0, mid));
+        state.scroll_y = 7.0;
+        let mut ctx = FixedMetrics;
+        let after = selected_text(&mut ctx, &state, &test_style());
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn clearing_the_selection_copies_nothing() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("alpha beta", 400.0, 200.0);
+        state.select_all();
+        state.clear_selection();
+        assert_eq!(selected_text(&mut ctx, &state, &test_style()), "");
+    }
+
+    #[test]
+    fn double_clicking_a_word_selects_just_that_word() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("alpha beta gamma", 400.0, 200.0);
+        // "beta" starts one space after "alpha".
+        let x = PAD + 7.0 * CHAR_W;
+        let y = PAD + LINE_H / 2.0;
+        assert!(select_at(&mut ctx, &mut state, &test_style(), x, y, false));
+        assert_eq!(selected_text(&mut ctx, &state, &test_style()), "beta");
+    }
+
+    #[test]
+    fn triple_clicking_selects_the_whole_line() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("alpha beta gamma", 400.0, 200.0);
+        let x = PAD + 7.0 * CHAR_W;
+        let y = PAD + LINE_H / 2.0;
+        assert!(select_at(&mut ctx, &mut state, &test_style(), x, y, true));
+        assert_eq!(
+            selected_text(&mut ctx, &state, &test_style()),
+            "alpha beta gamma"
+        );
+    }
+
+    #[test]
+    fn clicking_empty_space_selects_nothing() {
+        let mut ctx = FixedMetrics;
+        let mut state = laid_out("alpha", 400.0, 200.0);
+        let below = state.content_height + 50.0;
+        assert!(!select_at(
+            &mut ctx,
+            &mut state,
+            &test_style(),
+            10.0,
+            below,
+            false
+        ));
+        assert!(!state.has_selection());
+    }
+
+    #[test]
+    fn a_screen_point_maps_to_the_content_it_covers() {
+        let mut state = laid_out("alpha", 400.0, 200.0);
+        state.scroll_y = 30.0;
+        state.content_rect = Rect {
+            x: 100.0,
+            y: 50.0,
+            w: 400.0,
+            h: 200.0,
+        };
+        let (cx, cy) = point_to_content(&state, 140.0, 60.0);
+        assert!((cx - 40.0).abs() < 0.001);
+        assert!((cy - 40.0).abs() < 0.001);
     }
 
     #[test]

@@ -79,6 +79,38 @@ fn parse_palette(val: &serde_json::Value) -> Result<ThemePalette, String> {
     Ok(theme)
 }
 
+/// Parse a theme color literal: `#rrggbb`, `#rrggbbaa`, or `rgba(r,g,b,a)`
+/// with `a` in the 0.0-1.0 range.
+pub fn parse_color(s: &str) -> Option<crate::editor::types::Color> {
+    use crate::editor::types::Color;
+    if let Some(hex) = s.strip_prefix('#') {
+        let hex = hex.trim();
+        if hex.len() == 6 || hex.len() == 8 {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = if hex.len() == 8 {
+                u8::from_str_radix(&hex[6..8], 16).ok()?
+            } else {
+                255
+            };
+            return Some(Color::new(r, g, b, a));
+        }
+    }
+    if s.starts_with("rgba(") {
+        let inner = s.trim_start_matches("rgba(").trim_end_matches(')');
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() == 4 {
+            let r = parts[0].trim().parse::<u8>().ok()?;
+            let g = parts[1].trim().parse::<u8>().ok()?;
+            let b = parts[2].trim().parse::<u8>().ok()?;
+            let a = (parts[3].trim().parse::<f64>().ok()? * 255.0) as u8;
+            return Some(Color::new(r, g, b, a));
+        }
+    }
+    None
+}
+
 /// List built-in theme names.
 pub fn builtin_theme_names() -> &'static [&'static str] {
     &[

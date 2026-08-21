@@ -24,6 +24,7 @@ description: Keyboard shortcuts, LSP language server setup, configuration, and s
 | `Ctrl+0` | Reset font size |
 | `Ctrl+B` | Toggle sidebar |
 | `Ctrl+M` | Toggle minimap |
+| `Ctrl+Shift+M` | Toggle markdown preview |
 | `Alt+Z` | Toggle line wrapping |
 | `Ctrl+Shift+H` | Toggle whitespace rendering |
 | `Ctrl+Shift+P` | Cycle theme |

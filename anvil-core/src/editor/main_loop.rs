@@ -1067,6 +1067,11 @@ pub fn run(
     let mut preview_sb_v_drag_offset: f64 = 0.0;
     let mut preview_sb_h_dragging = false;
     let mut preview_sb_h_drag_offset: f64 = 0.0;
+    // Held while a text selection is being dragged out in the markdown
+    // preview. `preview_press` is where the press landed, so a release that
+    // never moved is treated as a click and follows the link under it.
+    let mut preview_selecting = false;
+    let mut preview_press: Option<(f64, f64, Option<String>)> = None;
     let mut editor_mouse_down = false;
     // Last (buffer, selection range) mirrored into the X11 PRIMARY selection.
     // Keyed so a non-empty selection is pushed once per change rather than
@@ -1359,7 +1364,18 @@ pub fn run(
     // SDL_TEXTINPUT event (which fires on every printable keystroke,
     // including Y / N) doesn't leak into the active document.
     let mut eat_next_text_input: bool = false;
-    let mut info_message: Option<(String, Instant)> = font_warning.map(|msg| (msg, Instant::now()));
+    // A config that exists but cannot be parsed leaves the editor on
+    // built-in defaults, so say so rather than letting the user believe
+    // their settings are in effect.
+    let mut info_message: Option<(String, Instant)> = config
+        .load_error
+        .as_deref()
+        // A TOML error carries its own multi-line excerpt; the status bar
+        // has one line, so show the summary and leave the rest to the log.
+        .and_then(|e| e.lines().next())
+        .map(|e| format!("{e} - running on default settings"))
+        .or(font_warning)
+        .map(|msg| (msg, Instant::now()));
 
     // Command palette state.
     let mut palette_active = false;
@@ -5492,6 +5508,7 @@ pub fn run(
                     {
                         if key == "escape" {
                             doc.preview.focused = false;
+                            doc.preview.clear_selection();
                             redraw = true;
                             continue;
                         }
@@ -5973,6 +5990,9 @@ pub fn run(
                                 && *x < pr.x + pr.w
                                 && *y >= pr.y
                                 && *y < pr.y + pr.h;
+                            if !doc.preview.focused {
+                                doc.preview.clear_selection();
+                            }
                         }
                     }
                     if *button == MouseButton::Left {
@@ -7507,14 +7527,33 @@ pub fn run(
                                     redraw = true;
                                     continue;
                                 }
-                                // Link next.
-                                if let Some(lr) =
-                                    doc.preview.link_regions.iter().find(|r| {
-                                        *x >= r.x1 && *x <= r.x2 && *y >= r.y1 && *y <= r.y2
-                                    })
-                                {
-                                    crate::editor::markdown_preview::open_url(&lr.href);
+                                // A press starts a text selection. The link
+                                // under it is remembered and followed on
+                                // release, so dragging across a link selects
+                                // its text instead of navigating away.
+                                let href = doc
+                                    .preview
+                                    .link_regions
+                                    .iter()
+                                    .find(|r| *x >= r.x1 && *x <= r.x2 && *y >= r.y1 && *y <= r.y2)
+                                    .map(|r| r.href.clone());
+                                // Double-click takes the word under the
+                                // pointer, triple-click the whole line;
+                                // either way the drag can still extend it.
+                                let multi = *clicks >= 2
+                                    && crate::editor::markdown_preview::select_at(
+                                        &mut draw_ctx,
+                                        &mut doc.preview,
+                                        &style,
+                                        *x,
+                                        *y,
+                                        *clicks >= 3,
+                                    );
+                                if !multi {
+                                    doc.preview.begin_selection(*x, *y);
                                 }
+                                preview_selecting = !multi;
+                                preview_press = Some((*x, *y, href));
                                 redraw = true;
                                 continue;
                             }
@@ -7925,6 +7964,32 @@ pub fn run(
                         }
                         continue;
                     }
+                    // Markdown preview text selection: the drag extends the
+                    // range and pulls the pane along when it runs off an edge.
+                    if preview_selecting {
+                        if let Some(doc) = docs.get_mut(active_tab) {
+                            doc.preview.extend_selection(*x, *y);
+                            // Auto-scroll when the drag runs past an edge so a
+                            // selection can reach beyond one screenful.
+                            let pane = doc.preview.content_rect;
+                            let step = style.font_height.max(1.0);
+                            if *y < pane.y {
+                                crate::editor::markdown_preview::scroll_by(
+                                    &mut doc.preview,
+                                    0.0,
+                                    -step,
+                                );
+                            } else if *y > pane.y + pane.h {
+                                crate::editor::markdown_preview::scroll_by(
+                                    &mut doc.preview,
+                                    0.0,
+                                    step,
+                                );
+                            }
+                            redraw = true;
+                        }
+                        continue;
+                    }
                     // Markdown preview scrollbar drags. Same grip model as the
                     // editor: the point the thumb was grabbed at stays under
                     // the cursor.
@@ -8156,6 +8221,18 @@ pub fn run(
                                 && (*x - d.preview.rect.x).abs() < 5.0
                         })
                         .unwrap_or(false);
+                    let hover_preview_text = docs
+                        .get(active_tab)
+                        .map(|d| {
+                            let pr = d.preview.content_rect;
+                            d.preview.enabled
+                                && pr.w > 0.0
+                                && *x >= pr.x
+                                && *x < pr.x + pr.w
+                                && *y >= pr.y
+                                && *y < pr.y + pr.h
+                        })
+                        .unwrap_or(false);
                     if hover_link {
                         crate::window::set_cursor("hand");
                     } else if (subsystems.has_sidebar()
@@ -8165,6 +8242,8 @@ pub fn run(
                         || preview_dragging
                     {
                         crate::window::set_cursor("sizeh");
+                    } else if hover_preview_text || preview_selecting {
+                        crate::window::set_cursor("ibeam");
                     } else if !sidebar_dragging && !editor_mouse_down && !preview_dragging {
                         crate::window::set_cursor("arrow");
                     } else if editor_mouse_down {
@@ -8338,6 +8417,20 @@ pub fn run(
                             &preview_split.to_string(),
                         );
                     }
+                    if preview_selecting {
+                        preview_selecting = false;
+                        if let (Some((_, _, href)), Some(doc)) =
+                            (preview_press.take(), docs.get_mut(active_tab))
+                        {
+                            if !doc.preview.has_selection() {
+                                doc.preview.clear_selection();
+                                if let Some(href) = href {
+                                    crate::editor::markdown_preview::open_url(&href);
+                                }
+                            }
+                        }
+                    }
+                    preview_press = None;
                     editor_mouse_down = false;
                     tab_dragging = None;
                     editor_sb_dragging = false;
@@ -10022,6 +10115,7 @@ pub fn run(
                     doc.preview.rect = crate::editor::types::Rect::default();
                     doc.preview.content_rect = crate::editor::types::Rect::default();
                     doc.preview.focused = false;
+                    doc.preview.clear_selection();
                 }
             }
             status_view.set_rect(crate::editor::types::Rect {
@@ -12144,26 +12238,20 @@ pub fn run(
                     let bar_y = tab_h + breadcrumb_h;
                     let bar_total_h = row_h * total_rows;
 
-                    draw_ctx.draw_rect(
-                        bar_x,
-                        bar_y,
-                        bar_w,
-                        bar_total_h,
-                        style.background3.to_array(),
-                    );
+                    draw_ctx.draw_rect(bar_x, bar_y, bar_w, bar_total_h, style.overlay_bg());
                     draw_ctx.draw_rect(
                         bar_x,
                         bar_y,
                         bar_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     draw_ctx.draw_rect(
                         bar_x,
                         bar_y + bar_total_h - style.divider_size,
                         bar_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
 
                     // Row 1: Find input + count indicator on the right.
@@ -12174,7 +12262,7 @@ pub fn run(
                         &find_label,
                         bar_x + style.padding_x,
                         bar_y + style.padding_y,
-                        style.text.to_array(),
+                        style.overlay_text(),
                     );
                     let count_label = if find_query.is_empty() {
                         String::new()
@@ -12192,9 +12280,9 @@ pub fn run(
                             bar_x + bar_w - cw - style.padding_x,
                             bar_y + style.padding_y,
                             if find_matches.is_empty() {
-                                style.error.to_array()
+                                style.on_overlay(style.error)
                             } else {
-                                style.dim.to_array()
+                                style.overlay_dim()
                             },
                         );
                     }
@@ -12208,7 +12296,7 @@ pub fn run(
                             replace_y,
                             bar_w,
                             style.divider_size,
-                            style.divider.to_array(),
+                            style.overlay_border(),
                         );
                         let repl_cursor = if find_focus_on_replace { "_" } else { "" };
                         let repl_label = format!(
@@ -12219,7 +12307,7 @@ pub fn run(
                             &repl_label,
                             bar_x + style.padding_x,
                             replace_y + style.padding_y,
-                            style.text.to_array(),
+                            style.overlay_text(),
                         );
                         next_row_y += row_h;
                     }
@@ -12231,7 +12319,7 @@ pub fn run(
                         hint_y,
                         bar_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let mark = |on: bool| if on { "[x]" } else { "[ ]" };
                     let hint = format!(
@@ -12246,7 +12334,7 @@ pub fn run(
                         &hint,
                         bar_x + style.padding_x,
                         hint_y + style.padding_y,
-                        style.dim.to_array(),
+                        style.overlay_dim(),
                     );
                 }
 
@@ -12266,9 +12354,9 @@ pub fn run(
                         dlg_y - 1.0,
                         dlg_w + 2.0,
                         dlg_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(dlg_x, dlg_y, dlg_w, dlg_h, style.background3.to_array());
+                    draw_ctx.draw_rect(dlg_x, dlg_y, dlg_w, dlg_h, style.overlay_bg());
                     // Title.
                     let title = format!("Loading {}", job.name);
                     draw_ctx.draw_text(
@@ -12276,7 +12364,7 @@ pub fn run(
                         &title,
                         dlg_x + style.padding_x,
                         dlg_y + style.padding_y,
-                        style.text.to_array(),
+                        style.overlay_text(),
                     );
                     // Progress numbers.
                     let bytes = job.bytes_read.load(std::sync::atomic::Ordering::Relaxed);
@@ -12297,15 +12385,15 @@ pub fn run(
                         &status,
                         dlg_x + style.padding_x,
                         dlg_y + style.padding_y * 2.0 + style.font_height,
-                        style.dim.to_array(),
+                        style.overlay_dim(),
                     );
                     // Progress bar.
                     let bar_x = dlg_x + style.padding_x;
                     let bar_y = dlg_y + dlg_h - style.padding_y - style.font_height / 2.0;
                     let bar_w = dlg_w - style.padding_x * 2.0;
                     let bar_h = style.font_height / 2.0;
-                    draw_ctx.draw_rect(bar_x, bar_y, bar_w, bar_h, style.divider.to_array());
-                    draw_ctx.draw_rect(bar_x, bar_y, bar_w * pct, bar_h, style.accent.to_array());
+                    draw_ctx.draw_rect(bar_x, bar_y, bar_w, bar_h, style.overlay_border());
+                    draw_ctx.draw_rect(bar_x, bar_y, bar_w * pct, bar_h, style.overlay_accent());
                 }
 
                 // Nag bar takes priority over all overlays.
@@ -12324,7 +12412,7 @@ pub fn run(
                         message,
                         style.padding_x,
                         style.padding_y,
-                        style.nagbar_text.to_array(),
+                        style.nag_text(),
                     );
                     // Draw option buttons.
                     let msg_w = draw_ctx.font_width(style.font, message);
@@ -12334,13 +12422,13 @@ pub fn run(
                     let mut bx = style.padding_x + msg_w + btn_pad * 2.0;
                     for label in &["Yes", "No"] {
                         let lw = draw_ctx.font_width(style.font, label) + btn_pad * 2.0;
-                        draw_ctx.draw_rect(bx, btn_y, lw, btn_h, style.nagbar_text.to_array());
+                        draw_ctx.draw_rect(bx, btn_y, lw, btn_h, style.nag_text());
                         draw_ctx.draw_text(
                             style.font,
                             label,
                             bx + btn_pad,
                             btn_y + style.padding_y * 0.5,
-                            style.nagbar.to_array(),
+                            style.text_on(style.nagbar, style.nag_text_surface()),
                         );
                         bx += lw + btn_pad;
                     }
@@ -12395,7 +12483,7 @@ pub fn run(
                         &msg,
                         style.padding_x,
                         style.padding_y,
-                        style.nagbar_text.to_array(),
+                        style.nag_text(),
                     );
                 }
 
@@ -12411,7 +12499,7 @@ pub fn run(
                         &msg,
                         style.padding_x,
                         style.padding_y,
-                        style.nagbar_text.to_array(),
+                        style.nag_text(),
                     );
                 }
 
@@ -12428,7 +12516,7 @@ pub fn run(
                         &msg,
                         style.padding_x,
                         style.padding_y,
-                        style.nagbar_text.to_array(),
+                        style.nag_text(),
                     );
                 }
 
@@ -12444,7 +12532,7 @@ pub fn run(
                         &msg,
                         style.padding_x,
                         style.padding_y,
-                        style.nagbar_text.to_array(),
+                        style.nag_text(),
                     );
                 }
 
@@ -12460,7 +12548,7 @@ pub fn run(
                         &msg,
                         style.padding_x,
                         style.padding_y,
-                        style.nagbar_text.to_array(),
+                        style.nag_text(),
                     );
                 }
 
@@ -12481,9 +12569,9 @@ pub fn run(
                         pal_y - 1.0,
                         pal_w + 2.0,
                         pal_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(pal_x, pal_y, pal_w, pal_h, style.background3.to_array());
+                    draw_ctx.draw_rect(pal_x, pal_y, pal_w, pal_h, style.overlay_bg());
 
                     let input_y = pal_y + style.padding_y;
                     draw_ctx.draw_text(
@@ -12491,14 +12579,14 @@ pub fn run(
                         &format!("> {palette_query}_"),
                         pal_x + style.padding_x,
                         input_y,
-                        style.text.to_array(),
+                        style.overlay_text(),
                     );
                     draw_ctx.draw_rect(
                         pal_x,
                         input_y + line_h,
                         pal_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
 
                     // Scroll the visible window so palette_selected stays in view.
@@ -12517,18 +12605,12 @@ pub fn run(
                         let ry =
                             input_y + line_h + style.divider_size + display_idx as f64 * line_h;
                         if i == palette_selected {
-                            draw_ctx.draw_rect(
-                                pal_x,
-                                ry,
-                                pal_w,
-                                line_h,
-                                style.selection.to_array(),
-                            );
+                            draw_ctx.draw_rect(pal_x, ry, pal_w, line_h, style.overlay_row_bg());
                         }
                         let color = if i == palette_selected {
-                            style.accent.to_array()
+                            style.overlay_row_accent()
                         } else {
-                            style.text.to_array()
+                            style.overlay_text()
                         };
                         draw_ctx.draw_text(
                             style.font,
@@ -12558,9 +12640,9 @@ pub fn run(
                         ps_y - 1.0,
                         ps_w + 2.0,
                         ps_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(ps_x, ps_y, ps_w, ps_h, style.background3.to_array());
+                    draw_ctx.draw_rect(ps_x, ps_y, ps_w, ps_h, style.overlay_bg());
 
                     // Title bar.
                     let title_y = ps_y + style.padding_y;
@@ -12569,7 +12651,7 @@ pub fn run(
                         "Find in Files",
                         ps_x + style.padding_x,
                         title_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     let match_count = format!("  ({} matches)", project_search_results.len());
                     let title_w = draw_ctx.font_width(style.font, "Find in Files");
@@ -12578,14 +12660,14 @@ pub fn run(
                         &match_count,
                         ps_x + style.padding_x + title_w,
                         title_y,
-                        style.dim.to_array(),
+                        style.overlay_dim(),
                     );
                     draw_ctx.draw_rect(
                         ps_x,
                         title_y + line_h,
                         ps_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
 
                     // Input line.
@@ -12597,14 +12679,14 @@ pub fn run(
                         label,
                         ps_x + style.padding_x,
                         input_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     draw_ctx.draw_text(
                         style.font,
                         &format!("{}_", &project_search_query),
                         ps_x + style.padding_x + label_w + style.padding_x,
                         input_y,
-                        style.text.to_array(),
+                        style.overlay_text(),
                     );
 
                     // Toggle hints.
@@ -12614,7 +12696,7 @@ pub fn run(
                         hint_y,
                         ps_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let mark = |on: bool| if on { "[x]" } else { "[ ]" };
                     let hint = format!(
@@ -12628,7 +12710,7 @@ pub fn run(
                         &hint,
                         ps_x + style.padding_x,
                         hint_y + style.padding_y * 0.5,
-                        style.dim.to_array(),
+                        style.overlay_dim(),
                     );
 
                     // Divider below hints.
@@ -12638,7 +12720,7 @@ pub fn run(
                         results_start_y,
                         ps_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
 
                     // Scroll offset so selected item is visible.
@@ -12658,14 +12740,14 @@ pub fn run(
                         let display_idx = i - scroll_off;
                         let ry = results_start_y + style.divider_size + display_idx as f64 * line_h;
                         if i == project_search_selected {
-                            draw_ctx.draw_rect(ps_x, ry, ps_w, line_h, style.selection.to_array());
+                            draw_ctx.draw_rect(ps_x, ry, ps_w, line_h, style.overlay_row_bg());
                         }
                         // Show path:line then the matched text.
                         let location = format!("{path}:{line_num}");
                         let loc_color = if i == project_search_selected {
-                            style.accent.to_array()
+                            style.overlay_row_accent()
                         } else {
-                            style.dim.to_array()
+                            style.overlay_dim()
                         };
                         draw_ctx.draw_text(
                             style.font,
@@ -12675,7 +12757,11 @@ pub fn run(
                             loc_color,
                         );
                         let loc_w = draw_ctx.font_width(style.font, &location);
-                        let text_color = style.text.to_array();
+                        let text_color = if i == project_search_selected {
+                            style.overlay_row_text()
+                        } else {
+                            style.overlay_text()
+                        };
                         let max_text_w = ps_w - style.padding_x * 3.0 - loc_w;
                         let truncated: String = if max_text_w > 0.0 {
                             let char_w = draw_ctx.font_width(style.font, "m");
@@ -12712,9 +12798,9 @@ pub fn run(
                         pr_y - 1.0,
                         pr_w + 2.0,
                         pr_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(pr_x, pr_y, pr_w, pr_h, style.background3.to_array());
+                    draw_ctx.draw_rect(pr_x, pr_y, pr_w, pr_h, style.overlay_bg());
 
                     // Title bar.
                     let title_y = pr_y + style.padding_y;
@@ -12723,7 +12809,7 @@ pub fn run(
                         "Replace in Files",
                         pr_x + style.padding_x,
                         title_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     let match_label = format!("  ({} matches)", project_replace_results.len());
                     let tw = draw_ctx.font_width(style.font, "Replace in Files");
@@ -12732,14 +12818,14 @@ pub fn run(
                         &match_label,
                         pr_x + style.padding_x + tw,
                         title_y,
-                        style.dim.to_array(),
+                        style.overlay_dim(),
                     );
                     draw_ctx.draw_rect(
                         pr_x,
                         title_y + line_h,
                         pr_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
 
                     // Search input.
@@ -12756,14 +12842,14 @@ pub fn run(
                         search_label,
                         pr_x + style.padding_x,
                         row1_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     draw_ctx.draw_text(
                         style.font,
                         &format!("{project_replace_search}{search_cursor}"),
                         pr_x + style.padding_x + sl_w + style.padding_x,
                         row1_y,
-                        style.text.to_array(),
+                        style.overlay_text(),
                     );
 
                     // Replace input.
@@ -12773,7 +12859,7 @@ pub fn run(
                         row2_y,
                         pr_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let replace_cursor = if project_replace_focus_on_replace {
                         "_"
@@ -12787,14 +12873,14 @@ pub fn run(
                         rl,
                         pr_x + style.padding_x,
                         row2_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     draw_ctx.draw_text(
                         style.font,
                         &format!("{project_replace_with}{replace_cursor}"),
                         pr_x + style.padding_x + rl_w + style.padding_x,
                         row2_y,
-                        style.text.to_array(),
+                        style.overlay_text(),
                     );
 
                     // Toggle hints.
@@ -12804,7 +12890,7 @@ pub fn run(
                         toggles_y,
                         pr_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let mark = |on: bool| if on { "[x]" } else { "[ ]" };
                     let toggle_hint = format!(
@@ -12818,7 +12904,7 @@ pub fn run(
                         &toggle_hint,
                         pr_x + style.padding_x,
                         toggles_y + style.padding_y * 0.5,
-                        style.dim.to_array(),
+                        style.overlay_dim(),
                     );
 
                     // Action hint row.
@@ -12828,7 +12914,7 @@ pub fn run(
                         hint_y,
                         pr_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let hint =
                         "Tab switch fields  Enter preview  Ctrl+Enter replace all  Esc close";
@@ -12837,7 +12923,7 @@ pub fn run(
                         hint,
                         pr_x + style.padding_x,
                         hint_y + style.padding_y * 0.5,
-                        style.dim.to_array(),
+                        style.overlay_dim(),
                     );
 
                     // Results preview.
@@ -12847,14 +12933,14 @@ pub fn run(
                         results_y,
                         pr_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     draw_ctx.draw_rect(
                         pr_x,
                         results_y,
                         pr_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let scroll_off = if project_replace_selected >= max_visible {
                         project_replace_selected - max_visible + 1
@@ -12870,13 +12956,13 @@ pub fn run(
                         let di = i - scroll_off;
                         let ry = results_y + style.divider_size + di as f64 * line_h;
                         if i == project_replace_selected {
-                            draw_ctx.draw_rect(pr_x, ry, pr_w, line_h, style.selection.to_array());
+                            draw_ctx.draw_rect(pr_x, ry, pr_w, line_h, style.overlay_row_bg());
                         }
                         let location = format!("{path}:{line_num}");
                         let loc_color = if i == project_replace_selected {
-                            style.accent.to_array()
+                            style.overlay_row_accent()
                         } else {
-                            style.dim.to_array()
+                            style.overlay_dim()
                         };
                         draw_ctx.draw_text(
                             style.font,
@@ -12896,7 +12982,11 @@ pub fn run(
                                 &format!("  {truncated}"),
                                 pr_x + style.padding_x + loc_w,
                                 ry + style.padding_y / 2.0,
-                                style.text.to_array(),
+                                if i == project_replace_selected {
+                                    style.overlay_row_text()
+                                } else {
+                                    style.overlay_text()
+                                },
                             );
                         }
                     }
@@ -12918,9 +13008,9 @@ pub fn run(
                         gs_y - 1.0,
                         gs_w + 2.0,
                         gs_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(gs_x, gs_y, gs_w, gs_h, style.background3.to_array());
+                    draw_ctx.draw_rect(gs_x, gs_y, gs_w, gs_h, style.overlay_bg());
                     let input_y = gs_y + style.padding_y;
                     let title = format!(
                         "Git Status  ({} changed)  [R] refresh  [Enter] open  [Esc] close",
@@ -12931,14 +13021,14 @@ pub fn run(
                         &title,
                         gs_x + style.padding_x,
                         input_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     draw_ctx.draw_rect(
                         gs_x,
                         input_y + line_h,
                         gs_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let scroll_off = if git_status_selected >= max_vis {
                         git_status_selected - max_vis + 1
@@ -12954,14 +13044,19 @@ pub fn run(
                         let di = i - scroll_off;
                         let ry = input_y + line_h + style.divider_size + di as f64 * line_h;
                         if i == git_status_selected {
-                            draw_ctx.draw_rect(gs_x, ry, gs_w, line_h, style.selection.to_array());
+                            draw_ctx.draw_rect(gs_x, ry, gs_w, line_h, style.overlay_row_bg());
                         }
+                        let surface = if i == git_status_selected {
+                            style.overlay_row_surface()
+                        } else {
+                            style.overlay_surface()
+                        };
                         let color = match code.as_str() {
-                            "M" | "MM" => style.warn.to_array(),
-                            "A" | "AM" => style.good.to_array(),
-                            "D" => style.error.to_array(),
-                            "?" | "??" => style.dim.to_array(),
-                            _ => style.text.to_array(),
+                            "M" | "MM" => style.text_on(style.warn, surface),
+                            "A" | "AM" => style.text_on(style.good, surface),
+                            "D" => style.text_on(style.error, surface),
+                            "?" | "??" => style.muted_on(style.dim, surface),
+                            _ => style.text_on(style.text, surface),
                         };
                         draw_ctx.draw_text(
                             style.font,
@@ -12989,9 +13084,9 @@ pub fn run(
                         ca_y - 1.0,
                         ca_w + 2.0,
                         ca_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(ca_x, ca_y, ca_w, ca_h, style.background3.to_array());
+                    draw_ctx.draw_rect(ca_x, ca_y, ca_w, ca_h, style.overlay_bg());
                     let input_y = ca_y + style.padding_y;
                     let title = format!(
                         "Code Actions  ({})  [Enter] apply  [Esc] close",
@@ -13002,14 +13097,14 @@ pub fn run(
                         &title,
                         ca_x + style.padding_x,
                         input_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     draw_ctx.draw_rect(
                         ca_x,
                         input_y + line_h,
                         ca_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let scroll_off = if code_action_selected >= max_vis {
                         code_action_selected - max_vis + 1
@@ -13025,14 +13120,19 @@ pub fn run(
                         let di = i - scroll_off;
                         let ry = input_y + line_h + style.divider_size + di as f64 * line_h;
                         if i == code_action_selected {
-                            draw_ctx.draw_rect(ca_x, ry, ca_w, line_h, style.selection.to_array());
+                            draw_ctx.draw_rect(ca_x, ry, ca_w, line_h, style.overlay_row_bg());
                         }
+                        let selected = i == code_action_selected;
                         let color = if code_action_disabled_reason(action).is_some() {
-                            style.dim.to_array()
-                        } else if i == code_action_selected {
-                            style.accent.to_array()
+                            if selected {
+                                style.overlay_row_dim()
+                            } else {
+                                style.overlay_dim()
+                            }
+                        } else if selected {
+                            style.overlay_row_accent()
                         } else {
-                            style.text.to_array()
+                            style.overlay_text()
                         };
                         draw_ctx.draw_text(
                             style.font,
@@ -13059,9 +13159,9 @@ pub fn run(
                         gl_y - 1.0,
                         gl_w + 2.0,
                         gl_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(gl_x, gl_y, gl_w, gl_h, style.background3.to_array());
+                    draw_ctx.draw_rect(gl_x, gl_y, gl_w, gl_h, style.overlay_bg());
                     let input_y = gl_y + style.padding_y;
                     let title =
                         format!("Git Log  ({} commits)  [Esc] close", git_log_entries.len());
@@ -13070,14 +13170,14 @@ pub fn run(
                         &title,
                         gl_x + style.padding_x,
                         input_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                     draw_ctx.draw_rect(
                         gl_x,
                         input_y + line_h,
                         gl_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
                     let scroll_off = if git_log_selected >= max_vis {
                         git_log_selected - max_vis + 1
@@ -13093,13 +13193,13 @@ pub fn run(
                         let di = i - scroll_off;
                         let ry = input_y + line_h + style.divider_size + di as f64 * line_h;
                         if i == git_log_selected {
-                            draw_ctx.draw_rect(gl_x, ry, gl_w, line_h, style.selection.to_array());
+                            draw_ctx.draw_rect(gl_x, ry, gl_w, line_h, style.overlay_row_bg());
                         }
                         let entry_text = format!("{hash}  {date}  {msg}");
                         let hash_color = if i == git_log_selected {
-                            style.accent.to_array()
+                            style.overlay_row_accent()
                         } else {
-                            style.dim.to_array()
+                            style.overlay_dim()
                         };
                         draw_ctx.draw_text(
                             style.font,
@@ -13148,9 +13248,9 @@ pub fn run(
                         cv_y - 1.0,
                         cv_w + 2.0,
                         cv_h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(cv_x, cv_y, cv_w, cv_h, style.background3.to_array());
+                    draw_ctx.draw_rect(cv_x, cv_y, cv_w, cv_h, style.overlay_bg());
 
                     // Input line.
                     let input_y = cv_y + style.padding_y;
@@ -13161,7 +13261,7 @@ pub fn run(
                         label,
                         cv_x + style.padding_x,
                         input_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
 
                     // Horizontal-scrolling input. `text_origin` is where the
@@ -13202,7 +13302,7 @@ pub fn run(
                         &cmdview_text,
                         text_origin,
                         input_y,
-                        style.text.to_array(),
+                        style.overlay_text(),
                     );
                     let caret_x = text_origin + caret_offset_px;
                     draw_ctx.draw_rect(
@@ -13219,7 +13319,7 @@ pub fn run(
                             "<",
                             text_area_x - draw_ctx.font_width(style.font, "<"),
                             input_y,
-                            style.dim.to_array(),
+                            style.overlay_dim(),
                         );
                     }
                     if full_text_w - text_scroll > text_area_w + 0.5 {
@@ -13228,7 +13328,7 @@ pub fn run(
                             ">",
                             text_area_right,
                             input_y,
-                            style.dim.to_array(),
+                            style.overlay_dim(),
                         );
                     }
 
@@ -13238,7 +13338,7 @@ pub fn run(
                         input_y + line_h,
                         cv_w,
                         style.divider_size,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
 
                     // Scroll offset so selected item is visible.
@@ -13263,13 +13363,13 @@ pub fn run(
                         let ry =
                             input_y + line_h + style.divider_size + display_idx as f64 * line_h;
                         if i == cmdview_selected {
-                            draw_ctx.draw_rect(cv_x, ry, cv_w, line_h, style.selection.to_array());
+                            draw_ctx.draw_rect(cv_x, ry, cv_w, line_h, style.overlay_row_bg());
                         }
                         let is_dir = suggestion.ends_with('/') || suggestion.ends_with('\\');
-                        let color = if i == cmdview_selected || is_dir {
-                            style.accent.to_array()
-                        } else {
-                            style.text.to_array()
+                        let color = match (i == cmdview_selected, is_dir) {
+                            (true, _) => style.overlay_row_accent(),
+                            (false, true) => style.overlay_accent(),
+                            (false, false) => style.overlay_text(),
                         };
                         let display_text = truncate_left_to_width(
                             suggestion,
@@ -13327,20 +13427,14 @@ pub fn run(
                             .max(120.0)
                             .min(width - popup_x - 10.0);
                         // Background.
-                        draw_ctx.draw_rect(
-                            popup_x,
-                            popup_y,
-                            popup_w,
-                            popup_h,
-                            style.background3.to_array(),
-                        );
+                        draw_ctx.draw_rect(popup_x, popup_y, popup_w, popup_h, style.overlay_bg());
                         // Border.
                         draw_ctx.draw_rect(
                             popup_x,
                             popup_y,
                             popup_w,
                             style.divider_size,
-                            style.divider.to_array(),
+                            style.overlay_border(),
                         );
                         for (i, (label, detail, _)) in completion.items.iter().enumerate() {
                             let iy = popup_y + style.padding_y / 2.0 + i as f64 * item_h;
@@ -13350,13 +13444,13 @@ pub fn run(
                                     iy,
                                     popup_w,
                                     item_h,
-                                    style.selection.to_array(),
+                                    style.overlay_row_bg(),
                                 );
                             }
                             let fg = if i == completion.selected {
-                                style.accent.to_array()
+                                style.overlay_row_accent()
                             } else {
-                                style.text.to_array()
+                                style.overlay_text()
                             };
                             draw_ctx.draw_text(
                                 style.font,
@@ -13372,7 +13466,7 @@ pub fn run(
                                     detail,
                                     popup_x + style.padding_x + label_w + style.padding_x,
                                     iy + style.padding_y / 2.0,
-                                    style.dim.to_array(),
+                                    style.overlay_dim(),
                                 );
                             }
                         }
@@ -13414,15 +13508,15 @@ pub fn run(
                         sig_y - 1.0,
                         w + 2.0,
                         h + 2.0,
-                        style.divider.to_array(),
+                        style.overlay_border(),
                     );
-                    draw_ctx.draw_rect(sig_x, sig_y, w, h, style.background3.to_array());
+                    draw_ctx.draw_rect(sig_x, sig_y, w, h, style.overlay_bg());
                     draw_ctx.draw_text(
                         style.font,
                         &text,
                         sig_x + style.padding_x,
                         sig_y + style.padding_y,
-                        style.accent.to_array(),
+                        style.overlay_accent(),
                     );
                 }
 
@@ -13489,14 +13583,14 @@ pub fn run(
                             tooltip_y,
                             tooltip_w,
                             tooltip_h,
-                            style.background3.to_array(),
+                            style.overlay_bg(),
                         );
                         draw_ctx.draw_rect(
                             tooltip_x,
                             tooltip_y,
                             tooltip_w,
                             style.divider_size,
-                            style.divider.to_array(),
+                            style.overlay_border(),
                         );
                         for (i, line_text) in hover_lines.iter().enumerate() {
                             draw_ctx.draw_text(
@@ -13504,7 +13598,7 @@ pub fn run(
                                 line_text,
                                 tooltip_x + style.padding_x,
                                 tooltip_y + style.padding_y + i as f64 * tooltip_line_h,
-                                style.text.to_array(),
+                                style.overlay_text(),
                             );
                         }
                         if has_quick_fixes {
@@ -13514,7 +13608,7 @@ pub fn run(
                                 action_y,
                                 tooltip_w,
                                 style.divider_size,
-                                style.divider.to_array(),
+                                style.overlay_border(),
                             );
                             let quick_rect = crate::editor::types::Rect {
                                 x: tooltip_x + style.padding_x,
@@ -13527,7 +13621,7 @@ pub fn run(
                                 "Quick Fix",
                                 quick_rect.x + style.padding_x,
                                 quick_rect.y + style.padding_y / 2.0,
-                                style.accent.to_array(),
+                                style.overlay_accent(),
                             );
                             diagnostic_quick_fix_rect = Some(quick_rect);
                         } else {
@@ -13617,7 +13711,7 @@ pub fn run(
                                     tip_y - 1.0,
                                     tip_w + 2.0,
                                     tip_h + 2.0,
-                                    style.divider.to_array(),
+                                    style.muted_on(style.divider, style.background),
                                 );
                                 draw_ctx.draw_rect(
                                     tip_x,
@@ -13631,14 +13725,14 @@ pub fn run(
                                     full_label,
                                     tip_x + style.padding_x,
                                     tip_y + style.padding_y * 0.5,
-                                    style.text.to_array(),
+                                    style.text_on(style.text, style.background),
                                 );
                                 draw_ctx.draw_text(
                                     tip_font,
                                     &path_display,
                                     tip_x + style.padding_x,
                                     tip_y + style.padding_y * 0.5 + style.font_height,
-                                    style.dim.to_array(),
+                                    style.muted_on(style.dim, style.background),
                                 );
                             }
                         }
@@ -13675,7 +13769,7 @@ pub fn run(
                             list_y - 1.0,
                             list_w + 2.0,
                             list_h + 2.0,
-                            style.divider.to_array(),
+                            style.muted_on(style.divider, style.background),
                         );
                         draw_ctx.draw_rect(
                             list_x,
@@ -13695,27 +13789,21 @@ pub fn run(
                                 && mouse_x < list_x + list_w
                                 && mouse_y >= iy
                                 && mouse_y < iy + item_h;
-                            if i == active_tab {
-                                draw_ctx.draw_rect(
-                                    list_x,
-                                    iy,
-                                    list_w,
-                                    item_h,
-                                    style.line_highlight.to_array(),
-                                );
+                            let row_fill = if i == active_tab {
+                                Some(style.row_fill_on(style.line_highlight, style.background))
                             } else if row_hover {
-                                draw_ctx.draw_rect(
-                                    list_x,
-                                    iy,
-                                    list_w,
-                                    item_h,
-                                    style.selection.to_array(),
-                                );
-                            }
-                            let color = if i == active_tab {
-                                style.accent.to_array()
+                                Some(style.row_fill_on(style.selection, style.background))
                             } else {
-                                style.text.to_array()
+                                None
+                            };
+                            if let Some(fill) = row_fill {
+                                draw_ctx.draw_rect(list_x, iy, list_w, item_h, fill.to_array());
+                            }
+                            let surface = row_fill.unwrap_or(style.background);
+                            let color = if i == active_tab {
+                                style.text_on(style.accent, surface)
+                            } else {
+                                style.text_on(style.text, surface)
                             };
                             draw_ctx.draw_text(
                                 style.font,
@@ -15725,73 +15813,15 @@ fn scroll_to_cursor(dv: &mut DocView) {
     });
 }
 
-/// Parse a hex color string like "#rrggbb" or "#rrggbbaa" or "rgba(r,g,b,a)" into Color.
-fn parse_theme_color(s: &str) -> Option<crate::editor::types::Color> {
-    use crate::editor::types::Color;
-    if let Some(hex) = s.strip_prefix('#') {
-        let hex = hex.trim();
-        if hex.len() == 6 || hex.len() == 8 {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            let a = if hex.len() == 8 {
-                u8::from_str_radix(&hex[6..8], 16).ok()?
-            } else {
-                255
-            };
-            return Some(Color::new(r, g, b, a));
-        }
-    }
-    if s.starts_with("rgba(") {
-        let inner = s.trim_start_matches("rgba(").trim_end_matches(')');
-        let parts: Vec<&str> = inner.split(',').collect();
-        if parts.len() == 4 {
-            let r = parts[0].trim().parse::<u8>().ok()?;
-            let g = parts[1].trim().parse::<u8>().ok()?;
-            let b = parts[2].trim().parse::<u8>().ok()?;
-            let a = (parts[3].trim().parse::<f64>().ok()? * 255.0) as u8;
-            return Some(Color::new(r, g, b, a));
-        }
-    }
-    None
-}
-
 /// Apply a loaded theme palette to a StyleContext.
 fn apply_theme_to_style(style: &mut StyleContext, palette: &crate::editor::style::ThemePalette) {
-    let set = |field: &mut crate::editor::types::Color, key: &str| {
-        if let Some(hex) = palette.colors.get(key) {
-            if let Some(c) = parse_theme_color(hex) {
-                *field = c;
-            }
-        }
-    };
-    set(&mut style.background, "background");
-    set(&mut style.background2, "background2");
-    set(&mut style.background3, "background3");
-    set(&mut style.text, "text");
-    set(&mut style.caret, "caret");
-    set(&mut style.accent, "accent");
-    set(&mut style.dim, "dim");
-    set(&mut style.divider, "divider");
-    set(&mut style.selection, "selection");
-    set(&mut style.line_number, "line_number");
-    set(&mut style.line_number2, "line_number2");
-    set(&mut style.line_highlight, "line_highlight");
-    set(&mut style.scrollbar, "scrollbar");
-    set(&mut style.scrollbar2, "scrollbar2");
-    set(&mut style.scrollbar_track, "scrollbar_track");
-    set(&mut style.nagbar, "nagbar");
-    set(&mut style.nagbar_text, "nagbar_text");
-    set(&mut style.nagbar_dim, "nagbar_dim");
-    set(&mut style.good, "good");
-    set(&mut style.warn, "warn");
-    set(&mut style.error, "error");
+    style.apply_palette(palette);
 
     // Store syntax colors in a thread-local for the tokenizer to use.
     if let Some(syn) = palette.sub_palettes.get("syntax") {
         let mut colors = std::collections::HashMap::new();
         for (k, v) in syn {
-            if let Some(c) = parse_theme_color(v) {
+            if let Some(c) = crate::editor::style::parse_color(v) {
                 colors.insert(k.clone(), c.to_array());
             }
         }
@@ -15950,13 +15980,12 @@ fn build_style(
     config: &NativeConfig,
     ctx: &crate::editor::draw_context::NativeDrawContext,
 ) -> StyleContext {
-    use crate::editor::types::Color;
     use crate::editor::view::DrawContext as _;
 
     let (ui, code, icon, big, icon_big, seti, h1, h2, h3) =
         FONT_SLOTS.with(|s| s.borrow().unwrap_or((0, 0, 0, 0, 0, 0, 0, 0, 0)));
 
-    StyleContext {
+    let mut style = StyleContext {
         font: ui,
         code_font: code,
         icon_font: icon,
@@ -15978,28 +16007,10 @@ fn build_style(
         caret_width: config.ui.caret_width as f64,
         tab_width: config.ui.tab_width as f64,
         scale: 1.0,
-        background: Color::new(40, 42, 54, 255),
-        background2: Color::new(34, 36, 46, 255),
-        background3: Color::new(48, 50, 62, 255),
-        text: Color::new(215, 218, 224, 255),
-        caret: Color::new(147, 161, 255, 255),
-        accent: Color::new(97, 175, 239, 255),
-        dim: Color::new(114, 120, 138, 255),
-        divider: Color::new(24, 26, 34, 255),
-        selection: Color::new(72, 79, 100, 255),
-        line_number: Color::new(82, 88, 106, 255),
-        line_number2: Color::new(147, 161, 255, 255),
-        line_highlight: Color::new(44, 47, 59, 255),
-        scrollbar: Color::new(72, 79, 100, 255),
-        scrollbar2: Color::new(97, 175, 239, 255),
-        good: Color::new(80, 200, 120, 255),
-        warn: Color::new(255, 212, 121, 255),
-        error: Color::new(255, 95, 86, 255),
-        nagbar: Color::new(64, 64, 64, 255),
-        nagbar_text: Color::new(255, 255, 255, 255),
-        nagbar_dim: Color::new(0, 0, 0, 115),
         ..Default::default()
-    }
+    };
+    style.apply_default_colors();
+    style
 }
 
 }

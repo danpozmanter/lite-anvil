@@ -1076,6 +1076,33 @@ match cmd.as_str() {
         }
     }
 }
+// The markdown preview owns copy and select-all while it holds focus,
+// so its own text selection is what these reach.
+"doc:copy"
+    if docs.get(active_tab).is_some_and(|d| {
+        d.preview.enabled && d.preview.focused && d.preview.has_selection()
+    }) =>
+{
+    if let Some(doc) = docs.get(active_tab) {
+        let text = crate::editor::markdown_preview::selected_text(
+            &mut draw_ctx,
+            &doc.preview,
+            &style,
+        );
+        if !text.is_empty() {
+            crate::window::set_clipboard_text(&text);
+        }
+    }
+}
+"doc:select-all"
+    if docs
+        .get(active_tab)
+        .is_some_and(|d| d.preview.enabled && d.preview.focused) =>
+{
+    if let Some(doc) = docs.get_mut(active_tab) {
+        doc.preview.select_all();
+    }
+}
 "doc:copy" => {
     if let Some(doc) = docs.get(active_tab) {
         if let Some(buf_id) = doc.view.buffer_id {

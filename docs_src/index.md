@@ -114,7 +114,7 @@ Find and Replace across files in a project folder.
 
 ### Markdown Preview
 
-Side-by-side rendered preview with task-list checkboxes (struck through when checked), code blocks, and the rest of CommonMark.
+Side-by-side rendered preview with task-list checkboxes (struck through when checked), code blocks, and the rest of CommonMark. Select text in the preview with the mouse or `Ctrl+A` and copy it with `Ctrl+C`.
 
 </div>
 

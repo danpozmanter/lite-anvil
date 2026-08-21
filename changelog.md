@@ -1,5 +1,15 @@
 # Change Log
 
+## [2.16.3] - 2026-08-20 - Overlay contrast and markdown preview selection.
+
+* Text now renders in its true color on window surfaces with no alpha channel: each glyph's blue channel was taken from the surface's unused byte, which turned near-black text in the light themes into saturated blue and tinted every other theme's text.
+* Every floating panel - the command palette, the file and command pickers, find and find in files, the git status and log lists, code actions, the completion and hover popups, the context menu, the tab tooltip and overflow list, and the confirmation bars - derives its text, hint, border, and highlighted-row colors from the surface it is drawn on, so each clears the WCAG contrast thresholds under all six bundled themes.
+* A theme that leaves a color close to the surface behind it no longer produces an unreadable panel: the color is nudged toward black or white by the least amount that reads clearly, and a theme with contrast keeps exactly the colors it chose.
+* The markdown preview supports text selection: drag to select, double-click for a word, triple-click for a line, Ctrl+A for the whole document, and Ctrl+C to copy. The drag scrolls the pane when it runs past an edge, and the copied text keeps paragraph breaks, list items, code lines, and tab-separated table rows.
+* Copying from the preview reaches the whole selection, including the part scrolled out of view.
+* A link in the preview opens on release rather than on press, so a drag that starts on a link selects its text instead of navigating away.
+* A `config.toml` that cannot be parsed now reports the error in the status bar and at error level in the log, instead of silently leaving the editor on built-in defaults.
+
 ## [2.16.2] - 2026-08-19 - Embedded-language highlighting.
 
 * JavaScript and CSS inside HTML `<script>` and `<style>` blocks are highlighted, as are the embedded blocks in Vue and Svelte files and fenced code blocks in Markdown source.
