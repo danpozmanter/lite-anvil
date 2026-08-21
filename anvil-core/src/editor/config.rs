@@ -253,6 +253,10 @@ pub struct DisabledTransitions {
 
 // ── Default implementations ──────────────────────────────────────────────────
 
+// The literal's base is `Self::with_defaults`, whose field values (fps 60,
+// theme "dark_default", ...) are not the field types' own defaults, so
+// clippy::derivable_impls misreads this as a derivable impl.
+#[allow(clippy::derivable_impls)]
 impl Default for NativeConfig {
     fn default() -> Self {
         // Serde fills a parsed config's missing fields from this value, and
@@ -755,8 +759,15 @@ mod tests {
         let dir = std::env::temp_dir().join("anvil_font_path_test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.toml"), "theme = \"summer\"\n").unwrap();
-        let config =
-            NativeConfig::load_or_default(dir.to_str().unwrap(), 1.0, "Linux", "/opt/anvil/data");
+        // An absolute path spelled the host's way, so the assertion below holds
+        // on Windows as well as on Unix.
+        let datadir = std::env::temp_dir().join("anvil_font_path_test_data");
+        let config = NativeConfig::load_or_default(
+            dir.to_str().unwrap(),
+            1.0,
+            "Linux",
+            datadir.to_str().unwrap(),
+        );
         assert_eq!(config.theme, "summer");
         for (slot, spec) in [
             ("ui", &config.fonts.ui),
@@ -765,8 +776,8 @@ mod tests {
         ] {
             let path = spec.path.as_deref().unwrap_or_default();
             assert!(
-                Path::new(path).is_absolute() && path.contains("/opt/anvil/data"),
-                "{slot} font resolved to {path:?}, which does not sit under the data dir"
+                Path::new(path).is_absolute() && Path::new(path).starts_with(&datadir),
+                "{slot} font resolved to {path:?}, which does not sit under {datadir:?}"
             );
         }
         std::fs::remove_dir_all(&dir).ok();
