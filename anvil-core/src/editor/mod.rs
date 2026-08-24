@@ -16,6 +16,7 @@ pub mod empty_view;
 pub mod error;
 pub mod event;
 pub mod field_history;
+pub mod file_metadata;
 pub mod filesystem;
 pub mod git;
 pub mod keymap;

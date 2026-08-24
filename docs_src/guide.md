@@ -105,6 +105,7 @@ Additional commands available from the palette:
 - `Toggle Minimap`, `Toggle Line Wrapping`, `Toggle Whitespace`
 - `Toggle Hidden Files` -- show/hide dotfiles in the sidebar
 - `Check For Updates` -- query GitHub for a newer release
+- `View Metadata` -- show the active file's size, modification time, permissions, and owner
 - `Git Pull`, `Git Push`, `Git Commit`, `Git Stash`, `Git Status`
 - `Git Blame` -- toggle per-line blame annotations (author + date)
 - `Git Log` -- show the last 50 commits for the active file

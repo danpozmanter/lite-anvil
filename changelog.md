@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.16.5] - 2026-08-24 - View file metadata.
+
+* A `View Metadata` command in the command palette shows the active file's name, location, type, size, modification time, and permissions in a popup, with the owner and group on Linux and macOS. The size is given in KB, MB, GB, or TB alongside the exact byte count, and the modification time is in local time. Esc, Return, Space, or a click dismisses the popup.
+
 ## [2.16.4] - 2026-08-20 - Find text preserved when toggling replace.
 
 * Switching the find panel between find and replace modes no longer clears the find query: toggling back and forth keeps the text you already typed.

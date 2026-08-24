@@ -706,6 +706,22 @@ match cmd.as_str() {
 "about:version" => {
     info_message = Some((env!("CARGO_PKG_VERSION").to_string(), Instant::now()));
 }
+"doc:view-metadata" => {
+    let path = docs.get(active_tab).map(|d| d.path.clone()).unwrap_or_default();
+    if path.is_empty() {
+        info_message = Some(("Unsaved document has no file metadata".to_string(), Instant::now()));
+    } else {
+        match crate::editor::file_metadata::describe(Path::new(&path)) {
+            Ok(fields) => {
+                metadata_fields = fields;
+                metadata_active = true;
+            }
+            Err(e) => {
+                info_message = Some((format!("Cannot read metadata: {e}"), Instant::now()));
+            }
+        }
+    }
+}
 "core:project-replace" => {
     if subsystems.has_find_in_files() {
         project_replace_active = true;

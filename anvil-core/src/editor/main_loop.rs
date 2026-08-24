@@ -1414,6 +1414,7 @@ pub fn run(
             "doc:upper-case",
             "doc:lower-case",
             "doc:reload",
+            "doc:view-metadata",
             "git:pull",
             "git:push",
             "git:commit",
@@ -1554,6 +1555,10 @@ pub fn run(
     // Git blame: per-line annotations shown inline at the right edge.
     let mut git_blame_active = false;
     let mut git_blame_lines: Vec<String> = Vec::new();
+
+    // Filesystem metadata popup for the current file.
+    let mut metadata_active = false;
+    let mut metadata_fields: Vec<crate::editor::file_metadata::MetadataField> = Vec::new();
 
     // Git history (log) for the current file.
     let mut git_log_active = false;
@@ -4084,6 +4089,23 @@ pub fn run(
                         continue;
                     }
 
+                    // The metadata popup only reports; it has nothing to
+                    // navigate, so it just waits to be dismissed. It holds
+                    // every key while it is up, and the paired TextInput is
+                    // dropped so a dismissing character stays out of the doc.
+                    if metadata_active {
+                        if matches!(
+                            key.as_str(),
+                            "escape" | "return" | "keypad enter" | "space" | "q"
+                        ) {
+                            metadata_active = false;
+                            metadata_fields.clear();
+                        }
+                        eat_next_text_input = true;
+                        redraw = true;
+                        continue;
+                    }
+
                     // Git status view intercepts keys.
                     if subsystems.has_git() && git_status_active {
                         match key.as_str() {
@@ -5543,6 +5565,12 @@ pub fn run(
                         redraw = true;
                         continue;
                     }
+                    // The metadata popup is modal: typed characters belong to
+                    // the dismissal, not to the document behind it.
+                    if metadata_active {
+                        redraw = true;
+                        continue;
+                    }
                     // Block text input while *any* nag is active —
                     // characters typed before the user presses Y / N
                     // must not leak into the doc.
@@ -5973,6 +6001,15 @@ pub fn run(
                     modifiers,
                     ..
                 } => {
+                    // A click anywhere dismisses the metadata popup and stops
+                    // there, so the click that closes it never also moves the
+                    // caret or changes the selection underneath.
+                    if metadata_active {
+                        metadata_active = false;
+                        metadata_fields.clear();
+                        redraw = true;
+                        continue;
+                    }
                     cursor_blink_reset = Instant::now();
                     // Any mouse click cancels pending scroll animation so the
                     // view never jumps unexpectedly.
@@ -13208,6 +13245,88 @@ pub fn run(
                             ry + style.padding_y / 2.0,
                             hash_color,
                         );
+                    }
+                }
+
+                if metadata_active && !metadata_fields.is_empty() {
+                    crate::editor::app_state::clip_init(width, height);
+                    use crate::editor::view::DrawContext as _;
+                    let line_h = style.font_height + style.padding_y;
+                    let title = "File Metadata";
+                    let hint = "[Esc] close";
+                    // The value column starts past the widest label so the
+                    // values line up in a single column.
+                    let label_col = metadata_fields
+                        .iter()
+                        .map(|f| draw_ctx.font_width(style.font, f.label))
+                        .fold(0.0_f64, f64::max)
+                        + style.padding_x * 2.0;
+                    let value_w = metadata_fields
+                        .iter()
+                        .map(|f| draw_ctx.font_width(style.font, &f.value))
+                        .fold(0.0_f64, f64::max);
+                    let header_w = draw_ctx.font_width(style.font, title)
+                        + draw_ctx.font_width(style.font, hint)
+                        + style.padding_x * 4.0;
+                    let md_w = (label_col + value_w + style.padding_x * 2.0)
+                        .max(header_w)
+                        .max(360.0)
+                        .min(width - style.padding_x * 4.0);
+                    let md_x = ((width - md_w) / 2.0).max(style.padding_x);
+                    let rows = metadata_fields.len() as f64;
+                    let md_h = line_h * (rows + 1.0) + style.divider_size + style.padding_y * 2.0;
+                    let md_y = ((height - md_h) / 2.0).max(style.padding_y * 2.0);
+                    draw_ctx.draw_rect(
+                        md_x - 1.0,
+                        md_y - 1.0,
+                        md_w + 2.0,
+                        md_h + 2.0,
+                        style.overlay_border(),
+                    );
+                    draw_ctx.draw_rect(md_x, md_y, md_w, md_h, style.overlay_bg());
+                    let title_y = md_y + style.padding_y;
+                    draw_ctx.draw_text(
+                        style.font,
+                        title,
+                        md_x + style.padding_x,
+                        title_y,
+                        style.overlay_accent(),
+                    );
+                    let hint_w = draw_ctx.font_width(style.font, hint);
+                    draw_ctx.draw_text(
+                        style.font,
+                        hint,
+                        md_x + md_w - style.padding_x - hint_w,
+                        title_y,
+                        style.overlay_dim(),
+                    );
+                    draw_ctx.draw_rect(
+                        md_x,
+                        title_y + line_h,
+                        md_w,
+                        style.divider_size,
+                        style.overlay_border(),
+                    );
+                    let value_x = md_x + label_col;
+                    let value_max_w = (md_x + md_w - style.padding_x - value_x).max(0.0);
+                    for (i, f) in metadata_fields.iter().enumerate() {
+                        let ry = title_y + line_h + style.divider_size + i as f64 * line_h;
+                        draw_ctx.draw_text(
+                            style.font,
+                            f.label,
+                            md_x + style.padding_x,
+                            ry,
+                            style.overlay_dim(),
+                        );
+                        // Paths and long values keep their tail: the file name
+                        // and the numbers are what the reader came for.
+                        let shown = truncate_left_to_width(
+                            &f.value,
+                            value_max_w,
+                            style.font,
+                            &mut draw_ctx,
+                        );
+                        draw_ctx.draw_text(style.font, &shown, value_x, ry, style.overlay_text());
                     }
                 }
 
