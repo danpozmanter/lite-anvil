@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.16.4] - 2026-08-20 - Find text preserved when toggling replace.
+
+* Switching the find panel between find and replace modes no longer clears the find query: toggling back and forth keeps the text you already typed.
+
 ## [2.16.3] - 2026-08-20 - Overlay contrast and markdown preview selection.
 
 * Text now renders in its true color on window surfaces with no alpha channel: each glyph's blue channel was taken from the surface's unused byte, which turned near-black text in the light themes into saturated blue and tinted every other theme's text.

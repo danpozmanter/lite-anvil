@@ -828,34 +828,44 @@ match cmd.as_str() {
     }
 }
 "core:find" | "find-replace:find" => {
+    let was_active = find_active;
     find_active = true;
     replace_active = false;
     find_focus_on_replace = false;
-    find_query.clear();
+    if !was_active {
+        find_query.clear();
+    }
     find_matches.clear();
     find_current = None;
-    find_in_selection = false;
-    find_selection_range = None;
+    if !was_active {
+        find_in_selection = false;
+        find_selection_range = None;
+    }
     if let Some(doc) = docs.get(active_tab) {
         find_anchor = doc_cursor(&doc.view);
         // If there's a multi-line selection, auto-enable
         // find-in-selection mode.
-        let anchor = doc_anchor(&doc.view);
-        let cursor = doc_cursor(&doc.view);
-        if anchor.0 != cursor.0 {
-            find_in_selection = true;
-            let (sl, sc) = if anchor < cursor { anchor } else { cursor };
-            let (el, ec) = if anchor < cursor { cursor } else { anchor };
-            find_selection_range = Some((sl, sc, el, ec));
+        if !find_in_selection {
+            let anchor = doc_anchor(&doc.view);
+            let cursor = doc_cursor(&doc.view);
+            if anchor.0 != cursor.0 {
+                find_in_selection = true;
+                let (sl, sc) = if anchor < cursor { anchor } else { cursor };
+                let (el, ec) = if anchor < cursor { cursor } else { anchor };
+                find_selection_range = Some((sl, sc, el, ec));
+            }
         }
     }
 }
 "core:find-replace" | "find-replace:replace" => {
+    let was_active = find_active;
     find_active = true;
     replace_active = true;
     find_focus_on_replace = false;
-    find_query.clear();
-    replace_query.clear();
+    if !was_active {
+        find_query.clear();
+        replace_query.clear();
+    }
     find_matches.clear();
     find_current = None;
     if let Some(doc) = docs.get(active_tab) {
