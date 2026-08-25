@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.16.6] - 2026-08-25 - View Metadata in the context menu + simplifying.
+
+* `View Metadata` is on the editor's right-click menu in Lite Anvil and Nano Anvil, below a separator after the copy-path entries, whenever the active document has been saved to disk.
+* The metadata popup no longer lists a `Type` row.
+
 ## [2.16.5] - 2026-08-24 - View file metadata.
 
 * A `View Metadata` command in the command palette shows the active file's name, location, type, size, modification time, and permissions in a popup, with the owner and group on Linux and macOS. The size is given in KB, MB, GB, or TB alongside the exact byte count, and the modification time is in local time. Esc, Return, Space, or a click dismisses the popup.

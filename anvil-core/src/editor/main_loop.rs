@@ -6665,6 +6665,23 @@ pub fn run(
                                 "doc:copy-path",
                                 "doc:copy-relative-path",
                             );
+                            // Notes carry their own list entry rather than a
+                            // path the user works with, so Note-Anvil leaves
+                            // the metadata popup out of the menu.
+                            if !subsystems.has_notes_mode() {
+                                items.push(MenuItem {
+                                    text: String::new(),
+                                    info: None,
+                                    command: None,
+                                    separator: true,
+                                });
+                                items.push(MenuItem {
+                                    text: "View Metadata".into(),
+                                    info: None,
+                                    command: Some("doc:view-metadata".into()),
+                                    separator: false,
+                                });
+                            }
                         }
                         if lsp_state.initialized {
                             items.push(MenuItem {

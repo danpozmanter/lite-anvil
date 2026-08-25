@@ -12,7 +12,6 @@ pub struct MetadataField {
 /// Metadata rows describing the file at `path`, in display order.
 pub fn describe(path: &Path) -> std::io::Result<Vec<MetadataField>> {
     let meta = fs::metadata(path)?;
-    let link = fs::symlink_metadata(path).ok();
 
     let mut fields = Vec::new();
     let name = path
@@ -26,15 +25,6 @@ pub fn describe(path: &Path) -> std::io::Result<Vec<MetadataField>> {
             fields.push(field("Location", dir.into_owned()));
         }
     }
-
-    let kind = if meta.is_dir() {
-        "Directory"
-    } else if link.is_some_and(|l| l.file_type().is_symlink()) {
-        "Symbolic link"
-    } else {
-        "File"
-    };
-    fields.push(field("Type", kind.to_string()));
 
     fields.push(field("Size", format_size(meta.len())));
     fields.push(field("Modified", format_time(meta.modified().ok())));
@@ -387,7 +377,7 @@ mod tests {
                 .map(|f| f.value.clone())
         };
         assert_eq!(by_label("Name").as_deref(), Some("anvil-metadata-test.txt"));
-        assert_eq!(by_label("Type").as_deref(), Some("File"));
+        assert_eq!(by_label("Type"), None);
         assert_eq!(by_label("Size").as_deref(), Some("5 bytes"));
         assert!(by_label("Modified").is_some_and(|v| v.contains('-')));
         assert!(by_label("Permissions").is_some());
