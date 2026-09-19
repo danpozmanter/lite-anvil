@@ -1773,65 +1773,112 @@ mod tests {
         // Line 173: the f-string opens at `f"` and the trailing `))` is code.
         let formatter = &tokenized[0];
         assert!(
-            formatter.iter().any(|t| &*t.token_type == "string" && t.text.trim() == "f\""),
+            formatter
+                .iter()
+                .any(|t| &*t.token_type == "string" && t.text.trim() == "f\""),
             "expected the f-string opener as a string token, got: {:?}",
-            formatter.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            formatter
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
         );
         assert!(
-            formatter.iter().any(|t| &*t.token_type != "string" && t.text == "))"),
+            formatter
+                .iter()
+                .any(|t| &*t.token_type != "string" && t.text == "))"),
             "expected trailing `))` to be code, got: {:?}",
-            formatter.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            formatter
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
         );
 
         // The single-line f-strings with single-quoted keys close on their own line.
-        for (n, idx) in [(3usize, "target"), (4usize, "cpu_us_per_request"), (5usize, "rss_peak_mb")] {
+        for (n, idx) in [
+            (3usize, "target"),
+            (4usize, "cpu_us_per_request"),
+            (5usize, "rss_peak_mb"),
+        ] {
             let tokens = &tokenized[n];
             assert!(
-                tokens.last().map(|t| &*t.token_type != "string").unwrap_or(false),
+                tokens
+                    .last()
+                    .map(|t| &*t.token_type != "string")
+                    .unwrap_or(false),
                 "line {n}: expected the f-string to close before end of line, got: {:?}",
-                tokens.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+                tokens
+                    .iter()
+                    .map(|t| (&*t.token_type, t.text.as_str()))
+                    .collect::<Vec<_>>()
             );
             assert!(
-                tokens.iter().any(|t| &*t.token_type == "string" && t.text.trim().starts_with("f\"")),
+                tokens
+                    .iter()
+                    .any(|t| &*t.token_type == "string" && t.text.trim().starts_with("f\"")),
                 "line {n}: expected the f-string containing {idx} to open as a string token, got: {:?}",
-                tokens.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+                tokens
+                    .iter()
+                    .map(|t| (&*t.token_type, t.text.as_str()))
+                    .collect::<Vec<_>>()
             );
         }
 
         // The triple-quoted f-string block: string from `return f\"\"\"` to `</table>\"\"\"`.
         assert!(
-            tokenized[8].iter().any(|t| &*t.token_type == "string" && t.text.trim().starts_with("f\"\"\"")),
+            tokenized[8]
+                .iter()
+                .any(|t| &*t.token_type == "string" && t.text.trim().starts_with("f\"\"\"")),
             "expected `return f\"\"\"<table>` to open the f-string, got: {:?}",
-            tokenized[8].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            tokenized[8]
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
         );
         for n in [9usize, 10, 11, 12] {
             assert!(
                 all_string(&tokenized[n]),
                 "line {n}: expected the triple-quoted f-string body to be string-typed, got: {:?}",
-                tokenized[n].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+                tokenized[n]
+                    .iter()
+                    .map(|t| (&*t.token_type, t.text.as_str()))
+                    .collect::<Vec<_>>()
             );
         }
         assert!(
             all_string(&tokenized[13]),
             "expected `</table>\"\"\"` to close the f-string as a string token, got: {:?}",
-            tokenized[22].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            tokenized[22]
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
         );
 
         // Everything after the closing quotes is code again.
         assert!(
-            tokenized[16].iter().any(|t| &*t.token_type == "keyword" && t.text.trim() == "def"),
+            tokenized[16]
+                .iter()
+                .any(|t| &*t.token_type == "keyword" && t.text.trim() == "def"),
             "expected `def` as a keyword after the closing quotes, got: {:?}",
-            tokenized[16].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            tokenized[16]
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
         );
         assert!(
             !all_string(&tokenized[16]),
             "the def line after the closing quotes must not be string-typed, got: {:?}",
-            tokenized[16].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            tokenized[16]
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
         );
         assert!(
             !all_string(&tokenized[17]),
             "the line after the def must not be string-typed, got: {:?}",
-            tokenized[17].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            tokenized[17]
+                .iter()
+                .map(|t| (&*t.token_type, t.text.as_str()))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1895,7 +1942,11 @@ mod tests {
             "colonless comprehension `for` must stay keyword-highlighted, got {:?}",
             types(0)
         );
-        assert_eq!(state, Vec::<u8>::new(), "line 203 must leave no carried state");
+        assert_eq!(
+            state,
+            Vec::<u8>::new(),
+            "line 203 must leave no carried state"
+        );
 
         // 205: a code line with real string literals; before the fix the
         // leaked pair state string-typed the whole line.
@@ -1910,23 +1961,21 @@ mod tests {
         // The f-string block itself: interior lines are string-typed, and the
         // closing `</table>"""` clears the carried state.
         assert!(
-            per_line[4]
-                .iter()
-                .all(|t| &*t.token_type == "string"),
+            per_line[4].iter().all(|t| &*t.token_type == "string"),
             "f-string interior must be string-typed, got {:?}",
             types(4)
         );
         assert!(
-            per_line[5]
-                .iter()
-                .all(|t| &*t.token_type == "string")
-                && per_line[5]
-                    .iter()
-                    .any(|t| t.text.contains("rows")),
+            per_line[5].iter().all(|t| &*t.token_type == "string")
+                && per_line[5].iter().any(|t| t.text.contains("rows")),
             "interpolated region stays string-typed while the pair is open, got {:?}",
             types(5)
         );
-        assert_eq!(state, Vec::<u8>::new(), "f-string close must clear carried state");
+        assert_eq!(
+            state,
+            Vec::<u8>::new(),
+            "f-string close must clear carried state"
+        );
 
         // 247: plain code — the line the bug rendered as a string.
         assert!(
@@ -1941,7 +1990,11 @@ mod tests {
             "line 247 must contain no string-typed tokens, got {:?}",
             types(7)
         );
-        assert_eq!(state, Vec::<u8>::new(), "carried state must be empty at EOF");
+        assert_eq!(
+            state,
+            Vec::<u8>::new(),
+            "carried state must be empty at EOF"
+        );
     }
 
     #[test]

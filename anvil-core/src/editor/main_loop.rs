@@ -12737,7 +12737,7 @@ pub fn run(
                     );
                     draw_ctx.draw_text(
                         style.font,
-                        &format!("{}_", &project_search_query),
+                        &format!("{}_", project_search_query),
                         ps_x + style.padding_x + label_w + style.padding_x,
                         input_y,
                         style.overlay_text(),
