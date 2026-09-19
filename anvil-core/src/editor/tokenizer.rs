@@ -1725,6 +1725,226 @@ mod tests {
     }
 
     #[test]
+    fn python_triple_quoted_f_strings_do_not_leak_string_state() {
+        use crate::editor::syntax::load_syntax_assets;
+        let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
+        let index = crate::editor::syntax::load_syntax_index(&data_dir);
+        let python = compile_for_filename("chart.py", &index)
+            .expect("Python grammar compiles")
+            .expect("Python grammar matches chart.py");
+
+        let lines = [
+            "    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f\"{v:,.0f}\"))",
+            "    rows = \"\\n\".join(",
+            "        \"<tr><td>{label}</td><td>{rps:,.0f}</td><td>{cpu}</td><td>{rss}</td></tr>\".format(",
+            "            label=one_line(r[\"target\"]) + f\" ({r['target']})\",",
+            "            cpu=f\"{r['cpu_us_per_request']:,.1f}\" if r.get(\"cpu_us_per_request\") else \"-\",",
+            "            rss=f\"{r['rss_peak_mb']:,.1f}\" if r.get(\"rss_peak_mb\") else \"-\",",
+            "            **r",
+            "        )",
+            "    return f\"\"\"<table>",
+            "  <caption>Every HTTP target, sorted by response rate. The store runs in the",
+            "  web server's own process, so the memory is that one process.</caption>",
+            "  <tr><th>target</th><th>response rate, req/s</th><th>CPU, us/req</th><th>memory, peak MiB</th></tr>",
+            "  {rows}",
+            "</table>\"\"\"",
+            "",
+            "",
+            "def in_process_table(runs, failed):",
+            "    rows = \"\\n\".join(",
+        ];
+        let mut state: Vec<u8> = Vec::new();
+        let mut tokenized = Vec::new();
+        for line in lines {
+            let (tokens, next) = tokenize_line_with_state(&python, line, &state);
+            state = next;
+            tokenized.push(tokens);
+        }
+
+        let joined = |tokens: &[Token]| -> String {
+            tokens.iter().map(|t| t.text.as_str()).collect::<String>()
+        };
+        for (line, tokens) in lines.iter().zip(tokenized.iter()) {
+            assert_eq!(joined(tokens), *line, "tokens must round-trip the line");
+        }
+
+        let all_string = |tokens: &[Token]| tokens.iter().all(|t| &*t.token_type == "string");
+
+        // Line 173: the f-string opens at `f"` and the trailing `))` is code.
+        let formatter = &tokenized[0];
+        assert!(
+            formatter.iter().any(|t| &*t.token_type == "string" && t.text.trim() == "f\""),
+            "expected the f-string opener as a string token, got: {:?}",
+            formatter.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+        );
+        assert!(
+            formatter.iter().any(|t| &*t.token_type != "string" && t.text == "))"),
+            "expected trailing `))` to be code, got: {:?}",
+            formatter.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // The single-line f-strings with single-quoted keys close on their own line.
+        for (n, idx) in [(3usize, "target"), (4usize, "cpu_us_per_request"), (5usize, "rss_peak_mb")] {
+            let tokens = &tokenized[n];
+            assert!(
+                tokens.last().map(|t| &*t.token_type != "string").unwrap_or(false),
+                "line {n}: expected the f-string to close before end of line, got: {:?}",
+                tokens.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            );
+            assert!(
+                tokens.iter().any(|t| &*t.token_type == "string" && t.text.trim().starts_with("f\"")),
+                "line {n}: expected the f-string containing {idx} to open as a string token, got: {:?}",
+                tokens.iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            );
+        }
+
+        // The triple-quoted f-string block: string from `return f\"\"\"` to `</table>\"\"\"`.
+        assert!(
+            tokenized[8].iter().any(|t| &*t.token_type == "string" && t.text.trim().starts_with("f\"\"\"")),
+            "expected `return f\"\"\"<table>` to open the f-string, got: {:?}",
+            tokenized[8].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+        );
+        for n in [9usize, 10, 11, 12] {
+            assert!(
+                all_string(&tokenized[n]),
+                "line {n}: expected the triple-quoted f-string body to be string-typed, got: {:?}",
+                tokenized[n].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            all_string(&tokenized[13]),
+            "expected `</table>\"\"\"` to close the f-string as a string token, got: {:?}",
+            tokenized[22].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+        );
+
+        // Everything after the closing quotes is code again.
+        assert!(
+            tokenized[16].iter().any(|t| &*t.token_type == "keyword" && t.text.trim() == "def"),
+            "expected `def` as a keyword after the closing quotes, got: {:?}",
+            tokenized[16].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+        );
+        assert!(
+            !all_string(&tokenized[16]),
+            "the def line after the closing quotes must not be string-typed, got: {:?}",
+            tokenized[16].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+        );
+        assert!(
+            !all_string(&tokenized[17]),
+            "the line after the def must not be string-typed, got: {:?}",
+            tokenized[17].iter().map(|t| (&*t.token_type, t.text.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    // Regression test for the 2.16.7 Python highlighter leak: a keyword-colon
+    // pair (`for`/`if`/`def`/…, close `:`) opened on a colonless comprehension
+    // clause and carried its state across lines, string-typing the rest of
+    // chart.py (line 247, `def main() -> int:`, rendered as a string). The
+    // grammar now compiles those pairs from PCRE2 opens that require a colon
+    // later on the same line, so a colonless clause never opens the pair.
+    #[test]
+    fn python_keyword_colon_pair_does_not_leak_past_colonless_comprehension() {
+        use crate::editor::syntax::load_syntax_index;
+        let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
+        let index = load_syntax_index(&data_dir);
+        let python = compile_for_filename("chart.py", &index)
+            .expect("compile")
+            .expect("python grammar");
+
+        // Verbatim lines from /home/daniel/dev/terndb/benchmarks/chart.py.
+        let lines: &[&str] = &[
+            // 203: colonless comprehension clause -- must not open the
+            // keyword-colon pair.
+            "        for r in runs",
+            // 204: the comprehension's closing paren; stayed clean only by
+            // luck before the fix.
+            "    )",
+            // 205: real strings on a code line -- the leaked state from 203
+            // string-typed the whole line before the fix.
+            "    rows += \"\\n\" + \"\\n\".join(",
+            // 212: the multi-line f-string opens (state must carry here).
+            "    return f\"\"\"<table>",
+            // interior f-string lines
+            "  <caption>Every query-only target, sorted by queries per second.</caption>",
+            "  {rows}",
+            // 244: closing delimiter -- state must clear.
+            "</table>\"\"\"",
+            // 247: rendered as a string before the fix; it is code.
+            "def main() -> int:",
+        ];
+        let mut state: Vec<u8> = Vec::new();
+        let mut per_line: Vec<Vec<Token>> = Vec::new();
+        for line in lines {
+            let (tokens, next) = tokenize_line_with_state(&python, line, &state);
+            state = next;
+            per_line.push(tokens);
+        }
+
+        let types = |i: usize| -> Vec<String> {
+            per_line[i]
+                .iter()
+                .map(|t| t.token_type.to_string())
+                .collect()
+        };
+
+        // 203: `for` is still highlighted as a keyword, and the pair did not
+        // open (state empty after the line).
+        assert!(
+            per_line[0]
+                .iter()
+                .any(|t| &*t.token_type == "keyword" && t.text.trim() == "for"),
+            "colonless comprehension `for` must stay keyword-highlighted, got {:?}",
+            types(0)
+        );
+        assert_eq!(state, Vec::<u8>::new(), "line 203 must leave no carried state");
+
+        // 205: a code line with real string literals; before the fix the
+        // leaked pair state string-typed the whole line.
+        assert!(
+            per_line[2]
+                .iter()
+                .any(|t| &*t.token_type == "operator" && t.text.trim() == "+="),
+            "line 205 must stay code-typed (operator `+=` present), got {:?}",
+            types(2)
+        );
+
+        // The f-string block itself: interior lines are string-typed, and the
+        // closing `</table>"""` clears the carried state.
+        assert!(
+            per_line[4]
+                .iter()
+                .all(|t| &*t.token_type == "string"),
+            "f-string interior must be string-typed, got {:?}",
+            types(4)
+        );
+        assert!(
+            per_line[5]
+                .iter()
+                .all(|t| &*t.token_type == "string")
+                && per_line[5]
+                    .iter()
+                    .any(|t| t.text.contains("rows")),
+            "interpolated region stays string-typed while the pair is open, got {:?}",
+            types(5)
+        );
+        assert_eq!(state, Vec::<u8>::new(), "f-string close must clear carried state");
+
+        // 247: plain code — the line the bug rendered as a string.
+        assert!(
+            per_line[7]
+                .iter()
+                .any(|t| &*t.token_type == "keyword" && t.text.trim() == "def"),
+            "line 247 must be code-typed (`def` keyword present), got {:?}",
+            types(7)
+        );
+        assert!(
+            per_line[7].iter().all(|t| &*t.token_type != "string"),
+            "line 247 must contain no string-typed tokens, got {:?}",
+            types(7)
+        );
+        assert_eq!(state, Vec::<u8>::new(), "carried state must be empty at EOF");
+    }
+
+    #[test]
     fn embedded_javascript_spans_multiple_lines() {
         let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
         let index = crate::editor::syntax::load_syntax_index(&data_dir);

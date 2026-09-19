@@ -351,6 +351,9 @@
   "44": {
   "kind": "object",
   "values": {
+  "regex": {
+  "$ref": "45"
+},
   "pattern": {
   "$ref": "45"
 },
@@ -366,8 +369,8 @@
   "46": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "47"
+  "regex": {
+  "$ref": "100"
 },
   "syntax": {
   "$ref": "49"
@@ -446,6 +449,10 @@
   "$ref": "21"
 }, {
   "$ref": "23"
+}, {
+  "$ref": "98"
+}, {
+  "$ref": "99"
 }, {
   "$ref": "25"
 }, {
@@ -629,8 +636,8 @@
   "65": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "66"
+  "regex": {
+  "$ref": "101"
 },
   "syntax": {
   "$ref": "10"
@@ -651,8 +658,8 @@
   "68": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "69"
+  "regex": {
+  "$ref": "102"
 },
   "syntax": {
   "$ref": "10"
@@ -682,8 +689,8 @@
   "71": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "72"
+  "regex": {
+  "$ref": "103"
 },
   "syntax": {
   "$ref": "10"
@@ -704,8 +711,8 @@
   "74": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "75"
+  "regex": {
+  "$ref": "104"
 },
   "syntax": {
   "$ref": "10"
@@ -726,8 +733,8 @@
   "77": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "78"
+  "regex": {
+  "$ref": "105"
 },
   "syntax": {
   "$ref": "10"
@@ -752,8 +759,8 @@
   "80": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "81"
+  "regex": {
+  "$ref": "106"
 },
   "syntax": {
   "$ref": "10"
@@ -774,8 +781,8 @@
   "83": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "84"
+  "regex": {
+  "$ref": "107"
 },
   "syntax": {
   "$ref": "10"
@@ -833,7 +840,7 @@
   "90": {
   "kind": "object",
   "values": {
-  "pattern": "lambda()%s.+:",
+  "pattern": "lambda()%s[^\"']-:",
   "type": {
   "$ref": "91"
 }
@@ -870,6 +877,64 @@
   "95": {
   "kind": "array",
   "values": [":%s*", "%f[^%[%]%w_]"]
+},
+  "96": {
+  "kind": "array",
+  "values": ["f\"\"\"", "\"\"\"", "\\"]
+},
+  "97": {
+  "kind": "array",
+  "values": ["f'''", "'''", "\\"]
+},
+  "98": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "96"
+},
+  "type": "string"
+}
+},
+  "99": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "97"
+},
+  "type": "string"
+}
+},
+  "100": {
+  "kind": "array",
+  "values": ["^\\s*()def\\b(?=[^\\n]*:)", ":"]
+},
+  "101": {
+  "kind": "array",
+  "values": ["^\\s*()for\\b(?=[^\\n]*:)", ":"]
+},
+  "102": {
+  "kind": "array",
+  "values": ["^\\s*()if\\b(?=[^\\n]*:)", ":"]
+},
+  "103": {
+  "kind": "array",
+  "values": ["^\\s*()elif\\b(?=[^\\n]*:)", ":"]
+},
+  "104": {
+  "kind": "array",
+  "values": ["^\\s*()while\\b(?=[^\\n]*:)", ":"]
+},
+  "105": {
+  "kind": "array",
+  "values": ["^\\s*()match\\b(?=[^\\n]*:)", ":"]
+},
+  "106": {
+  "kind": "array",
+  "values": ["^\\s*()case\\b(?=[^\\n]*:)", ":"]
+},
+  "107": {
+  "kind": "array",
+  "values": ["^\\s*()except\\b(?=[^\\n]*:)", ":"]
 }
 }
 },

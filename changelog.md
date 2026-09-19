@@ -1,5 +1,11 @@
 # Change Log
 
+## [2.16.7] - 2026-09-19 - Python highlighting no longer leaks across lines.
+
+* A colonless comprehension clause (`for r in runs`) opened the `for`/`if`/`def` keyword-colon pair and its state leaked across lines, highlighting the rest of the file as a string; those pairs now require a colon on the same line before they open.
+* `f"""`/`f'''` strings had no pattern, so the code after them highlighted as a string.
+* The greedy `lambda` pattern no longer swallows a string on the same line: `lambda v, _: f"{v:,.0f}"` highlights as code-then-string.
+
 ## [2.16.6] - 2026-08-25 - View Metadata in the context menu + simplifying.
 
 * `View Metadata` is on the editor's right-click menu in Lite Anvil and Nano Anvil, below a separator after the copy-path entries, whenever the active document has been saved to disk.
