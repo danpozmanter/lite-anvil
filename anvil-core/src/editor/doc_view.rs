@@ -1126,6 +1126,164 @@ mod tests {
         );
         buffer::remove_buffer(buf_id);
     }
+
+    /// Load and compile the real bundled Markdown syntax, the same asset the
+    /// editor resolves for `.md` files.
+    fn md_syntax() -> crate::editor::tokenizer::CompiledSyntax {
+        let data_dir = ["data", "../data"]
+            .into_iter()
+            .find(|d| std::path::Path::new(d).join("assets/syntax").is_dir())
+            .expect("syntax assets");
+        let defs = crate::editor::syntax::load_syntax_assets(data_dir);
+        let def = defs
+            .iter()
+            .find(|d| d.name == "Markdown")
+            .expect("bundled Markdown syntax");
+        crate::editor::tokenizer::compile_from_definition(def).unwrap()
+    }
+
+    /// Simulate a single-char keystroke exactly the way the editor's typing
+    /// path does (main_loop.rs:5834-5902): the mergeable undo record that
+    /// stamps the dirty watermark, then the in-place insert.
+    fn type_char(buf_id: u64, line: usize, col: usize, ch: &str) {
+        buffer::with_buffer_mut(buf_id, |b| {
+            b.selections = vec![line, col, line, col];
+            buffer::push_undo_mergeable(b, line, col, false);
+            let byte_pos = crate::editor::utf8::char_to_byte(
+                b.lines[line - 1].trim_end_matches('\n').as_bytes(),
+                col - 1,
+            )
+            .unwrap_or(0);
+            b.lines[line - 1].insert_str(byte_pos, ch);
+            b.selections = vec![line, col + 1, line, col + 1];
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    /// Drive frames until the token cache reaches steady state (no more
+    /// `pending` budget yields), like the editor's render loop does.
+    fn build_until_steady(
+        buf_id: u64,
+        dv: &DocView,
+        style: &StyleContext,
+        syntax: &crate::editor::tokenizer::CompiledSyntax,
+        cache: &std::cell::RefCell<TokenCache>,
+    ) {
+        for _ in 0..5000 {
+            build_render_lines(
+                buf_id,
+                dv,
+                style,
+                "md",
+                Some(syntax),
+                None,
+                &[],
+                Some(cache),
+            );
+            if !cache.borrow().pending {
+                return;
+            }
+        }
+        panic!("never reached steady state");
+    }
+
+    /// Regression test: a keystroke in a large markdown file must not render
+    /// a plain-text frame before the highlighted one. Pre-fix, every edit
+    /// truncated `cache.lines` at the dirty line and rewound the tokenizer
+    /// frontier to the previous 128-line checkpoint, so the re-tokenization
+    /// walk overran the 4 ms frame budget and visible lines rendered without
+    /// syntax tokens (`pending = true`) on the frame right after the keystroke.
+    #[test]
+    fn keystroke_in_large_md_file_renders_highlighted_on_first_frame() {
+        let syntax = md_syntax();
+
+        // A large synthetic document whose lines cost a realistic amount to
+        // tokenize (markdown bullets with inline code, matching the shape of
+        // a real CHANGELOG.md). 3000 lines at ~200 us/line of tokenization
+        // is far beyond one 4 ms frame, so any full re-walk is caught.
+        let mut lines = Vec::with_capacity(3000);
+        for n in 0..3000usize {
+            lines.push(format!(
+                "- Fixed the `inline_code_{n}` path in `subsystem_{n}` when the value \
+                 passed through `wrapper_{n}` was `None`; it now returns the default \
+                 instead of panicking on release builds.\n"
+            ));
+        }
+        let mut state = buffer::default_buffer_state();
+        state.lines = lines;
+        let buf_id = buffer::insert_buffer(state);
+        let mut dv = DocView::new();
+        dv.buffer_id = Some(buf_id);
+        dv.set_rect(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 800.0,
+            h: 600.0,
+        });
+        let style = StyleContext {
+            code_font_height: 10.0,
+            ..Default::default()
+        };
+        // Viewport starting mid-file, one screen above the edited line.
+        dv.scroll_y = 1500.0 * 12.0;
+
+        let cache = std::cell::RefCell::new(TokenCache::default());
+        build_until_steady(buf_id, &dv, &style, &syntax, &cache);
+        assert!(!cache.borrow().pending);
+
+        // One keystroke in the middle of the viewport.
+        let edit_line = 1500 + 3;
+        type_char(buf_id, edit_line, 3, "z");
+
+        // The single build right after the keystroke: the frame must come
+        // back highlighted, not plain.
+        let render = build_render_lines(
+            buf_id,
+            &dv,
+            &style,
+            "md",
+            Some(&syntax),
+            None,
+            &[],
+            Some(&cache),
+        );
+        assert!(
+            !cache.borrow().pending,
+            "post-keystroke build must not overrun the frame budget"
+        );
+        assert!(
+            render.iter().any(|r| r.line_number == edit_line),
+            "edited line in render output"
+        );
+        // Real syntax tokens, not the single plain run (and not a fallback
+        // single-coloured token): the line contains inline code so the
+        // markdown tokenizer emits multiple runs with distinct token types.
+        // Colors are not usable as evidence here (SYNTAX_COLORS is
+        // unpopulated in tests, so every run falls back to the text color);
+        // the cached tokenizer token types are.
+        let edited_tokens: Vec<String> = {
+            let cache = cache.borrow();
+            cache
+                .lines
+                .get(&edit_line)
+                .and_then(|e| e.tokens.as_ref())
+                .map(|toks| toks.iter().map(|t| t.token_type.to_string()).collect())
+                .unwrap_or_default()
+        };
+        assert!(
+            edited_tokens.len() > 1,
+            "edited line must render with real syntax tokens, got {:?}",
+            edited_tokens
+        );
+        let edited_types: std::collections::HashSet<&String> = edited_tokens.iter().collect();
+        assert!(
+            edited_types.len() > 1,
+            "edited line's tokens must carry more than one syntax token type, got {:?}",
+            edited_tokens
+        );
+        buffer::remove_buffer(buf_id);
+    }
 }
 
 // ── Syntax color lookup and render-line builder ─────────────────────────
@@ -1604,9 +1762,13 @@ pub(crate) fn build_render_lines(
             dv.folds.iter().flat_map(|&(fs, fe)| fs + 1..=fe).collect();
         // Synchronize cache identity by comparing compact per-line hashes. This
         // detects insertions, deletions, and edits without trusting every edit
-        // command to maintain a dirty watermark. Cache state strictly before
-        // the first changed line remains valid; state at and after it is
-        // discarded and rebuilt from the nearest sparse checkpoint.
+        // command to maintain a dirty watermark. Cached line entries are NOT
+        // dropped at the dirty line: every use of an entry is validated lazily
+        // against the line's content hash and the tokenizer state entering it,
+        // and tokenization is deterministic over `(content, start_state)`, so
+        // a validating entry is correct regardless of edit history. Dropping
+        // them wholesale forced the walk to re-tokenize from the previous
+        // checkpoint on every keystroke, overrunning the frame budget.
         if let Some(cache_cell) = token_cache {
             let mut cache = cache_cell.borrow_mut();
             if cache.change_id != b.change_id {
@@ -1630,7 +1792,6 @@ pub(crate) fn build_render_lines(
                 };
                 if let Some(dirty_idx) = first_diff {
                     let dirty_line = dirty_idx + 1;
-                    cache.lines.retain(|&line, _| line < dirty_line);
                     cache.checkpoints.retain(|&line, _| line < dirty_line);
                     if cache.frontier_line >= dirty_line {
                         let reset = cache
@@ -1680,7 +1841,42 @@ pub(crate) fn build_render_lines(
                     break;
                 }
                 let raw = b.lines.get(ln - 1).map(String::as_str).unwrap_or("");
-                if raw.len() <= max_line_bytes {
+                // Prefer a cached entry over re-tokenizing: an entry whose
+                // content hash and entering state both match is exact, so the
+                // walk chains its end-state and skips the regex work. This is
+                // what keeps a keystroke cheap — the walk only tokenizes
+                // lines whose content or entering state actually changed.
+                let mut adopted = false;
+                if let Some(cache_cell) = token_cache {
+                    let mut cache = cache_cell.borrow_mut();
+                    if let Some(entry) = cache.lines.get_mut(&ln) {
+                        if entry.content_hash == crate::editor::open_doc::line_hash(raw)
+                            && entry.start_state == state
+                        {
+                            state.clone_from(&entry.end_state);
+                            entry.change_id = b.change_id;
+                            adopted = true;
+                        }
+                    }
+                    if !adopted && raw.len() <= max_line_bytes {
+                        // Record the line's end-state (no tokens — it is
+                        // outside the viewport) so later walks can
+                        // chain-skip past it too.
+                        let start_state = state.clone();
+                        let (_, end) = tokenizer::tokenize_line_with_state(syntax, raw, &state);
+                        state = end;
+                        cache.lines.insert(
+                            ln,
+                            crate::editor::open_doc::CachedLine {
+                                change_id: b.change_id,
+                                content_hash: crate::editor::open_doc::line_hash(raw),
+                                start_state,
+                                tokens: None,
+                                end_state: state.clone(),
+                            },
+                        );
+                    }
+                } else if raw.len() <= max_line_bytes {
                     let (_, end) = tokenizer::tokenize_line_with_state(syntax, raw, &state);
                     state = end;
                 }

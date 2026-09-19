@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.16.8] - 2026-09-19 - Typing in large files no longer flickers syntax highlighting.
+
+* Each keystroke truncated the token cache from the edited line to end-of-file and rewound to the previous 128-line checkpoint, so typing re-tokenized everything up to the viewport; past the 4 ms frame budget, one frame rendered without syntax before the next restored it.
+* Cache entries are now kept and validated by line hash plus tokenizer state, and the prefix walk reuses cached end-states, so a keystroke re-tokenizes only the edited line.
+
 ## [2.16.7] - 2026-09-19 - Python highlighting no longer leaks across lines.
 
 * A colonless comprehension clause (`for r in runs`) opened the `for`/`if`/`def` keyword-colon pair and its state leaked across lines, highlighting the rest of the file as a string; those pairs now require a colon on the same line before they open.
