@@ -34,6 +34,9 @@ pub mod picker;
 #[cfg(unix)]
 pub mod process;
 pub mod regex;
+/// Incremental relexing with per-line lexer states: the explicit, headless
+/// form of the model the editor's token cache implements lazily.
+pub mod relex;
 pub(crate) mod reload;
 pub mod status_view;
 pub mod storage;
@@ -41,6 +44,7 @@ pub mod style;
 pub mod style_ctx;
 pub mod subsystems;
 pub mod syntax;
+pub mod term_links;
 pub mod terminal;
 pub mod terminal_buffer;
 pub mod terminal_panel;
@@ -52,5 +56,6 @@ pub mod tokenizer;
 pub mod toolbar_view;
 pub mod tree_view;
 pub mod types;
+pub mod utf16;
 pub mod utf8;
 pub mod view;

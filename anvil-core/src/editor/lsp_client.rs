@@ -560,6 +560,11 @@ pub(crate) fn lsp_code_action_resolve_request(
 
 /// Convert the editor's 1-based anchor/cursor selection to a normalized,
 /// 0-based LSP range.
+///
+/// The editor's columns count chars (UTF-8); LSP `character` values are
+/// UTF-16 code units. Callers must pass columns already converted with
+/// `utf16::utf16_col` — sending a char column unchanged misplaces the
+/// range on any line with multi-byte characters before the point.
 pub(crate) fn normalized_lsp_range(
     line1: usize,
     col1: usize,
@@ -1509,6 +1514,27 @@ mod tests {
                 .as_array()
                 .is_some_and(Vec::is_empty)
         );
+    }
+
+    #[test]
+    fn cursor_mapping_survives_cjk_and_emoji_before_the_point() {
+        // The editor's columns count chars over UTF-8; the wire counts
+        // UTF-16 units. 中 is 3 bytes / 1 unit, 😀 is 4 bytes / 2 units, so
+        // a char column sent unconverted lands short of the cursor.
+        const LINE: &str = "中😀tail";
+
+        // Cursor at char 2 ("t"): UTF-16 unit 3, byte 7.
+        assert_eq!(crate::editor::utf16::utf16_col(LINE, 2), 3);
+        assert_eq!(crate::editor::utf16::byte_col(LINE, 3), 7);
+        // Wire → editor stays lossless for every cursor position on the line.
+        for c in 0..=LINE.chars().count() {
+            let units = crate::editor::utf16::utf16_col(LINE, c);
+            assert_eq!(crate::editor::utf16::char_col(LINE, units), c);
+        }
+        // The end position a whole-document incremental didChange needs:
+        // line 1 is "😀tail" — 2 units + 4 chars = 6.
+        assert_eq!(lsp_end_position("中\n😀tail"), (1, 6));
+        assert_eq!(lsp_end_position(LINE), (0, 7));
     }
 
     #[test]

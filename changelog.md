@@ -1,5 +1,14 @@
 # Change Log
 
+## [2.16.9] - 2026-09-29 - Terminal links, single-edit comment toggles, and faster relexing.
+
+* Typing in very large files re-lexes only the lines that changed, so editing stays fast instead of re-tokenizing the rest of the file.
+* Comment-toggling on selected lines applies as one replacement range: undo and the language server each see a single edit.
+* Ctrl+click on a URL or a file.cpp:42:7 in the terminal opens the link or jumps to that file and line.
+* LSP positions convert through UTF-16 code units, keeping cursor mapping correct on lines with CJK characters or emoji.
+* A config.toml with an unknown key names the key and its line in the status bar, and the rest of the file still loads.
+* Code fences in the markdown preview tokenized each line from a fresh state, so multi-line strings, block comments, or bracket pairs highlighted wrong from a fence's second line on.
+
 ## [2.16.8] - 2026-09-19 - Typing in large files no longer flickers syntax highlighting.
 
 * Each keystroke truncated the token cache from the edited line to end-of-file and rewound to the previous 128-line checkpoint, so typing re-tokenized everything up to the viewport; past the 4 ms frame budget, one frame rendered without syntax before the next restored it.

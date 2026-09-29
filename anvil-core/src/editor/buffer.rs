@@ -1580,6 +1580,26 @@ pub fn push_undo(state: &mut BufferState) {
     state.last_edit = None;
 }
 
+/// Replace lines `start..=end` (1-based, inclusive) with `replacement` under
+/// one undo group: one `push_undo`, one splice, one `change_id` bump. This is
+/// the shape multi-line commands must use so undo and LSP sync each see
+/// exactly one edit event.
+pub fn replace_lines_as_one_edit(
+    state: &mut BufferState,
+    start: usize,
+    end: usize,
+    replacement: Vec<String>,
+) {
+    push_undo(state);
+    let end = end.min(state.lines.len()).max(start);
+    state.lines.splice(start - 1..end, replacement);
+    if state.lines.is_empty() {
+        state.lines.push(String::new());
+    }
+    state.syntax_dirty_from = state.syntax_dirty_from.min(start).max(1);
+    state.syntax_dirty_change_id = state.change_id;
+}
+
 /// Push undo for a single-char insert, merging consecutive keystrokes.
 ///
 /// Returns `true` if the edit was merged (no new group opened), meaning the

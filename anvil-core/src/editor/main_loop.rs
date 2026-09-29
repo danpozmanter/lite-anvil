@@ -103,6 +103,8 @@ use crate::editor::lsp;
 #[cfg(feature = "sdl")]
 use crate::editor::lsp_client::*;
 #[cfg(feature = "sdl")]
+use crate::editor::term_links::{self, TermLink};
+#[cfg(feature = "sdl")]
 use crate::editor::picker;
 #[cfg(feature = "sdl")]
 use crate::editor::status_view::{StatusItem, StatusView};
@@ -1373,7 +1375,15 @@ pub fn run(
         // A TOML error carries its own multi-line excerpt; the status bar
         // has one line, so show the summary and leave the rest to the log.
         .and_then(|e| e.lines().next())
-        .map(|e| format!("{e} - running on default settings"))
+        // A named line+key error means the rest of the file still loaded;
+        // anything else left the editor on built-in defaults.
+        .map(|e| {
+            if e.starts_with("config.toml line") {
+                e.to_string()
+            } else {
+                format!("{e} - running on default settings")
+            }
+        })
         .or(font_warning)
         .map(|msg| (msg, Instant::now()));
 
@@ -5949,7 +5959,7 @@ pub fn run(
                                                     req_id,
                                                     &uri,
                                                     cl - 1,
-                                                    cc - 1,
+                                                    char_col_to_utf16(Some(buf_id), cl, cc - 1),
                                                 ),
                                             );
                                             completion.line = cl;
@@ -5984,7 +5994,12 @@ pub fn run(
                                     .insert(req_id, "textDocument/signatureHelp".to_string());
                                 let _ = lsp::send_message(
                                     tid,
-                                    &lsp_signature_help_request(req_id, &uri, cl - 1, cc - 1),
+                                    &lsp_signature_help_request(
+                                        req_id,
+                                        &uri,
+                                        cl - 1,
+                                        char_col_to_utf16(Some(buf_id), cl, cc - 1),
+                                    ),
                                 );
                                 signature_help.line = cl;
                                 signature_help.col = cc;
@@ -7385,6 +7400,83 @@ pub fn run(
                                     let vis_row = (((*y - ty_start) / char_h_v).floor() as i64)
                                         .max(0)
                                         as usize;
+                                    // Ctrl+click on a URL or file:line opens it
+                                    // instead of starting a selection.
+                                    if *button == MouseButton::Left
+                                        && modifiers.ctrl
+                                        && let Some(inst) =
+                                            terminal.terminals.get(terminal.active)
+                                    {
+                                        let rows =
+                                            inst.tbuf.visible_rows(rows_visible, inst.scrollback as usize);
+                                        if let Some(row) = rows.get(vis_row) {
+                                            let text: String = row
+                                                .iter()
+                                                .filter_map(|c| char::from_u32(c.ch))
+                                                .collect();
+                                            if let Some((link, _, _)) =
+                                                term_links::link_at(text.trim_end(), col)
+                                            {
+                                                match link {
+                                                    TermLink::Url(url) => crate::editor
+                                                        ::markdown_preview
+                                                        ::open_url(&url),
+                                                    TermLink::Location {
+                                                        path,
+                                                        line,
+                                                        col: lcol,
+                                                    } => {
+                                                        let bases: Vec<std::path::PathBuf> =
+                                                            std::env::current_dir()
+                                                                .ok()
+                                                                .into_iter()
+                                                                .collect();
+                                                        if let Some((target, line, lcol)) =
+                                                            term_links::resolve_location(
+                                                                &path,
+                                                                line,
+                                                                lcol.unwrap_or(1),
+                                                                &bases,
+                                                            )
+                                                        {
+                                                            open_file_into(
+                                                                &target.to_string_lossy(),
+                                                                &mut docs,
+                                                                use_git(),
+                                                            );
+                                                            let tab = docs.len() - 1;
+                                                            if let Some(doc) = docs.get_mut(tab) {
+                                                                if let Some(buf_id) =
+                                                                    doc.view.buffer_id
+                                                                {
+                                                                    let _ = buffer
+                                                                        ::with_buffer_mut(
+                                                                            buf_id,
+                                                                            |b| {
+                                                                                let ln = line
+                                                                                    .min(b.lines.len())
+                                                                                    .max(1);
+                                                                                b.selections = vec![
+                                                                                    ln,
+                                                                                    lcol.max(1),
+                                                                                    ln,
+                                                                                    lcol.max(1),
+                                                                                ];
+                                                                                Ok(())
+                                                                            },
+                                                                        );
+                                                                }
+                                                                scroll_to_cursor(&mut doc.view);
+                                                            }
+                                                            active_tab = tab;
+                                                        }
+                                                    }
+                                                }
+                                                redraw = true;
+                                                continue;
+                                            }
+                                        }
+                                    }
                                     if let Some(inst) = terminal.terminals.get_mut(terminal.active)
                                     {
                                         inst.sel_start = Some((vis_row, col));
@@ -9142,6 +9234,24 @@ pub fn run(
                                             .and_then(|c| c.as_i64())
                                             .unwrap_or(0)
                                             as usize;
+                                        // LSP characters are UTF-16 units; the
+                                        // editor's columns count chars.
+                                        let col = docs
+                                            .get(active_tab)
+                                            .and_then(|doc| doc.view.buffer_id)
+                                            .and_then(|id| {
+                                                buffer::with_buffer(id, |b| {
+                                                    Ok(b.lines.get(line).map(|l| {
+                                                        crate::editor::utf16::char_col(
+                                                            l.trim_end_matches('\n'),
+                                                            col,
+                                                        )
+                                                    })
+                                                    .unwrap_or(col))
+                                                })
+                                                .ok()
+                                            })
+                                            .unwrap_or(col);
                                         let label = if let Some(s) =
                                             hint.get("label").and_then(|l| l.as_str())
                                         {
@@ -9405,10 +9515,12 @@ pub fn run(
                                                 let _ = buffer::with_buffer_mut(buf_id, |b| {
                                                     let line =
                                                         target_line.min(b.lines.len()).max(1);
-                                                    let max_col = char_count(
+                                                    // The server's character is a UTF-16
+                                                    // unit; the editor's columns count chars.
+                                                    let col = crate::editor::utf16::char_col(
                                                         b.lines[line - 1].trim_end_matches('\n'),
+                                                        target_col.saturating_sub(1),
                                                     ) + 1;
-                                                    let col = target_col.min(max_col);
                                                     b.selections = vec![line, col, line, col];
                                                     Ok(())
                                                 });
@@ -9668,10 +9780,12 @@ pub fn run(
                                                 let _ = buffer::with_buffer_mut(buf_id, |b| {
                                                     let line =
                                                         target_line.min(b.lines.len()).max(1);
-                                                    let max_col = char_count(
+                                                    // The server's character is a UTF-16
+                                                    // unit; the editor's columns count chars.
+                                                    let col = crate::editor::utf16::char_col(
                                                         b.lines[line - 1].trim_end_matches('\n'),
+                                                        target_col.saturating_sub(1),
                                                     ) + 1;
-                                                    let col = target_col.min(max_col);
                                                     b.selections = vec![line, col, line, col];
                                                     Ok(())
                                                 });
@@ -9880,7 +9994,8 @@ pub fn run(
                 lsp_state
                     .pending_requests
                     .insert(req_id, "textDocument/hover".to_string());
-                let _ = lsp::send_message(tid, &lsp_hover_request(req_id, &uri, line - 1, col - 1));
+                let cc16 = char_col_to_utf16(doc.view.buffer_id, line, col - 1);
+                let _ = lsp::send_message(tid, &lsp_hover_request(req_id, &uri, line - 1, cc16));
                 pending_lsp_hover_request = Some(req_id);
                 hover.line = line;
                 hover.col = col;
@@ -11935,8 +12050,14 @@ pub fn run(
                                             Some(
                                                 code_text
                                                     .split('\n')
-                                                    .map(|line| {
-                                                        tokenizer::tokenize_line(compiled_opt, line)
+                                                    .scan(Vec::<u8>::new(), |block_state, line| {
+                                                        let (t, next) = tokenizer::tokenize_line_with_state(
+                                                            compiled_opt,
+                                                            line,
+                                                            block_state,
+                                                        );
+                                                        *block_state = next;
+                                                        Some(t)
                                                     })
                                                     .collect(),
                                             )
@@ -14772,10 +14893,9 @@ fn apply_lsp_text_edits(
             return doc_end;
         };
         let content = &state.lines[line];
-        let within = content
-            .char_indices()
-            .nth(character)
-            .map_or(content.len(), |(byte, _)| byte);
+        // LSP characters are UTF-16 units, not chars: a server's column past
+        // CJK text or emoji maps through utf16, not char_indices.
+        let within = crate::editor::utf16::byte_col(content, character);
         start + within
     };
     let mut parsed: Vec<(usize, usize, String)> = Vec::new();
@@ -14997,6 +15117,24 @@ fn char_count(s: &str) -> usize {
 /// cursor is always reachable by wrap — scrolling right would push content
 /// out of view even though nothing extends past the visual right edge.
 #[allow(clippy::too_many_arguments)]
+/// Convert the editor's 0-based char column at a 1-based buffer line into the
+/// UTF-16 code units LSP positions count. Falls back to the char column when
+/// the buffer is gone — an approximate position beats none.
+fn char_col_to_utf16(buf_id: Option<u64>, line1: usize, char_col0: usize) -> usize {
+    let Some(buf_id) = buf_id else {
+        return char_col0;
+    };
+    buffer::with_buffer(buf_id, |b| {
+        let line_text = b
+            .lines
+            .get(line1.saturating_sub(1))
+            .map(|l| l.trim_end_matches('\n'))
+            .unwrap_or("");
+        Ok(crate::editor::utf16::utf16_col(line_text, char_col0))
+    })
+    .unwrap_or(char_col0)
+}
+
 fn handle_doc_command(
     dv: &mut DocView,
     cmd: &str,
@@ -15592,13 +15730,15 @@ fn handle_doc_command(
                     // rather than guessing and corrupting the file.
                     return Ok(());
                 };
-                buffer::push_undo(b);
                 let (start, end) = if anchor_line != cursor_line {
                     (anchor_line.min(cursor_line), anchor_line.max(cursor_line))
                 } else {
                     (line, line)
                 };
-                match marker {
+                // Compute the replacement for the whole [start, end] span
+                // first, then splice it in as ONE edit so toggling N lines
+                // is one undo step and one LSP didChange.
+                let replacement: Vec<String> = match marker {
                     CommentMarker::Line(prefix) => {
                         let prefix_space = format!("{prefix} ");
                         // All non-blank lines must already start with the
@@ -15608,31 +15748,52 @@ fn handle_doc_command(
                             .filter(|l| !l.trim().is_empty())
                             .all(|l| l.trim_start().starts_with(prefix.as_str()));
                         if all_commented {
-                            for i in start..=end {
-                                if let Some(l) = b.lines.get_mut(i - 1) {
-                                    if let Some(pos) = l.find(&prefix_space) {
-                                        l.replace_range(pos..pos + prefix_space.len(), "");
-                                    } else if let Some(pos) = l.find(prefix.as_str()) {
-                                        l.replace_range(pos..pos + prefix.len(), "");
+                            (start..=end)
+                                .map(|i| match b.lines.get(i - 1) {
+                                    Some(l) => {
+                                        if let Some(pos) = l.find(&prefix_space) {
+                                            format!(
+                                                "{}{}",
+                                                &l[..pos],
+                                                &l[pos + prefix_space.len()..]
+                                            )
+                                        } else if let Some(pos) = l.find(prefix.as_str()) {
+                                            format!(
+                                                "{}{}",
+                                                &l[..pos],
+                                                &l[pos + prefix.len()..]
+                                            )
+                                        } else {
+                                            l.clone()
+                                        }
                                     }
-                                }
-                            }
+                                    None => String::new(),
+                                })
+                                .collect()
                         } else {
-                            for i in start..=end {
-                                if let Some(l) = b.lines.get_mut(i - 1) {
-                                    if l.trim().is_empty() {
-                                        continue;
+                            (start..=end)
+                                .map(|i| match b.lines.get(i - 1) {
+                                    Some(l) if !l.trim().is_empty() => {
+                                        let indent_len = l
+                                            .chars()
+                                            .take_while(|c| *c == ' ' || *c == '\t')
+                                            .count();
+                                        let byte = l
+                                            .char_indices()
+                                            .nth(indent_len)
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(0);
+                                        let mut out =
+                                            String::with_capacity(l.len() + prefix_space.len());
+                                        out.push_str(&l[..byte]);
+                                        out.push_str(&prefix_space);
+                                        out.push_str(&l[byte..]);
+                                        out
                                     }
-                                    let indent_len =
-                                        l.chars().take_while(|c| *c == ' ' || *c == '\t').count();
-                                    let byte = l
-                                        .char_indices()
-                                        .nth(indent_len)
-                                        .map(|(i, _)| i)
-                                        .unwrap_or(0);
-                                    l.insert_str(byte, &prefix_space);
-                                }
-                            }
+                                    Some(l) => l.clone(),
+                                    None => String::new(),
+                                })
+                                .collect()
                         }
                     }
                     CommentMarker::Block(open, close) => {
@@ -15650,74 +15811,85 @@ fn handle_doc_command(
                                     && trimmed.len() >= open.len() + close.len()
                             });
                         if all_wrapped {
-                            for i in start..=end {
-                                if let Some(l) = b.lines.get_mut(i - 1) {
-                                    let had_newline = l.ends_with('\n');
-                                    let body = l.trim_end_matches('\n').to_string();
-                                    let trailing_ws_len = body.len() - body.trim_end().len();
-                                    let trailing_ws =
-                                        body[body.len() - trailing_ws_len..].to_string();
-                                    let core = body[..body.len() - trailing_ws_len].to_string();
-                                    // Strip closing marker (with optional preceding space).
-                                    let core = if let Some(c) = core.strip_suffix(close.as_str()) {
-                                        c.strip_suffix(' ').unwrap_or(c).to_string()
-                                    } else {
-                                        core
-                                    };
-                                    // Strip opening marker (with optional trailing space) after indent.
-                                    let indent_len = core
-                                        .chars()
-                                        .take_while(|c| *c == ' ' || *c == '\t')
-                                        .count();
-                                    let indent_byte = core
-                                        .char_indices()
-                                        .nth(indent_len)
-                                        .map(|(i, _)| i)
-                                        .unwrap_or(core.len());
-                                    let (indent, rest) = core.split_at(indent_byte);
-                                    let rest = rest.strip_prefix(open.as_str()).unwrap_or(rest);
-                                    let rest = rest.strip_prefix(' ').unwrap_or(rest);
-                                    let mut new_line = format!("{indent}{rest}{trailing_ws}");
-                                    if had_newline {
-                                        new_line.push('\n');
+                            (start..=end)
+                                .map(|i| match b.lines.get(i - 1) {
+                                    Some(l) => {
+                                        let had_newline = l.ends_with('\n');
+                                        let body = l.trim_end_matches('\n').to_string();
+                                        let trailing_ws_len =
+                                            body.len() - body.trim_end().len();
+                                        let trailing_ws =
+                                            body[body.len() - trailing_ws_len..].to_string();
+                                        let core =
+                                            body[..body.len() - trailing_ws_len].to_string();
+                                        // Strip closing marker (with optional preceding space).
+                                        let core =
+                                            if let Some(c) = core.strip_suffix(close.as_str()) {
+                                                c.strip_suffix(' ').unwrap_or(c).to_string()
+                                            } else {
+                                                core
+                                            };
+                                        // Strip opening marker (with optional trailing space) after indent.
+                                        let indent_len = core
+                                            .chars()
+                                            .take_while(|c| *c == ' ' || *c == '\t')
+                                            .count();
+                                        let indent_byte = core
+                                            .char_indices()
+                                            .nth(indent_len)
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(core.len());
+                                        let (indent, rest) = core.split_at(indent_byte);
+                                        let rest =
+                                            rest.strip_prefix(open.as_str()).unwrap_or(rest);
+                                        let rest = rest.strip_prefix(' ').unwrap_or(rest);
+                                        let mut new_line =
+                                            format!("{indent}{rest}{trailing_ws}");
+                                        if had_newline {
+                                            new_line.push('\n');
+                                        }
+                                        new_line
                                     }
-                                    *l = new_line;
-                                }
-                            }
+                                    None => String::new(),
+                                })
+                                .collect()
                         } else {
-                            for i in start..=end {
-                                if let Some(l) = b.lines.get_mut(i - 1) {
-                                    if l.trim().is_empty() {
-                                        continue;
+                            (start..=end)
+                                .map(|i| match b.lines.get(i - 1) {
+                                    Some(l) if !l.trim().is_empty() => {
+                                        let had_newline = l.ends_with('\n');
+                                        let body = l.trim_end_matches('\n').to_string();
+                                        let indent_len = body
+                                            .chars()
+                                            .take_while(|c| *c == ' ' || *c == '\t')
+                                            .count();
+                                        let indent_byte = body
+                                            .char_indices()
+                                            .nth(indent_len)
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(0);
+                                        let (indent, rest) = body.split_at(indent_byte);
+                                        let mut new_line =
+                                            format!("{indent}{open} {} {close}", rest.trim_end());
+                                        // Preserve any trailing whitespace after the close marker.
+                                        let trailing_ws_len = rest.len() - rest.trim_end().len();
+                                        if trailing_ws_len > 0 {
+                                            new_line
+                                                .push_str(&rest[rest.len() - trailing_ws_len..]);
+                                        }
+                                        if had_newline {
+                                            new_line.push('\n');
+                                        }
+                                        new_line
                                     }
-                                    let had_newline = l.ends_with('\n');
-                                    let body = l.trim_end_matches('\n').to_string();
-                                    let indent_len = body
-                                        .chars()
-                                        .take_while(|c| *c == ' ' || *c == '\t')
-                                        .count();
-                                    let indent_byte = body
-                                        .char_indices()
-                                        .nth(indent_len)
-                                        .map(|(i, _)| i)
-                                        .unwrap_or(0);
-                                    let (indent, rest) = body.split_at(indent_byte);
-                                    let mut new_line =
-                                        format!("{indent}{open} {} {close}", rest.trim_end());
-                                    // Preserve any trailing whitespace after the close marker.
-                                    let trailing_ws_len = rest.len() - rest.trim_end().len();
-                                    if trailing_ws_len > 0 {
-                                        new_line.push_str(&rest[rest.len() - trailing_ws_len..]);
-                                    }
-                                    if had_newline {
-                                        new_line.push('\n');
-                                    }
-                                    *l = new_line;
-                                }
-                            }
+                                    Some(l) => l.clone(),
+                                    None => String::new(),
+                                })
+                                .collect()
                         }
                     }
-                }
+                };
+                buffer::replace_lines_as_one_edit(b, start, end, replacement);
             }
             "doc:unindent" => {
                 buffer::push_undo(b);
@@ -16180,9 +16352,73 @@ mod lsp_code_action_tests {
     use super::{
         apply_lsp_text_edits, apply_lsp_workspace_edit, code_action_command,
         code_action_disabled_reason, code_action_picker_row_at_width, collect_lsp_code_actions,
-        path_to_uri,
+        handle_doc_command, path_to_uri, CommentMarker, DocView,
     };
     use crate::editor::style_ctx::StyleContext;
+
+    #[test]
+    fn toggling_twenty_lines_is_one_undo_step_and_one_did_change() {
+        let style = StyleContext::default();
+        let mut dv = DocView::default();
+        let mut state = crate::editor::buffer::default_buffer_state();
+        state.lines = (0..20).map(|i| format!("line {i}\n")).collect();
+        let buf_id = crate::editor::buffer::insert_buffer(state);
+        dv.buffer_id = Some(buf_id);
+        crate::editor::buffer::with_buffer_mut(buf_id, |b| {
+            b.selections = vec![1, 1, 20, 1];
+            Ok(())
+        })
+        .unwrap();
+
+        for round in 0..2 {
+            // Re-select the whole block each round: the first toggle
+            // collapses the selection to the cursor, and a user toggling
+            // again re-selects the lines they want to affect.
+            crate::editor::buffer::with_buffer_mut(buf_id, |b| {
+                b.selections = vec![1, 1, 20, 1];
+                Ok(())
+            })
+            .unwrap();
+            handle_doc_command(
+                &mut dv,
+                "doc:toggle-line-comments",
+                &style,
+                "soft",
+                4,
+                Some(&CommentMarker::Line("//".to_string())),
+                false,
+                false,
+                false,
+            );
+            crate::editor::buffer::with_buffer(buf_id, |b| {
+                if round == 0 {
+                    assert_eq!(
+                        b.lines.concat(),
+                        (0..20)
+                            .map(|i| format!("// line {i}\n"))
+                            .collect::<String>()
+                    );
+                } else {
+                    assert_eq!(
+                        b.lines.concat(),
+                        (0..20).map(|i| format!("line {i}\n")).collect::<String>()
+                    );
+                }
+                // One undo group per toggle for all 20 lines: per-line
+                // grouping would leave entries after the first toggle and
+                // several after the second. One pending group after the
+                // first, exactly one finalized entry after the second.
+                if round == 0 {
+                    assert!(b.undo.is_empty());
+                } else {
+                    assert_eq!(b.undo.len(), 1);
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        crate::editor::buffer::remove_buffer(buf_id);
+    }
 
     fn buffer_with(text: &str) -> crate::editor::buffer::BufferState {
         let mut state = crate::editor::buffer::default_buffer_state();

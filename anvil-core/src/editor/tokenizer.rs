@@ -1726,7 +1726,6 @@ mod tests {
 
     #[test]
     fn python_triple_quoted_f_strings_do_not_leak_string_state() {
-        use crate::editor::syntax::load_syntax_assets;
         let data_dir = format!("{}/../data", env!("CARGO_MANIFEST_DIR"));
         let index = crate::editor::syntax::load_syntax_index(&data_dir);
         let python = compile_for_filename("chart.py", &index)

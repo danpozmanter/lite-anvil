@@ -965,6 +965,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_messages_drops_consumed_prefixes_so_the_buffer_stays_bounded() {
+        // Two framed messages in one read. Processing the first must erase
+        // its bytes from the buffer so only the second remains — a long
+        // session with a chatty server must not grow memory per message.
+        let (tx, rx) = unbounded();
+        let first = encode_message(&serde_json::json!({"id": 1})).unwrap();
+        let second = encode_message(&serde_json::json!({"id": 2})).unwrap();
+
+        // Two complete frames in one read: both are dispatched and the
+        // buffer ends empty — no consumed byte lingers to grow over time.
+        let mut buffer = [first.as_bytes(), second.as_bytes()].concat();
+        parse_messages(&mut buffer, &tx);
+        assert_eq!(rx.try_recv().unwrap()["id"], 1);
+        assert_eq!(rx.try_recv().unwrap()["id"], 2);
+        assert!(buffer.is_empty(), "consumed prefixes must be erased");
+
+        // A read that ends inside the second frame dispatches the first
+        // message and keeps exactly that frame's unconsumed remainder.
+        let mut buffer = [first.as_bytes(), &second.as_bytes()[..second.len() / 2]].concat();
+        parse_messages(&mut buffer, &tx);
+        assert_eq!(rx.try_recv().unwrap()["id"], 1);
+        assert_eq!(buffer, second[..second.len() / 2].as_bytes());
+
+        // The next read completes the frame and empties the buffer.
+        buffer.extend_from_slice(&second.as_bytes()[second.len() / 2..]);
+        parse_messages(&mut buffer, &tx);
+        assert_eq!(rx.try_recv().unwrap()["id"], 2);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
     fn parse_messages_decodes_valid_frame() {
         let (tx, rx) = unbounded();
         let value = serde_json::json!({"id": 1});

@@ -272,6 +272,94 @@ impl Default for NativeConfig {
     }
 }
 
+/// Keys the typed config accepts, per section (`""` = top level). Sections
+/// and nested tables not listed here are unchecked: their shape is free-form
+/// (colors, fonts.syntax, plugin settings), so an unfamiliar key there is
+/// not a mistake. serde finds the first unknown key but does not name where
+/// it sat, so the raw text is scanned for the line it appears on.
+fn known_keys(section: &str) -> Option<&'static [&'static str]> {
+    match section {
+        "" => Some(&[
+            "fps", "max_log_items", "message_timeout", "mouse_wheel_scroll",
+            "animate_drag_scroll", "scroll_past_end", "force_scrollbar_status",
+            "file_size_limit", "large_file", "project_scan", "ignore_files",
+            "symbol_pattern", "non_word_chars", "undo_merge_timeout", "max_undos",
+            "max_tabs", "max_visible_commands", "always_show_tabs",
+            "highlight_current_line", "line_height", "indent_size", "tab_type",
+            "keep_newline_whitespace", "line_endings", "line_limit", "theme",
+            "gitignore", "lsp", "native_tokenizer", "terminal", "ui", "fonts",
+            "files", "long_line_indicator", "long_line_indicator_width",
+            "transitions", "disabled_transitions", "animation_rate",
+            "blink_period", "disable_blink", "draw_whitespace", "borderless",
+            "tab_close_button", "max_clicks", "skip_plugins_version", "stonks",
+            "use_system_file_picker", "mac_command_as_ctrl", "format_on_paste",
+            "colors", "keybindings", "plugins",
+        ]),
+        "large_file" => Some(&[
+            "soft_limit_mb", "hard_limit_mb", "long_line_limit_kb", "read_only",
+            "plain_text", "disable_lsp", "disable_autocomplete",
+        ]),
+        "project_scan" => Some(&["max_files", "exclude_dirs"]),
+        "gitignore" => Some(&["enabled", "additional_patterns"]),
+        "lsp" => Some(&[
+            "load_on_startup", "semantic_highlighting", "inline_diagnostics",
+            "format_on_save",
+        ]),
+        "native_tokenizer" => Some(&["enabled"]),
+        "terminal" => Some(&["placement", "reuse_mode"]),
+        "ui" => Some(&[
+            "divider_size", "scrollbar_size", "expanded_scrollbar_size",
+            "minimum_thumb_size", "contracted_scrollbar_margin",
+            "expanded_scrollbar_margin", "caret_width", "tab_width",
+            "padding_x", "padding_y",
+        ]),
+        "fonts" => Some(&["ui", "code", "big", "icon", "icon_big", "syntax"]),
+        "files" => Some(&["atomic_save"]),
+        "disabled_transitions" => Some(&[
+            "scroll", "commandview", "contextmenu", "logview", "nagbar",
+            "tabs", "tab_drag", "statusbar",
+        ]),
+        _ => None,
+    }
+}
+
+/// Every unknown key with its 1-based line number. A file with unknown keys
+/// still parses — serde fills the known fields and drops the rest — so this
+/// is the only place "my theme didn't load" gets named.
+fn unknown_key_errors(content: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut section = String::new();
+    for (n, raw) in content.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = name.trim().trim_matches('"').to_string();
+            continue;
+        }
+        let Some((key, _)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().trim_matches('"');
+        let known = known_keys(&section)
+            .map(|fields| fields.contains(&key))
+            // A nested table (fonts.code, colors.syntax) is its own section:
+            // re-anchor to its parent so its known keys are still checked.
+            .unwrap_or_else(|| {
+                let parent = section.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
+                known_keys(parent).map(|f| f.contains(&key)).unwrap_or(true)
+            });
+        if !known {
+            out.push(format!(
+                "config.toml line {}: unknown key `{key}` - the rest of the file still loaded",
+                n + 1
+            ));
+        }
+    }
+    out
+}
+
 impl NativeConfig {
     /// Build a config using the given scale factor and platform name.
     pub fn with_defaults(scale: f64, platform: &str, datadir: &str) -> Self {
@@ -342,7 +430,22 @@ impl NativeConfig {
     pub fn load_toml(path: &Path) -> Result<Self, String> {
         let content =
             std::fs::read_to_string(path).map_err(|e| format!("cannot read config: {e}"))?;
-        toml::from_str(&content).map_err(|e| format!("invalid config TOML: {e}"))
+        Self::load_toml_str(&content)
+    }
+
+    /// Parse config TOML already in memory. A syntax error names the line and
+    /// reason in the error; an unknown key parses with the rest of the file
+    /// but is reported through `load_error` so the status bar can name it.
+    pub fn load_toml_str(content: &str) -> Result<Self, String> {
+        match toml::from_str::<NativeConfig>(content) {
+            Ok(mut config) => {
+                if let Some(msg) = unknown_key_errors(content).into_iter().next() {
+                    config.load_error = Some(msg);
+                }
+                Ok(config)
+            }
+            Err(e) => Err(format!("invalid config TOML: {e}")),
+        }
     }
 
     /// Load config from TOML if it exists, otherwise return defaults.
@@ -864,5 +967,43 @@ mod tests {
         let config: NativeConfig = toml::from_str(toml).unwrap();
         let comment = config.fonts.syntax.get("comment").unwrap();
         assert_eq!(comment.options.italic, Some(true));
+    }
+
+    #[test]
+    fn a_syntax_error_names_the_line_and_reason() {
+        let err = NativeConfig::load_toml_str("theme = \nindent_size = 2\n").unwrap_err();
+        assert!(err.contains("line 1"), "error must name the line: {err}");
+        assert!(!err.contains("unknown key"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_key_names_the_line_and_the_key_and_loads_the_rest() {
+        let config = NativeConfig::load_toml_str("theme = \"summer\"\nthme = \"typo\"\nindent_size = 4\n").unwrap();
+        // The rest of the file still loaded...
+        assert_eq!(config.theme, "summer");
+        assert_eq!(config.indent_size, 4);
+        // ...and the unknown key is named with its line.
+        assert_eq!(
+            config.load_error.as_deref(),
+            Some("config.toml line 2: unknown key `thme` - the rest of the file still loaded")
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_inside_a_table_names_its_line() {
+        let config = NativeConfig::load_toml_str(
+            "[lsp]\nload_on_startup = true\nsave_on_load = true\n",
+        )
+        .unwrap();
+        assert!(
+            config
+                .load_error
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("config.toml line 3: unknown key `save_on_load`"),
+            "{:?}",
+            config.load_error
+        );
+        assert!(config.lsp.load_on_startup);
     }
 }

@@ -2,6 +2,7 @@ use crate::editor::buffer;
 use crate::editor::event::{EditorEvent, EventResult};
 #[cfg(feature = "sdl")]
 use crate::editor::lsp_client::InlayHint;
+use crate::editor::relex;
 use crate::editor::style_ctx::StyleContext;
 #[cfg(feature = "sdl")]
 use crate::editor::tokenizer::{self, CompiledSyntax};
@@ -1850,9 +1851,11 @@ pub(crate) fn build_render_lines(
                 if let Some(cache_cell) = token_cache {
                     let mut cache = cache_cell.borrow_mut();
                     if let Some(entry) = cache.lines.get_mut(&ln) {
-                        if entry.content_hash == crate::editor::open_doc::line_hash(raw)
-                            && entry.start_state == state
-                        {
+                        if relex::entry_validates(
+                            entry,
+                            crate::editor::open_doc::line_hash(raw),
+                            &state,
+                        ) {
                             state.clone_from(&entry.end_state);
                             entry.change_id = b.change_id;
                             adopted = true;
@@ -1901,9 +1904,11 @@ pub(crate) fn build_render_lines(
                     let cached = {
                         let mut cache = cache_cell.borrow_mut();
                         cache.lines.get_mut(&i).and_then(|entry| {
-                            let valid = entry.content_hash
-                                == crate::editor::open_doc::line_hash(raw_line)
-                                && entry.start_state == state;
+                            let valid = relex::entry_validates(
+                                entry,
+                                crate::editor::open_doc::line_hash(raw_line),
+                                &state,
+                            );
                             if valid {
                                 entry.change_id = b.change_id;
                                 state.clone_from(&entry.end_state);
