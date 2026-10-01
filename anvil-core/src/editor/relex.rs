@@ -16,7 +16,7 @@
 //! that cannot reach past its line stops at that line.
 
 use crate::editor::open_doc::CachedLine;
-use crate::editor::tokenizer::{tokenize_line_with_state, CompiledSyntax, Token};
+use crate::editor::tokenizer::{CompiledSyntax, Token, tokenize_line_with_state};
 
 /// Tokens and the lexer state after one relexed line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,19 +203,29 @@ mod tests {
     fn incremental_relex_matches_full_relex_after_edit() {
         let syntax = python_syntax();
         let lines = python_lines();
-        let before = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let before = full_relex(
+            &syntax,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
 
         // Edit the interior of the multi-line f-string; no line count change.
         let mut edited = lines.clone();
         edited[7] = "  {rows} sorted".into();
         let saved: Vec<Option<Vec<u8>>> =
             before.iter().map(|l| Some(l.end_state.clone())).collect();
-        let (relexed, stats) =
-            relex_span(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 8);
+        let (relexed, stats) = relex_span(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            8,
+        );
 
         // The relexed span must be token-for-token identical to a full relex
         // of the edited content.
-        let after = full_relex(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>());
+        let after = full_relex(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         for (n, line) in relexed.iter().enumerate() {
             let ln = 8 + n;
             assert_eq!(line.tokens, after[ln - 1].tokens, "line {ln} tokens");
@@ -238,7 +248,10 @@ mod tests {
     fn incremental_relex_stops_at_first_unchanged_end_state() {
         let syntax = python_syntax();
         let lines = python_lines();
-        let before = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let before = full_relex(
+            &syntax,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
 
         // Editing a plain code line leaves its end state empty, exactly the
         // saved state: the relex must stop on that line and tokenize nothing
@@ -247,8 +260,12 @@ mod tests {
         edited[3] = "    total = 1".into();
         let saved: Vec<Option<Vec<u8>>> =
             before.iter().map(|l| Some(l.end_state.clone())).collect();
-        let (relexed, stats) =
-            relex_span(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 4);
+        let (relexed, stats) = relex_span(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            4,
+        );
         assert_eq!(stats.lines_tokenized, 1, "one line relexed, got {stats:?}");
         assert_eq!(stats.last_line, 4);
         assert!(stats.stopped_early);
@@ -258,8 +275,12 @@ mod tests {
         // state below it, so the relex runs to end-of-file without stopping.
         let mut unclosed = lines.clone();
         unclosed[3] = "    s = \"unterminated".into();
-        let (_, stats) =
-            relex_span(&syntax, &unclosed.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 4);
+        let (_, stats) = relex_span(
+            &syntax,
+            &unclosed.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            4,
+        );
         assert!(!stats.stopped_early, "expected relex to EOF, got {stats:?}");
         assert_eq!(stats.last_line, unclosed.len());
     }
@@ -268,7 +289,10 @@ mod tests {
     fn incremental_relex_survives_line_insertion_and_deletion() {
         let syntax = python_syntax();
         let lines = python_lines();
-        let before = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let before = full_relex(
+            &syntax,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         let old_states: Vec<Option<Vec<u8>>> =
             before.iter().map(|l| Some(l.end_state.clone())).collect();
 
@@ -279,12 +303,24 @@ mod tests {
         let mut saved: Vec<Option<Vec<u8>>> = old_states[..4].to_vec();
         saved.push(None);
         saved.extend_from_slice(&old_states[4..]);
-        let (relexed, stats) =
-            relex_span(&syntax, &inserted.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 5);
+        let (relexed, stats) = relex_span(
+            &syntax,
+            &inserted.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            5,
+        );
 
-        let after = full_relex(&syntax, &inserted.iter().map(String::as_str).collect::<Vec<_>>());
+        let after = full_relex(
+            &syntax,
+            &inserted.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         for (n, line) in relexed.iter().enumerate() {
-            assert_eq!(line.tokens, after[4 + n].tokens, "insertion: line {}", 5 + n);
+            assert_eq!(
+                line.tokens,
+                after[4 + n].tokens,
+                "insertion: line {}",
+                5 + n
+            );
             assert_eq!(line.end_state, after[4 + n].end_state);
         }
         // The comment leaves the state empty, the next line resyncs, and the
@@ -300,9 +336,16 @@ mod tests {
             .chain(old_states[5..].iter())
             .cloned()
             .collect();
-        let (relexed, stats) =
-            relex_span(&syntax, &deleted.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 5);
-        let after = full_relex(&syntax, &deleted.iter().map(String::as_str).collect::<Vec<_>>());
+        let (relexed, stats) = relex_span(
+            &syntax,
+            &deleted.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            5,
+        );
+        let after = full_relex(
+            &syntax,
+            &deleted.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         for (n, line) in relexed.iter().enumerate() {
             assert_eq!(line.tokens, after[4 + n].tokens, "deletion: line {}", 5 + n);
             assert_eq!(line.end_state, after[4 + n].end_state);
@@ -332,14 +375,21 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        let before = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let before = full_relex(
+            &syntax,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
 
         let mut edited = lines.clone();
         edited[5] = "var x = 42;".into();
         let saved: Vec<Option<Vec<u8>>> =
             before.iter().map(|l| Some(l.end_state.clone())).collect();
-        let (relexed, stats) =
-            relex_span(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 6);
+        let (relexed, stats) = relex_span(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            6,
+        );
 
         // `var` is still inside the <script> sub-syntax: keyword-highlighted.
         assert!(
@@ -354,7 +404,10 @@ mod tests {
         // Identical to a full relex of the edited content, and the edit
         // leaves the <script>-open state unchanged, so the relex stops on
         // the edited line itself.
-        let after = full_relex(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>());
+        let after = full_relex(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         for (n, line) in relexed.iter().enumerate() {
             assert_eq!(line.tokens, after[5 + n].tokens, "line {}", 6 + n);
         }
@@ -371,17 +424,27 @@ mod tests {
     fn relex_pins_python_string_state_below_a_multi_line_f_string() {
         let syntax = python_syntax();
         let lines = python_lines();
-        let before = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let before = full_relex(
+            &syntax,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
 
         // Edit the f-string opener line itself.
         let mut edited = lines.clone();
         edited[6] = "    return f\"\"\"<table class=t>".into();
         let saved: Vec<Option<Vec<u8>>> =
             before.iter().map(|l| Some(l.end_state.clone())).collect();
-        let (relexed, stats) =
-            relex_span(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 7);
+        let (relexed, stats) = relex_span(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            7,
+        );
 
-        let after = full_relex(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>());
+        let after = full_relex(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         for (n, line) in relexed.iter().enumerate() {
             assert_eq!(line.tokens, after[6 + n].tokens, "line {}", 7 + n);
         }
@@ -416,10 +479,11 @@ mod tests {
     #[test]
     fn relex_bounds_typing_work_to_the_edited_line() {
         let syntax = python_syntax();
-        let lines: Vec<String> = (0..2000)
-            .map(|i| format!("x_{i} = {i}  # value"))
-            .collect();
-        let before = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let lines: Vec<String> = (0..2000).map(|i| format!("x_{i} = {i}  # value")).collect();
+        let before = full_relex(
+            &syntax,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
 
         let mut edited = lines.clone();
         edited[1499] = "x_1499 = 1501  # value".into();
@@ -434,14 +498,20 @@ mod tests {
 
         // One keystroke, one line of relex work, 1,500 lines from the start
         // and 500 from the end.
-        assert_eq!(stats.lines_tokenized, 1, "typing must relex one line, got {stats:?}");
+        assert_eq!(
+            stats.lines_tokenized, 1,
+            "typing must relex one line, got {stats:?}"
+        );
         assert_eq!(stats.first_line, 1500);
         assert_eq!(stats.last_line, 1500);
         assert!(stats.stopped_early);
         assert_eq!(relexed.len(), 1);
 
         // And the result is the full-relex result for the new content.
-        let after = full_relex(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>());
+        let after = full_relex(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         assert_eq!(relexed[0].tokens, after[1499].tokens);
         assert_eq!(relexed[0].end_state, after[1499].end_state);
     }
@@ -462,7 +532,10 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        let before = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let before = full_relex(
+            &syntax,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
 
         // Sanity: the unclosed opener carries no state (the pinned fix).
         assert_eq!(before[1].end_state, Vec::<u8>::new());
@@ -471,11 +544,18 @@ mod tests {
         edited[1] = "see ==foo bar baz qux".into();
         let saved: Vec<Option<Vec<u8>>> =
             before.iter().map(|l| Some(l.end_state.clone())).collect();
-        let (relexed, stats) =
-            relex_span(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>(), &saved, 2);
+        let (relexed, stats) = relex_span(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+            &saved,
+            2,
+        );
 
         // Identical to a full relex of the edited content.
-        let after = full_relex(&syntax, &edited.iter().map(String::as_str).collect::<Vec<_>>());
+        let after = full_relex(
+            &syntax,
+            &edited.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         for (n, line) in relexed.iter().enumerate() {
             assert_eq!(line.tokens, after[1 + n].tokens, "line {}", 2 + n);
         }
@@ -491,7 +571,10 @@ mod tests {
             "emphasis bled into the following paragraph: {:?}",
             plain.tokens
         );
-        assert!(stats.stopped_early, "edit must not reach below its line: {stats:?}");
+        assert!(
+            stats.stopped_early,
+            "edit must not reach below its line: {stats:?}"
+        );
     }
 
     #[test]
@@ -501,7 +584,10 @@ mod tests {
                 .into_iter()
                 .chain(["<p>trailing html</p>".to_string()])
                 .collect();
-            let relexed = full_relex(&syntax, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+            let relexed = full_relex(
+                &syntax,
+                &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+            );
             for (n, line) in relexed.iter().enumerate() {
                 assert_eq!(
                     joined(&line.tokens),

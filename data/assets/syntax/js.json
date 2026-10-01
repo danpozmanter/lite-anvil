@@ -178,7 +178,7 @@
   "22": {
   "kind": "object",
   "values": {
-  "pattern": "\\\\",
+  "pattern": "\\.",
   "type": "string"
 }
 },
@@ -242,8 +242,8 @@
   "32": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "33"
+  "regex": {
+  "$ref": "45"
 },
   "type": "string"
 }
@@ -328,6 +328,10 @@
   "pattern": "[%a_][%w_]*",
   "type": "symbol"
 }
+},
+  "45": {
+  "kind": "array",
+  "values": ["(?<!\\w)'", "'", "\\"]
 },
   "5": {
   "kind": "array",

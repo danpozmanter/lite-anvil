@@ -280,44 +280,101 @@ impl Default for NativeConfig {
 fn known_keys(section: &str) -> Option<&'static [&'static str]> {
     match section {
         "" => Some(&[
-            "fps", "max_log_items", "message_timeout", "mouse_wheel_scroll",
-            "animate_drag_scroll", "scroll_past_end", "force_scrollbar_status",
-            "file_size_limit", "large_file", "project_scan", "ignore_files",
-            "symbol_pattern", "non_word_chars", "undo_merge_timeout", "max_undos",
-            "max_tabs", "max_visible_commands", "always_show_tabs",
-            "highlight_current_line", "line_height", "indent_size", "tab_type",
-            "keep_newline_whitespace", "line_endings", "line_limit", "theme",
-            "gitignore", "lsp", "native_tokenizer", "terminal", "ui", "fonts",
-            "files", "long_line_indicator", "long_line_indicator_width",
-            "transitions", "disabled_transitions", "animation_rate",
-            "blink_period", "disable_blink", "draw_whitespace", "borderless",
-            "tab_close_button", "max_clicks", "skip_plugins_version", "stonks",
-            "use_system_file_picker", "mac_command_as_ctrl", "format_on_paste",
-            "colors", "keybindings", "plugins",
+            "fps",
+            "max_log_items",
+            "message_timeout",
+            "mouse_wheel_scroll",
+            "animate_drag_scroll",
+            "scroll_past_end",
+            "force_scrollbar_status",
+            "file_size_limit",
+            "large_file",
+            "project_scan",
+            "ignore_files",
+            "symbol_pattern",
+            "non_word_chars",
+            "undo_merge_timeout",
+            "max_undos",
+            "max_tabs",
+            "max_visible_commands",
+            "always_show_tabs",
+            "highlight_current_line",
+            "line_height",
+            "indent_size",
+            "tab_type",
+            "keep_newline_whitespace",
+            "line_endings",
+            "line_limit",
+            "theme",
+            "gitignore",
+            "lsp",
+            "native_tokenizer",
+            "terminal",
+            "ui",
+            "fonts",
+            "files",
+            "long_line_indicator",
+            "long_line_indicator_width",
+            "transitions",
+            "disabled_transitions",
+            "animation_rate",
+            "blink_period",
+            "disable_blink",
+            "draw_whitespace",
+            "borderless",
+            "tab_close_button",
+            "max_clicks",
+            "skip_plugins_version",
+            "stonks",
+            "use_system_file_picker",
+            "mac_command_as_ctrl",
+            "format_on_paste",
+            "colors",
+            "keybindings",
+            "plugins",
         ]),
         "large_file" => Some(&[
-            "soft_limit_mb", "hard_limit_mb", "long_line_limit_kb", "read_only",
-            "plain_text", "disable_lsp", "disable_autocomplete",
+            "soft_limit_mb",
+            "hard_limit_mb",
+            "long_line_limit_kb",
+            "read_only",
+            "plain_text",
+            "disable_lsp",
+            "disable_autocomplete",
         ]),
         "project_scan" => Some(&["max_files", "exclude_dirs"]),
         "gitignore" => Some(&["enabled", "additional_patterns"]),
         "lsp" => Some(&[
-            "load_on_startup", "semantic_highlighting", "inline_diagnostics",
+            "load_on_startup",
+            "semantic_highlighting",
+            "inline_diagnostics",
             "format_on_save",
         ]),
         "native_tokenizer" => Some(&["enabled"]),
         "terminal" => Some(&["placement", "reuse_mode"]),
         "ui" => Some(&[
-            "divider_size", "scrollbar_size", "expanded_scrollbar_size",
-            "minimum_thumb_size", "contracted_scrollbar_margin",
-            "expanded_scrollbar_margin", "caret_width", "tab_width",
-            "padding_x", "padding_y",
+            "divider_size",
+            "scrollbar_size",
+            "expanded_scrollbar_size",
+            "minimum_thumb_size",
+            "contracted_scrollbar_margin",
+            "expanded_scrollbar_margin",
+            "caret_width",
+            "tab_width",
+            "padding_x",
+            "padding_y",
         ]),
         "fonts" => Some(&["ui", "code", "big", "icon", "icon_big", "syntax"]),
         "files" => Some(&["atomic_save"]),
         "disabled_transitions" => Some(&[
-            "scroll", "commandview", "contextmenu", "logview", "nagbar",
-            "tabs", "tab_drag", "statusbar",
+            "scroll",
+            "commandview",
+            "contextmenu",
+            "logview",
+            "nagbar",
+            "tabs",
+            "tab_drag",
+            "statusbar",
         ]),
         _ => None,
     }
@@ -978,7 +1035,9 @@ mod tests {
 
     #[test]
     fn an_unknown_key_names_the_line_and_the_key_and_loads_the_rest() {
-        let config = NativeConfig::load_toml_str("theme = \"summer\"\nthme = \"typo\"\nindent_size = 4\n").unwrap();
+        let config =
+            NativeConfig::load_toml_str("theme = \"summer\"\nthme = \"typo\"\nindent_size = 4\n")
+                .unwrap();
         // The rest of the file still loaded...
         assert_eq!(config.theme, "summer");
         assert_eq!(config.indent_size, 4);
@@ -991,10 +1050,9 @@ mod tests {
 
     #[test]
     fn an_unknown_key_inside_a_table_names_its_line() {
-        let config = NativeConfig::load_toml_str(
-            "[lsp]\nload_on_startup = true\nsave_on_load = true\n",
-        )
-        .unwrap();
+        let config =
+            NativeConfig::load_toml_str("[lsp]\nload_on_startup = true\nsave_on_load = true\n")
+                .unwrap();
         assert!(
             config
                 .load_error

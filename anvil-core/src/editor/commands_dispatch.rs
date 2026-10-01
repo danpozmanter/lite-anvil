@@ -1490,12 +1490,14 @@ _ => {
             &mut doc.view,
             &cmd,
             &style,
-            &doc.indent_type,
-            doc.indent_size,
-            marker.as_ref(),
-            language_aware,
-            true,
-            line_wrapping,
+            DocCommandSettings {
+                indent_type: &doc.indent_type,
+                indent_size: doc.indent_size,
+                comment_marker: marker.as_ref(),
+                language_aware,
+                auto_scroll: true,
+                line_wrapping,
+            },
         );
     }
     let is_edit_cmd = matches!(cmd.as_str(),

@@ -103,14 +103,14 @@ use crate::editor::lsp;
 #[cfg(feature = "sdl")]
 use crate::editor::lsp_client::*;
 #[cfg(feature = "sdl")]
-use crate::editor::term_links::{self, TermLink};
-#[cfg(feature = "sdl")]
 use crate::editor::picker;
 #[cfg(feature = "sdl")]
 use crate::editor::status_view::{StatusItem, StatusView};
 use crate::editor::storage;
 #[cfg(feature = "sdl")]
 use crate::editor::style_ctx::StyleContext;
+#[cfg(feature = "sdl")]
+use crate::editor::term_links::{self, TermLink};
 #[cfg(feature = "sdl")]
 use crate::editor::terminal_panel::*;
 #[cfg(feature = "sdl")]
@@ -7505,11 +7505,11 @@ pub fn run(
                                     // instead of starting a selection.
                                     if *button == MouseButton::Left
                                         && modifiers.ctrl
-                                        && let Some(inst) =
-                                            terminal.terminals.get(terminal.active)
+                                        && let Some(inst) = terminal.terminals.get(terminal.active)
                                     {
-                                        let rows =
-                                            inst.tbuf.visible_rows(rows_visible, inst.scrollback as usize);
+                                        let rows = inst
+                                            .tbuf
+                                            .visible_rows(rows_visible, inst.scrollback as usize);
                                         if let Some(row) = rows.get(vis_row) {
                                             let text: String = row
                                                 .iter()
@@ -7519,9 +7519,11 @@ pub fn run(
                                                 term_links::link_at(text.trim_end(), col)
                                             {
                                                 match link {
-                                                    TermLink::Url(url) => crate::editor
-                                                        ::markdown_preview
-                                                        ::open_url(&url),
+                                                    TermLink::Url(url) => {
+                                                        crate::editor::markdown_preview::open_url(
+                                                            &url,
+                                                        )
+                                                    }
                                                     TermLink::Location {
                                                         path,
                                                         line,
@@ -7550,22 +7552,21 @@ pub fn run(
                                                                 if let Some(buf_id) =
                                                                     doc.view.buffer_id
                                                                 {
-                                                                    let _ = buffer
-                                                                        ::with_buffer_mut(
-                                                                            buf_id,
-                                                                            |b| {
-                                                                                let ln = line
-                                                                                    .min(b.lines.len())
-                                                                                    .max(1);
-                                                                                b.selections = vec![
-                                                                                    ln,
-                                                                                    lcol.max(1),
-                                                                                    ln,
-                                                                                    lcol.max(1),
-                                                                                ];
-                                                                                Ok(())
-                                                                            },
-                                                                        );
+                                                                    let _ = buffer::with_buffer_mut(
+                                                                        buf_id,
+                                                                        |b| {
+                                                                            let ln = line
+                                                                                .min(b.lines.len())
+                                                                                .max(1);
+                                                                            b.selections = vec![
+                                                                                ln,
+                                                                                lcol.max(1),
+                                                                                ln,
+                                                                                lcol.max(1),
+                                                                            ];
+                                                                            Ok(())
+                                                                        },
+                                                                    );
                                                                 }
                                                                 scroll_to_cursor(&mut doc.view);
                                                             }
@@ -9342,13 +9343,15 @@ pub fn run(
                                             .and_then(|doc| doc.view.buffer_id)
                                             .and_then(|id| {
                                                 buffer::with_buffer(id, |b| {
-                                                    Ok(b.lines.get(line).map(|l| {
-                                                        crate::editor::utf16::char_col(
-                                                            l.trim_end_matches('\n'),
-                                                            col,
-                                                        )
-                                                    })
-                                                    .unwrap_or(col))
+                                                    Ok(b.lines
+                                                        .get(line)
+                                                        .map(|l| {
+                                                            crate::editor::utf16::char_col(
+                                                                l.trim_end_matches('\n'),
+                                                                col,
+                                                            )
+                                                        })
+                                                        .unwrap_or(col))
                                                 })
                                                 .ok()
                                             })
@@ -12152,11 +12155,12 @@ pub fn run(
                                                 code_text
                                                     .split('\n')
                                                     .scan(Vec::<u8>::new(), |block_state, line| {
-                                                        let (t, next) = tokenizer::tokenize_line_with_state(
-                                                            compiled_opt,
-                                                            line,
-                                                            block_state,
-                                                        );
+                                                        let (t, next) =
+                                                            tokenizer::tokenize_line_with_state(
+                                                                compiled_opt,
+                                                                line,
+                                                                block_state,
+                                                            );
                                                         *block_state = next;
                                                         Some(t)
                                                     })
@@ -15236,17 +15240,31 @@ fn char_col_to_utf16(buf_id: Option<u64>, line1: usize, char_col0: usize) -> usi
     .unwrap_or(char_col0)
 }
 
+/// Per-document settings an editing command consults.
+#[derive(Clone, Copy)]
+struct DocCommandSettings<'a> {
+    indent_type: &'a str,
+    indent_size: usize,
+    comment_marker: Option<&'a CommentMarker>,
+    language_aware: bool,
+    auto_scroll: bool,
+    line_wrapping: bool,
+}
+
 fn handle_doc_command(
     dv: &mut DocView,
     cmd: &str,
     style: &StyleContext,
-    indent_type: &str,
-    indent_size: usize,
-    comment_marker: Option<&CommentMarker>,
-    language_aware: bool,
-    auto_scroll: bool,
-    line_wrapping: bool,
+    settings: DocCommandSettings<'_>,
 ) {
+    let DocCommandSettings {
+        indent_type,
+        indent_size,
+        comment_marker,
+        language_aware,
+        auto_scroll,
+        line_wrapping,
+    } = settings;
     let Some(buf_id) = dv.buffer_id else { return };
     let line_h = style.code_font_height * 1.2;
 
@@ -16451,9 +16469,9 @@ mod diagnostic_hover_tests {
 #[cfg(all(test, feature = "sdl"))]
 mod lsp_code_action_tests {
     use super::{
-        apply_lsp_text_edits, apply_lsp_workspace_edit, code_action_command,
-        code_action_disabled_reason, code_action_picker_row_at_width, collect_lsp_code_actions,
-        handle_doc_command, path_to_uri, CommentMarker, DocView,
+        CommentMarker, DocCommandSettings, DocView, apply_lsp_text_edits, apply_lsp_workspace_edit,
+        code_action_command, code_action_disabled_reason, code_action_picker_row_at_width,
+        collect_lsp_code_actions, handle_doc_command, path_to_uri,
     };
     use crate::editor::style_ctx::StyleContext;
 
@@ -16484,12 +16502,14 @@ mod lsp_code_action_tests {
                 &mut dv,
                 "doc:toggle-line-comments",
                 &style,
-                "soft",
-                4,
-                Some(&CommentMarker::Line("//".to_string())),
-                false,
-                false,
-                false,
+                DocCommandSettings {
+                    indent_type: "soft",
+                    indent_size: 4,
+                    comment_marker: Some(&CommentMarker::Line("//".to_string())),
+                    language_aware: false,
+                    auto_scroll: false,
+                    line_wrapping: false,
+                },
             );
             crate::editor::buffer::with_buffer(buf_id, |b| {
                 if round == 0 {

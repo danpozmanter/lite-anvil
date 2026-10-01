@@ -5,6 +5,7 @@
   "1": {
   "kind": "object",
   "values": {
+  "case_insensitive": true,
   "block_comment": {
   "$ref": "3"
 },
@@ -75,6 +76,10 @@
   "pattern": "[%a_][%w_]*",
   "type": "symbol"
 }
+},
+  "18": {
+  "kind": "array",
+  "values": ["\"", "\""]
 },
   "2": {
   "kind": "object",
@@ -285,7 +290,7 @@
   "kind": "object",
   "values": {
   "pattern": {
-  "$ref": "10"
+  "$ref": "18"
 },
   "type": "string"
 }

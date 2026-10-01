@@ -5,6 +5,7 @@
   "1": {
   "kind": "object",
   "values": {
+  "case_insensitive": true,
   "comment": "#",
   "files": {
   "$ref": "3"
@@ -163,6 +164,19 @@
   "type": "symbol"
 }
 },
+  "21": {
+  "kind": "array",
+  "values": ["<#", "#>"]
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "21"
+},
+  "type": "comment"
+}
+},
   "3": {
   "kind": "array",
   "values": ["%.ps1$", "%.psm1$", "%.psd1$", "%.ps1xml$", "%.pssc$", "%.psrc$", "%.cdxml$"]
@@ -170,6 +184,8 @@
   "4": {
   "kind": "array",
   "values": [{
+  "$ref": "22"
+}, {
   "$ref": "5"
 }, {
   "$ref": "6"

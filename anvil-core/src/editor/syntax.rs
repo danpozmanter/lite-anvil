@@ -26,6 +26,9 @@ pub enum SubSyntaxSpec {
     Selector(String),
     /// Fully nested syntax definition, parsed in-place.
     Inline(Box<SyntaxDefinition>),
+    /// The grammar's `nested` syntax with this graph node id, which may
+    /// enclose the pattern that names it.
+    Nested(String),
 }
 
 /// Pattern specification: single string or open/close pair with optional escape.
@@ -67,6 +70,10 @@ pub struct SyntaxDefinition {
     pub patterns: Vec<PatternRule>,
     pub symbols: HashMap<String, String>,
     pub space_handling: bool,
+    /// Keywords match `symbols` regardless of case, as in SQL and Ada.
+    pub case_insensitive: bool,
+    /// Sub-syntaxes named by graph node id through `SubSyntaxSpec::Nested`.
+    pub nested: HashMap<String, SyntaxDefinition>,
 }
 
 impl Default for SyntaxDefinition {
@@ -80,6 +87,8 @@ impl Default for SyntaxDefinition {
             patterns: Vec::new(),
             symbols: HashMap::new(),
             space_handling: true,
+            case_insensitive: false,
+            nested: HashMap::new(),
         }
     }
 }
@@ -87,15 +96,25 @@ impl Default for SyntaxDefinition {
 /// The distinct embedded-language selectors this definition references, in
 /// first-appearance order (e.g. `.js` and `.css` for HTML).
 pub fn collect_subsyntax_selectors(def: &SyntaxDefinition) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for rule in &def.patterns {
-        if let Some(SubSyntaxSpec::Selector(selector)) = &rule.syntax {
-            if seen.insert(selector.clone()) {
-                out.push(selector.clone());
+    fn collect(def: &SyntaxDefinition, seen: &mut HashSet<String>, out: &mut Vec<String>) {
+        for rule in &def.patterns {
+            match &rule.syntax {
+                Some(SubSyntaxSpec::Selector(selector)) => {
+                    if seen.insert(selector.clone()) {
+                        out.push(selector.clone());
+                    }
+                }
+                Some(SubSyntaxSpec::Inline(sub)) => collect(sub, seen, out),
+                Some(SubSyntaxSpec::Nested(_)) | None => {}
             }
         }
+        for sub in def.nested.values() {
+            collect(sub, seen, out);
+        }
     }
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    collect(def, &mut seen, &mut out);
     out
 }
 
@@ -109,6 +128,9 @@ pub enum GraphValue {
     Str(String),
     Array(Vec<GraphValue>),
     Object(Vec<(String, GraphValue)>),
+    /// A sub-syntax held in the graph node with this id; its value is in
+    /// `ResolvedGraph::syntaxes`.
+    SyntaxNode(String),
 }
 
 impl GraphValue {
@@ -137,82 +159,122 @@ impl GraphValue {
     }
 }
 
-/// Resolve a JSON value with `$ref` graph references into a `GraphValue`.
+/// A syntax graph resolved from its root, with every sub-syntax it names
+/// resolved once by node id.
+#[derive(Debug, Clone)]
+pub struct ResolvedGraph {
+    pub root: GraphValue,
+    pub syntaxes: Vec<(String, GraphValue)>,
+}
+
+/// Resolve a JSON value with `$ref` graph references into a `ResolvedGraph`.
+///
+/// A sub-syntax reached through a `"syntax"` reference becomes a
+/// `GraphValue::SyntaxNode`, so grammars that nest a syntax inside itself
+/// (brackets within brackets) resolve without unrolling.
 pub fn resolve_graph(
     nodes: &serde_json::Map<String, JsonValue>,
-    value: &JsonValue,
-    cache: &mut HashMap<String, GraphValue>,
-) -> Result<GraphValue, String> {
-    if let Some(JsonValue::String(ref_id)) = value.get("$ref") {
-        if let Some(cached) = cache.get(ref_id) {
+    root: &JsonValue,
+) -> Result<ResolvedGraph, String> {
+    let mut resolver = GraphResolver {
+        nodes,
+        cache: HashMap::new(),
+        in_progress: HashSet::new(),
+        queued: HashSet::new(),
+        queue: Vec::new(),
+    };
+    let root = resolver.resolve(root)?;
+    let mut syntaxes = Vec::new();
+    while let Some(id) = resolver.queue.pop() {
+        let value = resolver.resolve_ref(&id)?;
+        syntaxes.push((id, value));
+    }
+    Ok(ResolvedGraph { root, syntaxes })
+}
+
+struct GraphResolver<'a> {
+    nodes: &'a serde_json::Map<String, JsonValue>,
+    cache: HashMap<String, GraphValue>,
+    in_progress: HashSet<String>,
+    queued: HashSet<String>,
+    queue: Vec<String>,
+}
+
+impl GraphResolver<'_> {
+    fn resolve(&mut self, value: &JsonValue) -> Result<GraphValue, String> {
+        if let Some(JsonValue::String(id)) = value.get("$ref") {
+            return self.resolve_ref(id);
+        }
+        Ok(match value {
+            JsonValue::Null => GraphValue::Null,
+            JsonValue::Bool(b) => GraphValue::Bool(*b),
+            JsonValue::Number(n) => match n.as_i64() {
+                Some(i) => GraphValue::Int(i),
+                None => GraphValue::Float(n.as_f64().unwrap_or(0.0)),
+            },
+            JsonValue::String(s) => GraphValue::Str(s.clone()),
+            JsonValue::Array(items) => GraphValue::Array(
+                items
+                    .iter()
+                    .map(|item| self.resolve(item))
+                    .collect::<Result<_, _>>()?,
+            ),
+            JsonValue::Object(fields) => self.resolve_object(fields)?,
+        })
+    }
+
+    fn resolve_ref(&mut self, id: &str) -> Result<GraphValue, String> {
+        if let Some(cached) = self.cache.get(id) {
             return Ok(cached.clone());
         }
-        let node = nodes
-            .get(ref_id)
-            .ok_or_else(|| format!("missing graph node {ref_id}"))?;
+        if !self.in_progress.insert(id.to_string()) {
+            return Err(format!(
+                "graph node {id} contains itself outside a sub-syntax"
+            ));
+        }
+        let node = self
+            .nodes
+            .get(id)
+            .ok_or_else(|| format!("missing graph node {id}"))?;
         let kind = node
             .get("kind")
             .and_then(|k| k.as_str())
             .unwrap_or("object");
-
-        // Insert placeholder to break cycles.
-        let placeholder = if kind == "array" {
-            GraphValue::Array(Vec::new())
-        } else {
-            GraphValue::Object(Vec::new())
-        };
-        cache.insert(ref_id.clone(), placeholder);
-
-        let result = if let Some(values) = node.get("values") {
-            if kind == "array" {
-                if let JsonValue::Array(arr) = values {
-                    let items: Result<Vec<_>, _> = arr
-                        .iter()
-                        .map(|item| resolve_graph(nodes, item, cache))
-                        .collect();
-                    GraphValue::Array(items?)
-                } else {
-                    GraphValue::Array(Vec::new())
-                }
-            } else if let JsonValue::Object(obj) = values {
-                let fields: Result<Vec<_>, _> = obj
+        let result = match (kind, node.get("values")) {
+            ("array", Some(JsonValue::Array(items))) => GraphValue::Array(
+                items
                     .iter()
-                    .map(|(k, v)| resolve_graph(nodes, v, cache).map(|rv| (k.clone(), rv)))
-                    .collect();
-                GraphValue::Object(fields?)
-            } else {
-                GraphValue::Null
-            }
-        } else {
-            GraphValue::Null
+                    .map(|item| self.resolve(item))
+                    .collect::<Result<_, _>>()?,
+            ),
+            ("array", _) => GraphValue::Array(Vec::new()),
+            (_, Some(JsonValue::Object(fields))) => self.resolve_object(fields)?,
+            _ => GraphValue::Null,
         };
-        cache.insert(ref_id.clone(), result.clone());
-        return Ok(result);
+        self.in_progress.remove(id);
+        self.cache.insert(id.to_string(), result.clone());
+        Ok(result)
     }
 
-    match value {
-        JsonValue::Null => Ok(GraphValue::Null),
-        JsonValue::Bool(b) => Ok(GraphValue::Bool(*b)),
-        JsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(GraphValue::Int(i))
-            } else {
-                Ok(GraphValue::Float(n.as_f64().unwrap_or(0.0)))
-            }
+    fn resolve_object(
+        &mut self,
+        fields: &serde_json::Map<String, JsonValue>,
+    ) -> Result<GraphValue, String> {
+        let mut resolved = Vec::with_capacity(fields.len());
+        for (key, value) in fields {
+            let syntax_id = value.get("$ref").and_then(JsonValue::as_str);
+            let value = match syntax_id {
+                Some(id) if key == "syntax" => {
+                    if self.queued.insert(id.to_string()) {
+                        self.queue.push(id.to_string());
+                    }
+                    GraphValue::SyntaxNode(id.to_string())
+                }
+                _ => self.resolve(value)?,
+            };
+            resolved.push((key.clone(), value));
         }
-        JsonValue::String(s) => Ok(GraphValue::Str(s.clone())),
-        JsonValue::Array(arr) => {
-            let items: Result<Vec<_>, _> =
-                arr.iter().map(|v| resolve_graph(nodes, v, cache)).collect();
-            Ok(GraphValue::Array(items?))
-        }
-        JsonValue::Object(obj) => {
-            let fields: Result<Vec<_>, _> = obj
-                .iter()
-                .map(|(k, v)| resolve_graph(nodes, v, cache).map(|rv| (k.clone(), rv)))
-                .collect();
-            Ok(GraphValue::Object(fields?))
-        }
+        Ok(GraphValue::Object(resolved))
     }
 }
 
@@ -254,6 +316,10 @@ pub fn graph_value_to_syntax(gv: &GraphValue) -> Result<SyntaxDefinition, String
         def.space_handling = *b;
     }
 
+    if let Some(GraphValue::Bool(b)) = gv.get("case_insensitive") {
+        def.case_insensitive = *b;
+    }
+
     if let Some(patterns) = gv.get("patterns").and_then(|v| v.as_array()) {
         for p in patterns {
             if let Ok(rule) = parse_pattern_rule(p) {
@@ -282,10 +348,10 @@ fn parse_pattern_rule(gv: &GraphValue) -> Result<PatternRule, String> {
     };
 
     if let Some(p) = gv.get("pattern") {
-        rule.pattern = Some(parse_pattern_spec(p));
+        rule.pattern = Some(parse_pattern_spec(p)?);
     }
     if let Some(r) = gv.get("regex") {
-        rule.regex = Some(parse_pattern_spec(r));
+        rule.regex = Some(parse_pattern_spec(r)?);
     }
 
     if let Some(t) = gv.get("type") {
@@ -300,6 +366,9 @@ fn parse_pattern_rule(gv: &GraphValue) -> Result<PatternRule, String> {
             GraphValue::Str(name) => {
                 rule.syntax = Some(SubSyntaxSpec::Selector(name.clone()));
             }
+            GraphValue::SyntaxNode(id) => {
+                rule.syntax = Some(SubSyntaxSpec::Nested(id.clone()));
+            }
             GraphValue::Object(_) => {
                 if let Ok(sub_def) = graph_value_to_syntax(s) {
                     rule.syntax = Some(SubSyntaxSpec::Inline(Box::new(sub_def)));
@@ -312,20 +381,21 @@ fn parse_pattern_rule(gv: &GraphValue) -> Result<PatternRule, String> {
     Ok(rule)
 }
 
-fn parse_pattern_spec(gv: &GraphValue) -> PatternSpec {
+fn parse_pattern_spec(gv: &GraphValue) -> Result<PatternSpec, String> {
     match gv {
-        GraphValue::Str(s) => PatternSpec::Single(s.clone()),
+        GraphValue::Str(s) => Ok(PatternSpec::Single(s.clone())),
         GraphValue::Array(arr) if arr.len() >= 2 => {
-            let open = arr[0].as_str().unwrap_or("").to_string();
-            let close = arr[1].as_str().unwrap_or("").to_string();
+            let (Some(open), Some(close)) = (arr[0].as_str(), arr[1].as_str()) else {
+                return Err("pattern pair needs string open and close".into());
+            };
             let escape = arr.get(2).and_then(|v| v.as_str()).map(String::from);
-            PatternSpec::Pair {
-                open,
-                close,
+            Ok(PatternSpec::Pair {
+                open: open.to_string(),
+                close: close.to_string(),
                 escape,
-            }
+            })
         }
-        _ => PatternSpec::Single(String::new()),
+        _ => Err("pattern must be a string or an [open, close, escape?] array".into()),
     }
 }
 
@@ -349,22 +419,14 @@ fn parse_token_type(gv: &GraphValue) -> TokenType {
 
 /// Parse a JSON source string into a full `SyntaxDefinition`.
 pub fn parse_syntax_json(source: &str) -> Option<SyntaxDefinition> {
-    let decoded: JsonValue = serde_json::from_str(source).ok()?;
-    let payload = decoded.get("syntax").unwrap_or(&decoded);
-    let graph = payload.get("graph");
-    let root = payload
-        .get("root")
-        .or_else(|| graph.and_then(|g| g.get("root")));
-    let gv = if let (Some(graph), Some(root)) = (graph, root) {
-        let nodes = graph.get("nodes").and_then(|n| n.as_object())?;
-        let mut cache = HashMap::new();
-        resolve_graph(nodes, root, &mut cache).ok()?
-    } else {
-        let nodes = serde_json::Map::new();
-        let mut cache = HashMap::new();
-        resolve_graph(&nodes, payload, &mut cache).ok()?
-    };
-    graph_value_to_syntax(&gv).ok()
+    let graph = decode_syntax_json(source)?;
+    let mut def = graph_value_to_syntax(&graph.root).ok()?;
+    for (id, value) in &graph.syntaxes {
+        if let Ok(sub) = graph_value_to_syntax(value) {
+            def.nested.insert(id.clone(), sub);
+        }
+    }
+    Some(def)
 }
 
 /// Lightweight index entry for a syntax definition.
@@ -622,40 +684,29 @@ pub fn load_syntax_assets(datadir: &str) -> Vec<SyntaxDefinition> {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(decoded) = serde_json::from_str::<JsonValue>(&source) else {
-            continue;
-        };
-
-        let payload = decoded.get("syntax").unwrap_or(&decoded);
-        // Some grammars nest `root` inside `graph` (`graph.root`); others put
-        // it as a sibling (`graph` + `root`). Accept either layout.
-        let graph = payload.get("graph");
-        let root = payload
-            .get("root")
-            .or_else(|| graph.and_then(|g| g.get("root")));
-        let gv = if let (Some(graph), Some(root)) = (graph, root) {
-            let Some(nodes) = graph.get("nodes").and_then(|n| n.as_object()) else {
-                continue;
-            };
-            let mut cache = HashMap::new();
-            match resolve_graph(nodes, root, &mut cache) {
-                Ok(v) => v,
-                Err(_) => continue,
-            }
-        } else {
-            let nodes = serde_json::Map::new();
-            let mut cache = HashMap::new();
-            match resolve_graph(&nodes, payload, &mut cache) {
-                Ok(v) => v,
-                Err(_) => continue,
-            }
-        };
-
-        if let Ok(def) = graph_value_to_syntax(&gv) {
+        if let Some(def) = parse_syntax_json(&source) {
             defs.push(def);
         }
     }
     defs
+}
+
+/// Resolve a syntax asset's JSON source into its graph.
+fn decode_syntax_json(source: &str) -> Option<ResolvedGraph> {
+    let decoded = serde_json::from_str::<JsonValue>(source).ok()?;
+    let payload = decoded.get("syntax").unwrap_or(&decoded);
+    // Some grammars nest `root` inside `graph` (`graph.root`); others put
+    // it as a sibling (`graph` + `root`). Accept either layout.
+    let graph = payload.get("graph");
+    let root = payload
+        .get("root")
+        .or_else(|| graph.and_then(|g| g.get("root")));
+    if let (Some(graph), Some(root)) = (graph, root) {
+        let nodes = graph.get("nodes").and_then(|n| n.as_object())?;
+        resolve_graph(nodes, root).ok()
+    } else {
+        resolve_graph(&serde_json::Map::new(), payload).ok()
+    }
 }
 
 #[cfg(test)]
@@ -669,9 +720,38 @@ mod tests {
         ).unwrap();
         let nodes = json.get("nodes").unwrap().as_object().unwrap();
         let root = json.get("root").unwrap();
-        let mut cache = HashMap::new();
-        let gv = resolve_graph(nodes, root, &mut cache).unwrap();
-        assert_eq!(gv.get("name").unwrap().as_str(), Some("Test"));
+        let graph = resolve_graph(nodes, root).unwrap();
+        assert_eq!(graph.root.get("name").unwrap().as_str(), Some("Test"));
+    }
+
+    #[test]
+    fn resolve_graph_keeps_a_self_nesting_syntax_whole() {
+        // Node 2 is a bracket rule whose sub-syntax (node 3) holds node 2 again.
+        let json: JsonValue = serde_json::from_str(
+            r#"{"nodes": {
+                "1": {"kind": "object", "values": {"name": "T", "patterns": {"$ref": "4"}}},
+                "2": {"kind": "object", "values": {"pattern": "x", "syntax": {"$ref": "3"}}},
+                "3": {"kind": "object", "values": {"patterns": {"$ref": "4"}}},
+                "4": {"kind": "array", "values": [{"$ref": "2"}]}
+            }, "root": {"$ref": "1"}}"#,
+        )
+        .unwrap();
+        let nodes = json.get("nodes").unwrap().as_object().unwrap();
+        let graph = resolve_graph(nodes, json.get("root").unwrap()).unwrap();
+        let (id, inner) = &graph.syntaxes[0];
+        assert_eq!(id, "3");
+        let inner_rule = &inner.get("patterns").unwrap().as_array().unwrap()[0];
+        assert!(matches!(inner_rule.get("syntax"), Some(GraphValue::SyntaxNode(n)) if n == "3"));
+    }
+
+    #[test]
+    fn resolve_graph_rejects_a_cycle_outside_a_sub_syntax() {
+        let json: JsonValue = serde_json::from_str(
+            r#"{"nodes": {"1": {"kind": "array", "values": [{"$ref": "1"}]}}, "root": {"$ref": "1"}}"#,
+        )
+        .unwrap();
+        let nodes = json.get("nodes").unwrap().as_object().unwrap();
+        assert!(resolve_graph(nodes, json.get("root").unwrap()).is_err());
     }
 
     fn data_dir() -> String {
@@ -712,9 +792,48 @@ mod tests {
     }
 
     #[test]
+    fn every_bundled_grammar_rule_parses() {
+        fn check(gv: &GraphValue, file: &str, failures: &mut Vec<String>) {
+            match gv {
+                GraphValue::Object(fields) => {
+                    if let Some(patterns) = gv.get("patterns").and_then(|v| v.as_array()) {
+                        for p in patterns {
+                            if let Err(e) = parse_pattern_rule(p) {
+                                failures.push(format!("{file}: {e}"));
+                            }
+                        }
+                    }
+                    for (_, v) in fields {
+                        check(v, file, failures);
+                    }
+                }
+                GraphValue::Array(items) => {
+                    for v in items {
+                        check(v, file, failures);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let dir = std::path::Path::new(&data_dir()).join("assets/syntax");
+        let mut failures = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            let source = std::fs::read_to_string(&path).unwrap();
+            let file = path.display().to_string();
+            let graph = decode_syntax_json(&source).unwrap_or_else(|| panic!("{file} decodes"));
+            check(&graph.root, &file, &mut failures);
+            for (_, value) in &graph.syntaxes {
+                check(value, &file, &mut failures);
+            }
+        }
+        assert!(failures.is_empty(), "malformed rules: {failures:#?}");
+    }
+
+    #[test]
     fn parse_pattern_spec_single() {
         let gv = GraphValue::Str("%w+".into());
-        let spec = parse_pattern_spec(&gv);
+        let spec = parse_pattern_spec(&gv).unwrap();
         assert!(matches!(spec, PatternSpec::Single(s) if s == "%w+"));
     }
 
@@ -725,7 +844,7 @@ mod tests {
             GraphValue::Str("\"".into()),
             GraphValue::Str("\\".into()),
         ]);
-        let spec = parse_pattern_spec(&gv);
+        let spec = parse_pattern_spec(&gv).unwrap();
         match spec {
             PatternSpec::Pair {
                 open,

@@ -5,6 +5,7 @@
   "1": {
   "kind": "object",
   "values": {
+  "case_insensitive": true,
   "block_comment": {
   "$ref": "3"
 },

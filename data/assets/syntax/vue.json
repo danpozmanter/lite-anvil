@@ -62,8 +62,8 @@
   "16": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "17"
+  "regex": {
+  "$ref": "26"
 },
   "type": "string"
 }
@@ -138,6 +138,10 @@
   "pattern": "[%a_][%w_%-]*",
   "type": "symbol"
 }
+},
+  "26": {
+  "kind": "array",
+  "values": ["(?<!\\w)'", "'"]
 },
   "3": {
   "kind": "array",

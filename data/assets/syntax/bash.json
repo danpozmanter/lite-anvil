@@ -82,6 +82,10 @@
   "type": "symbol"
 }
 },
+  "19": {
+  "kind": "array",
+  "values": ["%$%(", "%)"]
+},
   "2": {
   "kind": "object",
   "values": {
@@ -122,6 +126,64 @@
   "while": "keyword"
 }
 },
+  "20": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "19"
+},
+  "syntax": {
+  "$ref": "1"
+},
+  "type": "operator"
+}
+},
+  "21": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\.",
+  "type": "string"
+}
+},
+  "22": {
+  "kind": "object",
+  "values": {
+  "pattern": "[^\"\\$]+",
+  "type": "string"
+}
+},
+  "23": {
+  "kind": "object",
+  "values": {
+  "pattern": "%$",
+  "type": "string"
+}
+},
+  "24": {
+  "kind": "array",
+  "values": [{
+  "$ref": "21"
+}, {
+  "$ref": "20"
+}, {
+  "$ref": "12"
+}, {
+  "$ref": "11"
+}, {
+  "$ref": "22"
+}, {
+  "$ref": "23"
+}]
+},
+  "25": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "24"
+},
+  "symbols": {}
+}
+},
   "3": {
   "kind": "array",
   "values": ["%.sh$", "%.bash$", "%.zsh$", "%.fish$", "%.bashrc$", "%.zshrc$"]
@@ -147,7 +209,7 @@
 }, {
   "$ref": "15"
 }, {
-  "$ref": "16"
+  "$ref": "20"
 }, {
   "$ref": "17"
 }, {
@@ -166,6 +228,9 @@
   "values": {
   "pattern": {
   "$ref": "7"
+},
+  "syntax": {
+  "$ref": "25"
 },
   "type": "string"
 }

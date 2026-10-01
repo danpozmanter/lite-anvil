@@ -30,20 +30,16 @@ pub fn link_at(text: &str, col: usize) -> Option<(TermLink, usize, usize)> {
 /// `(link, start, end)` with 0-based character indices, `end` exclusive.
 pub fn links_in(text: &str) -> Vec<(TermLink, usize, usize)> {
     let mut out = Vec::new();
-    for (start, token) in text
-        .split_whitespace()
-        .scan(0usize, |offset, token| {
-            // `split_whitespace` skips runs of whitespace, so walk the byte
-            // offset forward across the separators it skipped.
-            let skipped = text[*offset..]
-                [..text[*offset..].len() - text[*offset..].trim_start().len()]
-                .len();
-            *offset += skipped;
-            let start = *offset;
-            *offset += token.len();
-            Some((start, token))
-        })
-    {
+    for (start, token) in text.split_whitespace().scan(0usize, |offset, token| {
+        // `split_whitespace` skips runs of whitespace, so walk the byte
+        // offset forward across the separators it skipped.
+        let skipped =
+            text[*offset..][..text[*offset..].len() - text[*offset..].trim_start().len()].len();
+        *offset += skipped;
+        let start = *offset;
+        *offset += token.len();
+        Some((start, token))
+    }) {
         let Some(link) = classify(token) else {
             continue;
         };
@@ -152,10 +148,17 @@ fn traceback_location(text: &str) -> Option<(TermLink, usize, usize)> {
 /// terminal's cwd, the project root), keeping the first where the file
 /// exists. Absolute paths are taken as-is and must exist. Locations that
 /// resolve nowhere are dropped: clicking them does nothing.
-pub fn resolve_location(path: &str, line: usize, col: usize, bases: &[PathBuf]) -> Option<(PathBuf, usize, usize)> {
+pub fn resolve_location(
+    path: &str,
+    line: usize,
+    col: usize,
+    bases: &[PathBuf],
+) -> Option<(PathBuf, usize, usize)> {
     let candidate = Path::new(path);
     if candidate.is_absolute() {
-        return candidate.is_file().then(|| (candidate.to_path_buf(), line, col));
+        return candidate
+            .is_file()
+            .then(|| (candidate.to_path_buf(), line, col));
     }
     bases
         .iter()
@@ -234,9 +237,13 @@ mod tests {
         for col in 0..text.len() {
             let hit = link_at(text, col);
             if col < 10 {
-                assert!(matches!(&hit.unwrap().0, TermLink::Location { path, .. } if path == "src/a.rs"));
+                assert!(
+                    matches!(&hit.unwrap().0, TermLink::Location { path, .. } if path == "src/a.rs")
+                );
             } else if (17..30).contains(&col) {
-                assert!(matches!(&hit.unwrap().0, TermLink::Location { path, .. } if path == "src/b.rs"));
+                assert!(
+                    matches!(&hit.unwrap().0, TermLink::Location { path, .. } if path == "src/b.rs")
+                );
             }
         }
     }

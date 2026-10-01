@@ -121,15 +121,6 @@
   "8": {
   "kind": "array",
   "values": ["/%*", "%*/"]
-},
-  "9": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "10"
-},
-  "type": "string"
-}
 }
 }
 },

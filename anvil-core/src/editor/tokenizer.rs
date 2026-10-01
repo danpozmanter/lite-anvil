@@ -316,7 +316,7 @@ pub fn push_token(tokens: &mut Vec<Token>, token_type: &str, text: &str) {
 /// Append tokens from a pattern match, splitting on captures if present.
 pub fn push_tokens(
     tokens: &mut Vec<Token>,
-    symbols: &HashMap<String, String>,
+    symbols: &SymbolTable,
     token_types: &[String],
     full_text: &str,
     mut find_results: Vec<usize>,
@@ -334,7 +334,7 @@ pub fn push_tokens(
                     .get(i - 2)
                     .map(String::as_str)
                     .unwrap_or_else(|| token_types.first().map(String::as_str).unwrap_or("normal"));
-                let mapped = symbols.get(text).map(String::as_str).unwrap_or(token_type);
+                let mapped = symbols.get(text).unwrap_or(token_type);
                 push_token(tokens, mapped, text);
             }
         }
@@ -343,7 +343,7 @@ pub fn push_tokens(
         let fin = find_results[1];
         let text = usub(full_text, start, fin);
         let token_type = token_types.first().map(String::as_str).unwrap_or("normal");
-        let mapped = symbols.get(text).map(String::as_str).unwrap_or(token_type);
+        let mapped = symbols.get(text).unwrap_or(token_type);
         push_token(tokens, mapped, text);
     }
 }
@@ -649,6 +649,9 @@ pub enum SyntaxRef {
     /// External lookup by name. Reserved for cross-asset references;
     /// currently unresolved at tokenize time.
     Selector(String),
+    /// Index into the owning grammar's `nested` arena. The target may enclose
+    /// the pattern that names it, as brackets nest inside brackets.
+    Nested(usize),
 }
 
 /// A compiled pattern definition ready for tokenization.
@@ -667,11 +670,51 @@ impl PatternDef {
     /// the regex.
     #[inline]
     pub fn open_first_byte_set(&self) -> Option<&FirstByteSet> {
-        let m = match &self.matcher {
+        self.open_matcher().first_byte_set.as_ref()
+    }
+
+    /// The matcher the tokenizer scans for when no pair is open.
+    pub fn open_matcher(&self) -> &MatcherDef {
+        match &self.matcher {
             PatternMatcher::Single(m) => m,
             PatternMatcher::Pair { open, .. } => open,
+        }
+    }
+}
+
+/// A grammar's keyword map, consulted for every token a pattern emits.
+#[derive(Debug, Clone, Default)]
+pub struct SymbolTable {
+    // Keys are lowercased when `case_insensitive` is set.
+    map: HashMap<String, String>,
+    case_insensitive: bool,
+}
+
+impl SymbolTable {
+    /// Table over `symbols`, folding case on both sides when `case_insensitive`.
+    pub fn new(symbols: &HashMap<String, String>, case_insensitive: bool) -> Self {
+        let map = if case_insensitive {
+            symbols
+                .iter()
+                .map(|(k, v)| (k.to_lowercase(), v.clone()))
+                .collect()
+        } else {
+            symbols.clone()
         };
-        m.first_byte_set.as_ref()
+        Self {
+            map,
+            case_insensitive,
+        }
+    }
+
+    /// Token type `text` maps to, if it is a symbol of this grammar.
+    pub fn get(&self, text: &str) -> Option<&str> {
+        let found = if self.case_insensitive {
+            self.map.get(&text.to_lowercase())
+        } else {
+            self.map.get(text)
+        };
+        found.map(String::as_str)
     }
 }
 
@@ -679,12 +722,17 @@ impl PatternDef {
 #[derive(Clone, Default)]
 pub struct CompiledSyntax {
     pub patterns: Vec<PatternDef>,
-    pub symbols: HashMap<String, String>,
+    pub symbols: SymbolTable,
+    /// Sub-syntaxes that `SyntaxRef::Nested` indexes. Populated on a grammar's
+    /// root only; its sub-syntaxes index the root's arena.
+    nested: Vec<CompiledSyntax>,
     /// Pattern indices which can match for each possible leading byte. Each
     /// bucket preserves definition order, so dispatch does not change syntax
     /// priority. Patterns whose first byte cannot be proven are present in
-    /// every bucket.
+    /// every bucket. Patterns anchored to the line start appear only in
+    /// `line_start_dispatch`, which serves column 1.
     pattern_dispatch: Vec<Vec<usize>>,
+    line_start_dispatch: Vec<Vec<usize>>,
     all_pattern_indices: Vec<usize>,
 }
 
@@ -710,7 +758,7 @@ fn lua_class_to_regex_in_bracket(ch: char) -> &'static str {
         'a' => "\\p{L}",
         'A' => "\\P{L}",
         'd' => "0-9",
-        'D' => "^0-9",
+        'D' => "\\D",
         'w' => "\\w\\p{M}",
         'W' => "^\\w\\p{M}",
         's' => "\\s",
@@ -720,6 +768,10 @@ fn lua_class_to_regex_in_bracket(ch: char) -> &'static str {
         'u' => "\\p{Lu}",
         'U' => "\\P{Lu}",
         'p' => "!-/:-@\\[-`{-~",
+        'x' => "0-9A-Fa-f",
+        'c' => "\\x00-\\x1f\\x7f",
+        'g' => "!-~\\p{L}\\p{N}\\p{M}\\p{P}\\p{S}",
+        'z' => "\\x00",
         _ => "",
     }
 }
@@ -741,8 +793,43 @@ fn lua_class_to_regex(ch: char) -> &'static str {
         'U' => "\\P{Lu}",
         'p' => "[^\\w\\s]",
         'P' => "[\\w\\s]",
-        'c' => "[\\x00-\\x1f]",
+        'c' => "[\\x00-\\x1f\\x7f]",
+        'C' => "[^\\x00-\\x1f\\x7f]",
+        'x' => "[0-9A-Fa-f]",
+        'X' => "[^0-9A-Fa-f]",
+        'g' => "[^\\s\\x00-\\x1f\\x7f]",
+        'G' => "[\\s\\x00-\\x1f\\x7f]",
+        'z' => "\\x00",
+        'Z' => "[^\\x00]",
         _ => "",
+    }
+}
+
+/// `ch` as a PCRE2 literal, valid both inside and outside a character class.
+fn regex_escape(ch: char) -> String {
+    if ch.is_alphanumeric() {
+        ch.to_string()
+    } else {
+        format!("\\{ch}")
+    }
+}
+
+/// PCRE2 form of the Lua frontier `%f[set]` for the bracketed `class`.
+///
+/// Lua reads the character before the subject and the one after it as `\0`,
+/// so a set containing `\0` (any negated set, `%W`) cannot open at the start
+/// of the subject and does open at its end.
+fn frontier_to_regex(class: &str) -> String {
+    let nul_in_set = compile_regex(class)
+        .and_then(|re| {
+            re.is_match(b"\0")
+                .map_err(|e| RegexError::Match(e.to_string()))
+        })
+        .unwrap_or(false);
+    if nul_in_set {
+        format!("(?<=[\\s\\S])(?<!{class})(?:(?={class})|\\z)")
+    } else {
+        format!("(?<!{class})(?={class})")
     }
 }
 
@@ -757,6 +844,7 @@ fn lua_pattern_to_regex(pat: &str) -> String {
     let mut out = String::new();
     let mut chars = pat.chars().peekable();
     let mut quantifiable = false;
+    let mut balanced_groups = 0usize;
     while let Some(ch) = chars.next() {
         if ch == '%' {
             if let Some(&next) = chars.peek() {
@@ -764,11 +852,8 @@ fn lua_pattern_to_regex(pat: &str) -> String {
                 if next == 'f' {
                     // %f[set] -- Lua frontier pattern. Matches the empty
                     // string at a position where the previous character
-                    // does NOT match `set` and the current character DOES.
-                    // Map to PCRE2's `(?<![set])(?=[set])`. Emitting only
-                    // the lookahead (the historical form) caused patterns
-                    // like `%f[^>][^<]` to fire mid-content and swallow
-                    // tag names as plain text in XML/HTML grammars.
+                    // does NOT match `set` and the current character DOES,
+                    // with Lua reading the edges of the subject as `\0`.
                     if chars.peek() == Some(&'[') {
                         chars.next(); // consume '['
                         // Collect the bracket contents once so we can emit
@@ -795,23 +880,25 @@ fn lua_pattern_to_regex(pat: &str) -> String {
                                 }
                             } else {
                                 chars.next();
+                                if c == '\\' {
+                                    set.push('\\');
+                                }
                                 set.push(c);
                             }
                         }
-                        out.push_str("(?<![");
-                        out.push_str(&set);
-                        out.push_str("])(?=[");
-                        out.push_str(&set);
-                        out.push_str("])");
+                        out.push_str(&frontier_to_regex(&format!("[{set}]")));
                         quantifiable = false;
                     }
                 } else if next == 'b' {
-                    // %bxy balanced match -- approximate.
-                    if let (Some(open), Some(_close)) = (chars.next(), chars.next()) {
-                        if "\\.*+?^${}()|[]".contains(open) {
-                            out.push('\\');
-                        }
-                        out.push(open);
+                    // %bxy matches `x`, then text in which every `x` is closed
+                    // by a `y`, then the `y` that balances the first `x`.
+                    if let (Some(open), Some(close)) = (chars.next(), chars.next()) {
+                        let name = format!("lua_balanced_{balanced_groups}");
+                        balanced_groups += 1;
+                        let (open, close) = (regex_escape(open), regex_escape(close));
+                        out.push_str(&format!(
+                            "(?<{name}>{open}(?:[^{open}{close}]++|(?&{name}))*{close})"
+                        ));
                         quantifiable = true;
                     }
                 } else {
@@ -854,6 +941,9 @@ fn lua_pattern_to_regex(pat: &str) -> String {
                     }
                 } else {
                     chars.next();
+                    if c == '\\' {
+                        out.push('\\');
+                    }
                     out.push(c);
                 }
             }
@@ -869,6 +959,12 @@ fn lua_pattern_to_regex(pat: &str) -> String {
             // so the end-of-subject anchor is where that lands.
             out.push('$');
             quantifiable = false;
+        } else if ch == '\\' || (ch == '$' && chars.peek().is_some()) {
+            // A backslash is an ordinary character in Lua, and `$` anchors
+            // only at the end of a pattern.
+            out.push('\\');
+            out.push(ch);
+            quantifiable = true;
         } else if matches!(ch, '?' | '*' | '+') && !quantifiable {
             // A quantifier with nothing to quantify is a literal character.
             out.push('\\');
@@ -1054,20 +1150,14 @@ pub fn find_text(
             return Ok(res);
         };
         // Count preceding escape bytes; odd count means the delimiter is
-        // escaped, so skip it and look further. Mirrors legacy `find_text`.
-        let mut count = 0usize;
-        let mut i = res[0].saturating_sub(1);
-        while i >= 1 {
-            let byte = line.as_bytes().get(i - 1).copied();
-            if byte != Some(escape_byte) {
-                break;
-            }
-            count += 1;
-            if i == 1 {
-                break;
-            }
-            i -= 1;
-        }
+        // escaped, so skip it and look further. `res[0]` is a char column, so
+        // scan the bytes before its byte offset.
+        let start_byte = ucharpos(line, res[0]).unwrap_or(line.len() + 1) - 1;
+        let count = line.as_bytes()[..start_byte]
+            .iter()
+            .rev()
+            .take_while(|&&b| b == escape_byte)
+            .count();
         if count % 2 == 0 {
             return Ok(res);
         }
@@ -1087,6 +1177,9 @@ pub fn find_text(
 /// are in the nesting stack.
 struct SyntaxStateView<'a> {
     current_syntax: &'a CompiledSyntax,
+    /// Root of the grammar `current_syntax` belongs to, whose arena resolves
+    /// `SyntaxRef::Nested`.
+    owner: &'a CompiledSyntax,
     /// `(parent_syntax, parent_pattern_idx)` when the active syntax was
     /// entered via a sub-syntax pair on `parent_syntax`. The close of
     /// `parent_syntax.patterns[parent_pattern_idx]` pops back out.
@@ -1099,8 +1192,22 @@ struct SyntaxStateView<'a> {
     current_level: usize,
 }
 
+/// The syntax a pattern with `syntax_ref` descends into, and the root that owns
+/// it, when `owner` is the root of the grammar holding the pattern.
+fn descend<'a>(
+    owner: &'a CompiledSyntax,
+    syntax_ref: Option<&'a SyntaxRef>,
+) -> Option<(&'a CompiledSyntax, &'a CompiledSyntax)> {
+    match syntax_ref? {
+        SyntaxRef::Inline(sub) => Some((sub.as_ref(), sub.as_ref())),
+        SyntaxRef::Nested(index) => owner.nested.get(*index).map(|sub| (sub, owner)),
+        SyntaxRef::Selector(_) => None,
+    }
+}
+
 fn retrieve_syntax_state<'a>(base: &'a CompiledSyntax, state: &[u16]) -> SyntaxStateView<'a> {
     let mut current_syntax: &'a CompiledSyntax = base;
+    let mut owner: &'a CompiledSyntax = base;
     let mut subsyntax_info: Option<(&'a CompiledSyntax, usize)> = None;
     let mut current_pattern_idx = state.first().copied().unwrap_or(0) as usize;
     let mut current_level = 1usize;
@@ -1119,14 +1226,15 @@ fn retrieve_syntax_state<'a>(base: &'a CompiledSyntax, state: &[u16]) -> SyntaxS
             let Some(pattern) = current_syntax.patterns.get(target - 1) else {
                 break;
             };
-            match &pattern.syntax_ref {
-                Some(SyntaxRef::Inline(sub)) => {
+            match descend(owner, pattern.syntax_ref.as_ref()) {
+                Some((sub, sub_owner)) => {
                     subsyntax_info = Some((current_syntax, target - 1));
-                    current_syntax = sub.as_ref();
+                    current_syntax = sub;
+                    owner = sub_owner;
                     current_pattern_idx = 0;
                     current_level = i + 2;
                 }
-                _ => {
+                None => {
                     current_pattern_idx = target;
                     break;
                 }
@@ -1136,6 +1244,7 @@ fn retrieve_syntax_state<'a>(base: &'a CompiledSyntax, state: &[u16]) -> SyntaxS
 
     SyntaxStateView {
         current_syntax,
+        owner,
         subsyntax_info,
         current_pattern_idx,
         current_level,
@@ -1213,19 +1322,20 @@ pub fn tokenize_line_with_state(
                     .unwrap_or("normal");
 
                 let mut cont = true;
-                if let Some((parent, sub_idx)) = syn_state.subsyntax_info {
+                // A pattern that closes on this line shields its text from the
+                // enclosing close (a `:` inside a string in a Python `if`
+                // header); one left open ends where the enclosing block does.
+                if let (None, Some((parent, sub_idx))) = (s, syn_state.subsyntax_info) {
                     if let Some(sub_pattern) = parent.patterns.get(sub_idx) {
                         let sub_find =
                             find_text(line, sub_pattern, i, false, true).unwrap_or_default();
                         if let Some(ss) = sub_find.first().copied() {
-                            if s.is_none() || ss < s.unwrap_or(usize::MAX) {
-                                if ss > i {
-                                    let text_part = usub(line, i, ss - 1);
-                                    push_token(&mut tokens, token_type, text_part);
-                                }
-                                i = ss;
-                                cont = false;
+                            if ss > i {
+                                let text_part = usub(line, i, ss - 1);
+                                push_token(&mut tokens, token_type, text_part);
                             }
+                            i = ss;
+                            cont = false;
                         }
                     }
                 }
@@ -1309,8 +1419,13 @@ pub fn tokenize_line_with_state(
         // ~45k regex calls per line to a few thousand.
         let current_byte: Option<u8> =
             ucharpos(line, i).and_then(|bp| line.as_bytes().get(bp - 1).copied());
+        let dispatch = if i == 1 {
+            &current_syntax.line_start_dispatch
+        } else {
+            &current_syntax.pattern_dispatch
+        };
         let candidate_indices = current_byte
-            .and_then(|byte| current_syntax.pattern_dispatch.get(byte as usize))
+            .and_then(|byte| dispatch.get(byte as usize))
             .unwrap_or(&current_syntax.all_pattern_indices);
         for &n in candidate_indices {
             let pattern = &current_syntax.patterns[n];
@@ -1338,10 +1453,11 @@ pub fn tokenize_line_with_state(
                 } else {
                     state[level_idx] = (n + 1) as u16;
                 }
-                if let Some(SyntaxRef::Inline(sub)) = &pattern.syntax_ref {
+                if let Some((sub, owner)) = descend(syn_state.owner, pattern.syntax_ref.as_ref()) {
                     syn_state.current_level += 1;
                     syn_state.subsyntax_info = Some((current_syntax, n));
-                    syn_state.current_syntax = sub.as_ref();
+                    syn_state.current_syntax = sub;
+                    syn_state.owner = owner;
                     syn_state.current_pattern_idx = 0;
                 } else {
                     syn_state.current_pattern_idx = n + 1;
@@ -1461,6 +1577,40 @@ pub fn compile_from_definition_with(
     def: &SyntaxDefinition,
     resolve: &mut dyn FnMut(&str) -> Option<Arc<CompiledSyntax>>,
 ) -> Result<CompiledSyntax, RegexError> {
+    let ids: Vec<&String> = def.nested.keys().collect();
+    let mut arena = NestedArena {
+        index: ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect(),
+        slots: vec![None; ids.len()],
+    };
+    for (slot, id) in ids.iter().enumerate() {
+        let compiled = compile_syntax(&def.nested[id.as_str()], &mut arena, resolve)?;
+        arena.slots[slot] = Some(compiled);
+    }
+    let mut root = compile_syntax(def, &mut arena, resolve)?;
+    root.nested = arena
+        .slots
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect();
+    Ok(root)
+}
+
+/// Sub-syntaxes of one grammar while it compiles: one slot per `nested` node
+/// id, then one per inline sub-syntax.
+struct NestedArena<'d> {
+    index: HashMap<&'d str, usize>,
+    slots: Vec<Option<CompiledSyntax>>,
+}
+
+fn compile_syntax<'d>(
+    def: &'d SyntaxDefinition,
+    arena: &mut NestedArena<'d>,
+    resolve: &mut dyn FnMut(&str) -> Option<Arc<CompiledSyntax>>,
+) -> Result<CompiledSyntax, RegexError> {
     let mut patterns = Vec::new();
 
     for rule in &def.patterns {
@@ -1507,8 +1657,12 @@ pub fn compile_from_definition_with(
                 None => Some(SyntaxRef::Selector(name.clone())),
             },
             Some(SubSyntaxSpec::Inline(sub_def)) => {
-                let sub_compiled = compile_from_definition_with(sub_def, resolve)?;
-                Some(SyntaxRef::Inline(Arc::new(sub_compiled)))
+                let sub_compiled = compile_syntax(sub_def, arena, resolve)?;
+                arena.slots.push(Some(sub_compiled));
+                Some(SyntaxRef::Nested(arena.slots.len() - 1))
+            }
+            Some(SubSyntaxSpec::Nested(id)) => {
+                arena.index.get(id.as_str()).map(|&i| SyntaxRef::Nested(i))
             }
             None => None,
         };
@@ -1522,25 +1676,34 @@ pub fn compile_from_definition_with(
     }
 
     let all_pattern_indices: Vec<usize> = (0..patterns.len()).collect();
-    let mut pattern_dispatch = vec![Vec::new(); 256];
+    let mut line_start_dispatch = vec![Vec::new(); 256];
     for (index, pattern) in patterns.iter().enumerate() {
-        if let Some(first_bytes) = pattern.open_first_byte_set() {
-            for byte in 0u16..=255 {
-                if fbs_contains(first_bytes, byte as u8) {
-                    pattern_dispatch[byte as usize].push(index);
-                }
-            }
-        } else {
-            for bucket in &mut pattern_dispatch {
+        for (byte, bucket) in line_start_dispatch.iter_mut().enumerate() {
+            if pattern
+                .open_first_byte_set()
+                .is_none_or(|first_bytes| fbs_contains(first_bytes, byte as u8))
+            {
                 bucket.push(index);
             }
         }
     }
+    let pattern_dispatch = line_start_dispatch
+        .iter()
+        .map(|bucket| {
+            bucket
+                .iter()
+                .copied()
+                .filter(|&index| !patterns[index].open_matcher().whole_line)
+                .collect()
+        })
+        .collect();
 
     Ok(CompiledSyntax {
         patterns,
-        symbols: def.symbols.clone(),
+        symbols: SymbolTable::new(&def.symbols, def.case_insensitive),
+        nested: Vec::new(),
         pattern_dispatch,
+        line_start_dispatch,
         all_pattern_indices,
     })
 }
@@ -2112,7 +2275,7 @@ mod tests {
         };
         let compiled = compile_from_definition(&def).unwrap();
         assert_eq!(compiled.patterns.len(), 1);
-        assert_eq!(compiled.symbols.get("if"), Some(&"keyword".to_string()));
+        assert_eq!(compiled.symbols.get("if"), Some("keyword"));
     }
 
     #[test]
@@ -2233,8 +2396,8 @@ mod tests {
             ("***x***", "***x***"),
             ("__x__", "__x__"),
             ("_x_", "_x_"),
-            ("a **bold** b", " **bold**"),
-            ("a *it* b", " *it*"),
+            ("a **bold** b", "**bold**"),
+            ("a *it* b", "*it*"),
         ] {
             let (emph, state) = emphasized_text(&syntax, line);
             assert_eq!(emph, expected, "{line:?} should emphasize {expected:?}");
@@ -2291,6 +2454,279 @@ mod tests {
                         && t.token_type.as_ref() != "markdown_bold"
                         && t.token_type.as_ref() != "markdown_bold_italic"),
                 "follow-up line must not inherit emphasis, got {tokens:?}"
+            );
+        }
+    }
+
+    fn compiled_for(filename: &str) -> CompiledSyntax {
+        let index = crate::editor::syntax::load_syntax_index(&data_dir());
+        compile_for_filename(filename, &index)
+            .expect("grammar compiles")
+            .expect("grammar matches filename")
+    }
+
+    /// Tokenize `lines` in sequence, returning each line's tokens and end state.
+    fn tokenize_lines(syntax: &CompiledSyntax, lines: &[&str]) -> Vec<(Vec<Token>, Vec<u8>)> {
+        let mut state = Vec::new();
+        lines
+            .iter()
+            .map(|line| {
+                let (tokens, end) = tokenize_line_with_state(syntax, line, &state);
+                state = end.clone();
+                (tokens, end)
+            })
+            .collect()
+    }
+
+    fn token_type_of<'a>(tokens: &'a [Token], text: &str) -> Option<&'a str> {
+        tokens
+            .iter()
+            .find(|t| t.text.trim() == text)
+            .map(|t| t.token_type.as_ref())
+    }
+
+    #[test]
+    fn lua_frontier_reads_subject_edges_as_nul() {
+        let tag = compile_single_pattern("%f[^<][%a_][%w_]*", "function");
+        let tokens = tokenize_line(&tag, "Given text");
+        assert!(
+            tokens.iter().all(|t| t.token_type.as_ref() == "normal"),
+            "a negated frontier must not open at the start of the line: {tokens:?}"
+        );
+        let tokens = tokenize_line(&tag, "<div");
+        assert_eq!(token_type_of(&tokens, "div"), Some("function"));
+
+        let color = compile_single_pattern("#%x%x%x%f[%W]", "number");
+        let tokens = tokenize_line(&color, "#fff");
+        assert_eq!(token_type_of(&tokens, "#fff"), Some("number"));
+        let tokens = tokenize_line(&color, "#ffff");
+        assert_eq!(token_type_of(&tokens, "#fff"), None);
+    }
+
+    #[test]
+    fn markdown_currency_dollars_do_not_open_inline_math() {
+        let md = compiled_for("notes.md");
+        let lines = [
+            "Most items that can be bought with $100.\n",
+            "\n",
+            "```sql\n",
+            "SELECT 1;\n",
+            "```\n",
+            "If every price is at least $1, $100 can't pay for more.\n",
+            "Prices like $20,000 and $30,000 are text.\n",
+            "after\n",
+        ];
+        let out = tokenize_lines(&md, &lines);
+        for (i, (tokens, state)) in out.iter().enumerate() {
+            if (2..4).contains(&i) {
+                continue;
+            }
+            assert!(
+                state.is_empty(),
+                "line {i} {:?} left state {state:?}: {tokens:?}",
+                lines[i]
+            );
+            assert!(
+                tokens
+                    .iter()
+                    .all(|t| !(t.token_type.as_ref() == "string" && t.text.contains('$'))),
+                "line {i} {:?} highlighted a dollar amount: {tokens:?}",
+                lines[i]
+            );
+        }
+
+        let (tokens, state) = tokenize_line_with_state(&md, "Euler: $e^{i\\pi}$ ok\n", &[]);
+        assert!(state.is_empty(), "closed inline math left state {state:?}");
+        let joined: String = tokens.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(joined, "Euler: $e^{i\\pi}$ ok\n");
+        assert_ne!(token_type_of(&tokens, "$"), Some("normal"), "{tokens:?}");
+    }
+
+    #[test]
+    fn markdown_sql_fence_highlights_uppercase_keywords_and_closes() {
+        let md = compiled_for("notes.md");
+        let out = tokenize_lines(
+            &md,
+            &[
+                "```sql\n",
+                "SELECT price FROM products\n",
+                "```\n",
+                "plain\n",
+            ],
+        );
+        let body = &out[1].0;
+        assert_eq!(token_type_of(body, "SELECT"), Some("keyword"), "{body:?}");
+        assert_eq!(token_type_of(body, "FROM"), Some("keyword"), "{body:?}");
+        assert!(out[2].1.is_empty(), "closing fence must end the block");
+        assert_eq!(token_type_of(&out[3].0, "plain"), Some("normal"));
+    }
+
+    #[test]
+    fn markdown_fence_language_needs_a_whole_name() {
+        let md = compiled_for("notes.md");
+        // `go` is a prefix of `gossamer`; only Gossamer has an `fn` keyword.
+        let out = tokenize_lines(&md, &["```gossamer\n", "fn main() {}\n", "```\n"]);
+        assert_eq!(
+            token_type_of(&out[1].0, "fn"),
+            Some("keyword"),
+            "{:?}",
+            out[1].0
+        );
+
+        let out = tokenize_lines(&md, &["  ```python title=\"x\"\n", "def f():\n", "  ```\n"]);
+        assert_eq!(
+            token_type_of(&out[1].0, "def"),
+            Some("keyword"),
+            "{:?}",
+            out[1].0
+        );
+        assert!(
+            out[2].1.is_empty(),
+            "indented closing fence must end the block"
+        );
+
+        let (_, state) = tokenize_line_with_state(&md, "inline ```sql is not a fence\n", &[]);
+        assert!(state.is_empty(), "a mid-line fence marker opened a block");
+    }
+
+    #[test]
+    fn markdown_unclosed_inline_delimiters_stay_on_their_line() {
+        let md = compiled_for("notes.md");
+        for line in [
+            "a ` stray backtick\n",
+            "a ``double\n",
+            "a ~~strike\n",
+            "a `ok` and ` b\n",
+        ] {
+            let out = tokenize_lines(&md, &[line, "next line\n"]);
+            assert!(out[0].1.is_empty(), "{line:?} left state {:?}", out[0].1);
+            assert_eq!(
+                token_type_of(&out[1].0, "next line"),
+                Some("normal"),
+                "{line:?}"
+            );
+        }
+        let (tokens, _) = tokenize_line_with_state(&md, "use `x` and ``y`z`` and ~~gone~~\n", &[]);
+        assert_eq!(token_type_of(&tokens, "`x`"), Some("string"), "{tokens:?}");
+        assert_eq!(
+            token_type_of(&tokens, "``y`z``"),
+            Some("string"),
+            "{tokens:?}"
+        );
+        assert_eq!(
+            token_type_of(&tokens, "~~gone~~"),
+            Some("keyword2"),
+            "{tokens:?}"
+        );
+    }
+
+    #[test]
+    fn case_insensitive_grammar_matches_symbols_in_any_case() {
+        let sql = compiled_for("query.sql");
+        let tokens = tokenize_line(&sql, "select a FROM t Where b\n");
+        for kw in ["select", "FROM", "Where"] {
+            assert_eq!(
+                token_type_of(&tokens, kw),
+                Some("keyword"),
+                "{kw}: {tokens:?}"
+            );
+        }
+        let rust = compiled_for("main.rs");
+        let tokens = tokenize_line(&rust, "FN main\n");
+        assert_ne!(token_type_of(&tokens, "FN"), Some("keyword"), "{tokens:?}");
+    }
+
+    #[test]
+    fn lua_literals_keep_their_lua_meaning() {
+        // A backslash is an ordinary character, and `$` anchors only at the end.
+        let escape = compile_single_pattern("\\.", "string");
+        assert_eq!(
+            token_type_of(&tokenize_line(&escape, "a\\.b"), "\\."),
+            Some("string")
+        );
+        assert_eq!(
+            token_type_of(&tokenize_line(&escape, "ab"), "ab"),
+            Some("normal")
+        );
+        let var = compile_single_pattern("$[%a_][%w_]*", "keyword2");
+        assert_eq!(
+            token_type_of(&tokenize_line(&var, "x $name"), "$name"),
+            Some("keyword2")
+        );
+        let balanced = compile_single_pattern("%$%b{}", "keyword2");
+        let tokens = tokenize_line(&balanced, "a ${B_${C}} d");
+        assert_eq!(
+            token_type_of(&tokens, "${B_${C}}"),
+            Some("keyword2"),
+            "{tokens:?}"
+        );
+    }
+
+    #[test]
+    fn recursive_sub_syntaxes_nest_to_any_depth() {
+        let py = compiled_for("main.py");
+        let (tokens, state) = tokenize_line_with_state(&py, "x = [[{\"ab\": [1]}]]\n", &[]);
+        assert!(state.is_empty(), "{state:?}");
+        assert_eq!(
+            token_type_of(&tokens, "\"ab\""),
+            Some("string"),
+            "{tokens:?}"
+        );
+        assert_eq!(token_type_of(&tokens, "1"), Some("number"), "{tokens:?}");
+    }
+
+    #[test]
+    fn a_closed_string_hides_the_enclosing_close() {
+        let py = compiled_for("main.py");
+        let out = tokenize_lines(
+            &py,
+            &[
+                "if url == \"http://x\":\n",
+                "    y = 1\n",
+                "for k in d[\"a:b\"]:\n",
+                "    pass\n",
+            ],
+        );
+        for (tokens, state) in &out {
+            assert!(state.is_empty(), "{state:?} {tokens:?}");
+        }
+        assert_eq!(token_type_of(&out[0].0, "\"http://x\""), Some("string"));
+        assert_eq!(token_type_of(&out[2].0, "\"a:b\""), Some("string"));
+    }
+
+    #[test]
+    fn escaped_delimiter_after_multibyte_text_stays_escaped() {
+        let gos = compiled_for("main.gos");
+        let (tokens, state) =
+            tokenize_line_with_state(&gos, "let s = \"café \\\"x\\\" ☕\"\nlet t = 1\n", &[]);
+        assert!(
+            state.is_empty(),
+            "string must close at its last quote: {tokens:?}"
+        );
+    }
+
+    #[test]
+    fn bundled_grammars_keep_quoting_on_its_own_line() {
+        for (file, lines) in [
+            ("a.pl", &["$_ =~ s/\"/x/g;\n", "my $s = \"Can't\";\n"][..]),
+            ("a.tex", &["na\\\"ive 50\\% and $x^2$\n"][..]),
+            ("a.sh", &["V=\"$(sed 's/\"a\"/b/' \"$F\")\"\n"][..]),
+            ("a.yaml", &["run: awk -F'\"' x\n", "text: it's fine\n"][..]),
+            ("a.ts", &["s.replace(/\"/g, '&quot;');\n"][..]),
+            ("a.tsx", &["    Saved in the browser's storage\n"][..]),
+            ("a.jl", &["x = a' * b'\n", "c = '\\''\n"][..]),
+            ("a.cpp", &["auto s = R\"(a \"q\" b\n", "c)\";\n"][..]),
+            ("a.ps1", &["<# it's\n", "#>\n"][..]),
+            ("a.rkt", &["#| block\n", "comment |#\n"][..]),
+            ("a.mojo", &["struct P(T):\n", "    \"\"\"Doc.\"\"\"\n"][..]),
+            ("a.gos", &["if b == b'\"' {\n"][..]),
+        ] {
+            let syntax = compiled_for(file);
+            let out = tokenize_lines(&syntax, lines);
+            let (tokens, state) = out.last().expect("at least one line");
+            assert!(
+                state.is_empty(),
+                "{file}: {lines:?} left {state:?}: {tokens:?}"
             );
         }
     }
@@ -2448,8 +2884,7 @@ mod tests {
         // an open `==` literal span.
         let (t2, _s2) = tokenize_line_with_state(&compiled, "window (20720 == 20720 kB)", &s1);
         assert!(
-            t2.iter()
-                .any(|tk| tk.token_type.as_ref() != "literal" && tk.text.trim() == "window"),
+            t2.iter().all(|tk| tk.token_type.as_ref() != "literal"),
             "second line swallowed into literal span: {:?}",
             t2
         );

@@ -41,8 +41,8 @@
   "13": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "14"
+  "regex": {
+  "$ref": "47"
 },
   "type": "string"
 }
@@ -213,13 +213,179 @@
   "type": "symbol"
 }
 },
+  "26": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "27"
+},
+  "syntax": {
+  "$ref": "28"
+},
+  "type": {
+  "$ref": "46"
+}
+}
+},
+  "27": {
+  "kind": "array",
+  "values": ["\\/(?=(?!\\/)(?:(?>[^\\\\[\\/]++|\\\\.|\\[(?:[^\\\\\\]]++|\\\\.)*+\\])*+)++\\/[gmiyuvsd]*\\s*(?:[\\n,;\\)\\]\\}\\.]|\\/[\\/*]))()", "/()[gmiyuvsd]*", "\\"]
+},
+  "28": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "29"
+},
+  "symbols": {
+  "$ref": "45"
+}
+}
+},
+  "29": {
+  "kind": "array",
+  "values": [{
+  "$ref": "30"
+}, {
+  "$ref": "32"
+}, {
+  "$ref": "33"
+}, {
+  "$ref": "34"
+}, {
+  "$ref": "43"
+}, {
+  "$ref": "44"
+}]
+},
   "3": {
   "kind": "array",
   "values": ["/*", "*/"]
 },
+  "30": {
+  "kind": "object",
+  "values": {
+  "pattern": "%(()%?[:!=><]",
+  "type": {
+  "$ref": "31"
+}
+}
+},
+  "31": {
+  "kind": "array",
+  "values": ["string", "string"]
+},
+  "32": {
+  "kind": "object",
+  "values": {
+  "pattern": "[.?+*%(%)|]",
+  "type": "string"
+}
+},
+  "33": {
+  "kind": "object",
+  "values": {
+  "pattern": "{%d*,?%d*}",
+  "type": "string"
+}
+},
+  "34": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "35"
+},
+  "syntax": {
+  "$ref": "36"
+},
+  "type": {
+  "$ref": "42"
+}
+}
+},
+  "35": {
+  "kind": "array",
+  "values": ["\\[()\\^?", "(?:\\]|(?=\\n))()", "\\"]
+},
+  "36": {
+  "kind": "object",
+  "values": {
+  "patterns": {
+  "$ref": "37"
+},
+  "symbols": {
+  "$ref": "41"
+}
+}
+},
+  "37": {
+  "kind": "array",
+  "values": [{
+  "$ref": "38"
+}, {
+  "$ref": "39"
+}, {
+  "$ref": "40"
+}]
+},
+  "38": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\.",
+  "type": "string"
+}
+},
+  "39": {
+  "kind": "object",
+  "values": {
+  "pattern": "\\%]",
+  "type": "string"
+}
+},
   "4": {
   "kind": "array",
   "values": ["%.tsx$"]
+},
+  "40": {
+  "kind": "object",
+  "values": {
+  "pattern": "[^%]\n]",
+  "type": "string"
+}
+},
+  "41": {
+  "kind": "array",
+  "values": []
+},
+  "42": {
+  "kind": "array",
+  "values": ["string", "string"]
+},
+  "43": {
+  "kind": "object",
+  "values": {
+  "regex": "\\/",
+  "type": "string"
+}
+},
+  "44": {
+  "kind": "object",
+  "values": {
+  "regex": "[^/\n]",
+  "type": "string"
+}
+},
+  "45": {
+  "kind": "array",
+  "values": []
+},
+  "46": {
+  "kind": "array",
+  "values": ["string", "string"]
+},
+  "47": {
+  "kind": "array",
+  "values": ["(?<!\\w)'", "'", "\\"]
 },
   "5": {
   "kind": "array",
@@ -237,6 +403,8 @@
   "$ref": "15"
 }, {
   "$ref": "16"
+}, {
+  "$ref": "26"
 }, {
   "$ref": "17"
 }, {

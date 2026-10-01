@@ -587,7 +587,7 @@
   "59": {
   "kind": "object",
   "values": {
-  "pattern": "|",
+  "pattern": "%|",
   "type": "operator"
 }
 },
@@ -631,7 +631,7 @@
 },
   "64": {
   "kind": "array",
-  "values": [":%s*", "%f[^%[%]%w_]"]
+  "values": [":[ \t]*%f[%w_\"']", "%f[^%[%]%w_]"]
 },
   "65": {
   "kind": "object",
@@ -876,7 +876,7 @@
 },
   "95": {
   "kind": "array",
-  "values": [":%s*", "%f[^%[%]%w_]"]
+  "values": [":[ \t]*%f[%w_\"']", "%f[^%[%]%w_]"]
 },
   "96": {
   "kind": "array",

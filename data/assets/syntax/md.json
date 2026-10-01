@@ -21,199 +21,12 @@
 }
 }
 },
-  "10": {
-  "kind": "array",
-  "values": ["%s___", "___"]
-},
-  "100": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "101"
-},
-  "syntax": ".yaml",
-  "type": "string"
-}
-},
-  "101": {
-  "kind": "array",
-  "values": ["```yaml", "```"]
-},
-  "102": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "103"
-},
-  "syntax": ".yaml",
-  "type": "string"
-}
-},
-  "103": {
-  "kind": "array",
-  "values": ["```yml", "```"]
-},
-  "104": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "105"
-},
-  "syntax": ".nim",
-  "type": "string"
-}
-},
-  "105": {
-  "kind": "array",
-  "values": ["```nim", "```"]
-},
-  "106": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "107"
-},
-  "syntax": ".ts",
-  "type": "string"
-}
-},
-  "107": {
-  "kind": "array",
-  "values": ["```typescript", "```"]
-},
-  "108": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "109"
-},
-  "syntax": ".res",
-  "type": "string"
-}
-},
-  "109": {
-  "kind": "array",
-  "values": ["```rescript", "```"]
-},
   "11": {
   "kind": "object",
   "values": {
   "regex": "(?<!\\w)__(?=\\S)(?:[^_]|_(?!_))*?(?<=\\S)__(?!\\w)",
   "type": "markdown_bold"
 }
-},
-  "110": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "111"
-},
-  "syntax": ".moon",
-  "type": "string"
-}
-},
-  "111": {
-  "kind": "array",
-  "values": ["```moon", "```"]
-},
-  "112": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "113"
-},
-  "syntax": ".go",
-  "type": "string"
-}
-},
-  "113": {
-  "kind": "array",
-  "values": ["```go", "```"]
-},
-  "114": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "115"
-},
-  "syntax": ".lobster",
-  "type": "string"
-}
-},
-  "115": {
-  "kind": "array",
-  "values": ["```lobster", "```"]
-},
-  "116": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "117"
-},
-  "syntax": ".liquid",
-  "type": "string"
-}
-},
-  "117": {
-  "kind": "array",
-  "values": ["```liquid", "```"]
-},
-  "118": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "119"
-},
-  "syntax": ".nix",
-  "type": "string"
-}
-},
-  "119": {
-  "kind": "array",
-  "values": ["```nix", "```"]
-},
-  "12": {
-  "kind": "array",
-  "values": ["%s__", "__"]
-},
-  "120": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "121"
-},
-  "type": "string"
-}
-},
-  "121": {
-  "kind": "array",
-  "values": ["```", "```"]
-},
-  "122": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "123"
-},
-  "type": "string"
-}
-},
-  "123": {
-  "kind": "array",
-  "values": ["``", "``"]
-},
-  "124": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "125"
-},
-  "type": "string"
-}
-},
-  "125": {
-  "kind": "array",
-  "values": ["%f[\\`]%`[%S]", "`"]
 },
   "126": {
   "kind": "object",
@@ -250,19 +63,6 @@
   "type": "markdown_italic"
 }
 },
-  "130": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "131"
-},
-  "type": "keyword2"
-}
-},
-  "131": {
-  "kind": "array",
-  "values": ["~~", "~~"]
-},
   "132": {
   "kind": "object",
   "values": {
@@ -277,10 +77,6 @@
   "type": "markdown_bold_italic"
 }
 },
-  "135": {
-  "kind": "array",
-  "values": ["%*%*%*%S", "%*%*%*"]
-},
   "136": {
   "kind": "object",
   "values": {
@@ -288,43 +84,10 @@
   "type": "markdown_bold"
 }
 },
-  "137": {
-  "kind": "array",
-  "values": ["%*%*%S", "%*%*"]
-},
   "138": {
   "kind": "object",
   "values": {
   "regex": "(?<!\\*)\\*(?=[^\\s*])[^*]*?(?<=\\S)\\*(?!\\*)",
-  "type": "markdown_italic"
-}
-},
-  "139": {
-  "kind": "array",
-  "values": ["%f[\\%*]%*[%S]", "%*%f[^%*]"]
-},
-  "14": {
-  "kind": "array",
-  "values": ["%s_[%S]", "_"]
-},
-  "140": {
-  "kind": "object",
-  "values": {
-  "pattern": "^___[%s%p%w]+___",
-  "type": "markdown_bold_italic"
-}
-},
-  "141": {
-  "kind": "object",
-  "values": {
-  "pattern": "^__[%s%p%w]+__",
-  "type": "markdown_bold"
-}
-},
-  "142": {
-  "kind": "object",
-  "values": {
-  "pattern": "^_[%s%p%w]+_",
   "type": "markdown_italic"
 }
 },
@@ -489,6 +252,34 @@
   "kind": "array",
   "values": ["%.md$", "%.markdown$"]
 },
+  "166": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:caddyfile)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "167": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "166"
+},
+  "syntax": "Caddyfile",
+  "type": "string"
+}
+},
+  "168": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:c\\+\\+|cpp|cxx|cc|hpp)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "169": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "168"
+},
+  "syntax": ".cpp",
+  "type": "string"
+}
+},
   "17": {
   "kind": "object",
   "values": {
@@ -498,15 +289,225 @@
 }
 }
 },
+  "170": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:c#|cs|csharp)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "171": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "170"
+},
+  "syntax": ".cs",
+  "type": "string"
+}
+},
+  "172": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:c|h)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "173": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "172"
+},
+  "syntax": ".c",
+  "type": "string"
+}
+},
+  "174": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:python|python3|py)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "175": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "174"
+},
+  "syntax": ".py",
+  "type": "string"
+}
+},
+  "176": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:ruby|rb)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "177": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "176"
+},
+  "syntax": ".rb",
+  "type": "string"
+}
+},
+  "178": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:perl|pl)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "179": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "178"
+},
+  "syntax": ".pl",
+  "type": "string"
+}
+},
   "18": {
   "kind": "array",
   "values": ["function", "number", "function"]
+},
+  "180": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:php)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "181": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "180"
+},
+  "syntax": ".php",
+  "type": "string"
+}
+},
+  "182": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:javascript|js|mjs|cjs|node)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "183": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "182"
+},
+  "syntax": ".js",
+  "type": "string"
+}
+},
+  "184": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:typescript|ts)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "185": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "184"
+},
+  "syntax": ".ts",
+  "type": "string"
+}
+},
+  "186": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:tsx)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "187": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "186"
+},
+  "syntax": ".tsx",
+  "type": "string"
+}
+},
+  "188": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:jsx)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "189": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "188"
+},
+  "syntax": ".jsx",
+  "type": "string"
+}
 },
   "19": {
   "kind": "object",
   "values": {
   "pattern": "%s+",
   "type": "normal"
+}
+},
+  "190": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:json|jsonc|json5)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "191": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "190"
+},
+  "syntax": ".json",
+  "type": "string"
+}
+},
+  "192": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:html|htm)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "193": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "192"
+},
+  "syntax": ".html",
+  "type": "string"
+}
+},
+  "194": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:xml|svg|xaml)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "195": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "194"
+},
+  "syntax": ".xml",
+  "type": "string"
+}
+},
+  "196": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:css)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "197": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "196"
+},
+  "syntax": ".css",
+  "type": "string"
+}
+},
+  "198": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:scss|sass)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "199": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "198"
+},
+  "syntax": ".scss",
+  "type": "string"
 }
 },
   "2": {
@@ -523,9 +524,149 @@
   "type": "function"
 }
 },
+  "200": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:vue)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "201": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "200"
+},
+  "syntax": ".vue",
+  "type": "string"
+}
+},
+  "202": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:svelte)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "203": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "202"
+},
+  "syntax": ".svelte",
+  "type": "string"
+}
+},
+  "204": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:env|dotenv)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "205": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "204"
+},
+  "syntax": ".env",
+  "type": "string"
+}
+},
+  "206": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:ini|cfg|editorconfig)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "207": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "206"
+},
+  "syntax": ".ini",
+  "type": "string"
+}
+},
+  "208": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:toml)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "209": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "208"
+},
+  "syntax": ".toml",
+  "type": "string"
+}
+},
   "21": {
   "kind": "array",
   "values": ["<%s*[sS][cC][rR][iI][pP][tT]%s+[tT][yY][pP][eE]%s*=%s*['\"]%a+/[jJ][aA][vV][aA][sS][cC][rR][iI][pP][tT]['\"]%s*>", "<%s*/[sS][cC][rR][iI][pP][tT]>"]
+},
+  "210": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:yaml|yml)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "211": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "210"
+},
+  "syntax": ".yaml",
+  "type": "string"
+}
+},
+  "212": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:lua)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "213": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "212"
+},
+  "syntax": ".lua",
+  "type": "string"
+}
+},
+  "214": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:bash|sh|shell|zsh|fish)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "215": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "214"
+},
+  "syntax": ".sh",
+  "type": "string"
+}
+},
+  "216": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:powershell|pwsh|ps1)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "217": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "216"
+},
+  "syntax": ".ps1",
+  "type": "string"
+}
+},
+  "218": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:java)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "219": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "218"
+},
+  "syntax": ".java",
+  "type": "string"
+}
 },
   "22": {
   "kind": "object",
@@ -537,9 +678,149 @@
   "type": "function"
 }
 },
+  "220": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:kotlin|kt|kts)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "221": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "220"
+},
+  "syntax": ".kt",
+  "type": "string"
+}
+},
+  "222": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:scala)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "223": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "222"
+},
+  "syntax": ".scala",
+  "type": "string"
+}
+},
+  "224": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:groovy|gradle)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "225": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "224"
+},
+  "syntax": ".groovy",
+  "type": "string"
+}
+},
+  "226": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:cmake)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "227": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "226"
+},
+  "syntax": ".cmake",
+  "type": "string"
+}
+},
+  "228": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:makefile|make|mk)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "229": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "228"
+},
+  "syntax": ".mk",
+  "type": "string"
+}
+},
   "23": {
   "kind": "array",
   "values": ["<%s*[sS][cC][rR][iI][pP][tT]%s*>", "<%s*/%s*[sS][cC][rR][iI][pP][tT]>"]
+},
+  "230": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:dockerfile|docker)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "231": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "230"
+},
+  "syntax": ".dockerfile",
+  "type": "string"
+}
+},
+  "232": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:d)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "233": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "232"
+},
+  "syntax": ".d",
+  "type": "string"
+}
+},
+  "234": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:glsl)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "235": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "234"
+},
+  "syntax": ".glsl",
+  "type": "string"
+}
+},
+  "236": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:julia|jl)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "237": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "236"
+},
+  "syntax": ".jl",
+  "type": "string"
+}
+},
+  "238": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:rust|rs)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "239": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "238"
+},
+  "syntax": ".rs",
+  "type": "string"
+}
 },
   "24": {
   "kind": "object",
@@ -551,9 +832,149 @@
   "type": "function"
 }
 },
+  "240": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:go|golang)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "241": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "240"
+},
+  "syntax": ".go",
+  "type": "string"
+}
+},
+  "242": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:gossamer|gos)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "243": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "242"
+},
+  "syntax": ".gos",
+  "type": "string"
+}
+},
+  "244": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:dart)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "245": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "244"
+},
+  "syntax": ".dart",
+  "type": "string"
+}
+},
+  "246": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:swift)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "247": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "246"
+},
+  "syntax": ".swift",
+  "type": "string"
+}
+},
+  "248": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:zig)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "249": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "248"
+},
+  "syntax": ".zig",
+  "type": "string"
+}
+},
   "25": {
   "kind": "array",
   "values": ["<%s*[sS][tT][yY][lL][eE][^>]*>", "<%s*/%s*[sS][tT][yY][lL][eE]%s*>"]
+},
+  "250": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:v|vlang)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "251": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "250"
+},
+  "syntax": ".v",
+  "type": "string"
+}
+},
+  "252": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:nim)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "253": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "252"
+},
+  "syntax": ".nim",
+  "type": "string"
+}
+},
+  "254": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:rescript)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "255": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "254"
+},
+  "syntax": ".res",
+  "type": "string"
+}
+},
+  "256": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:moon|moonscript)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "257": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "256"
+},
+  "syntax": ".moon",
+  "type": "string"
+}
+},
+  "258": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:lobster)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "259": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "258"
+},
+  "syntax": ".lobster",
+  "type": "string"
+}
 },
   "26": {
   "kind": "object",
@@ -564,15 +985,225 @@
   "type": "comment"
 }
 },
+  "260": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:liquid)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "261": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "260"
+},
+  "syntax": ".liquid",
+  "type": "string"
+}
+},
+  "262": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:nix)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "263": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "262"
+},
+  "syntax": ".nix",
+  "type": "string"
+}
+},
+  "264": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:sql|mysql|sqlite)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "265": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "264"
+},
+  "syntax": ".sql",
+  "type": "string"
+}
+},
+  "266": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:postgresql|postgres|pgsql|plpgsql)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "267": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "266"
+},
+  "syntax": ".pgsql",
+  "type": "string"
+}
+},
+  "268": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:haskell|hs)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "269": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "268"
+},
+  "syntax": ".hs",
+  "type": "string"
+}
+},
   "27": {
   "kind": "array",
   "values": ["<!%-%-", "%-%->"]
+},
+  "270": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:elixir|ex|exs)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "271": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "270"
+},
+  "syntax": ".ex",
+  "type": "string"
+}
+},
+  "272": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:erlang|erl)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "273": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "272"
+},
+  "syntax": ".erl",
+  "type": "string"
+}
+},
+  "274": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:gleam)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "275": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "274"
+},
+  "syntax": ".gleam",
+  "type": "string"
+}
+},
+  "276": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:ocaml|ml)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "277": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "276"
+},
+  "syntax": ".ml",
+  "type": "string"
+}
+},
+  "278": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:fsharp|f#|fs)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "279": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "278"
+},
+  "syntax": ".fs",
+  "type": "string"
+}
 },
   "28": {
   "kind": "object",
   "values": {
   "pattern": "%f[^<]![%a_][%w_]*",
   "type": "keyword2"
+}
+},
+  "280": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:clojure|clj|cljs|edn)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "281": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "280"
+},
+  "syntax": ".clj",
+  "type": "string"
+}
+},
+  "282": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:lisp|elisp|emacs-lisp|common-lisp)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "283": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "282"
+},
+  "syntax": ".lisp",
+  "type": "string"
+}
+},
+  "284": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:scheme|scm)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "285": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "284"
+},
+  "syntax": ".scm",
+  "type": "string"
+}
+},
+  "286": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:racket|rkt)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "287": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "286"
+},
+  "syntax": ".rkt",
+  "type": "string"
+}
+},
+  "288": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:crystal|cr)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "289": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "288"
+},
+  "syntax": ".cr",
+  "type": "string"
 }
 },
   "29": {
@@ -582,9 +1213,233 @@
   "type": "function"
 }
 },
+  "290": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:r)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "291": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "290"
+},
+  "syntax": ".r",
+  "type": "string"
+}
+},
+  "292": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:matlab)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "293": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "292"
+},
+  "syntax": ".m",
+  "type": "string"
+}
+},
+  "294": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:ada)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "295": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "294"
+},
+  "syntax": ".ada",
+  "type": "string"
+}
+},
+  "296": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:asm|assembly|nasm)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "297": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "296"
+},
+  "syntax": ".asm",
+  "type": "string"
+}
+},
+  "298": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:vb|vbnet|vbscript)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "299": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "298"
+},
+  "syntax": ".vb",
+  "type": "string"
+}
+},
   "3": {
   "kind": "array",
   "values": [{
+  "$ref": "167"
+}, {
+  "$ref": "169"
+}, {
+  "$ref": "171"
+}, {
+  "$ref": "173"
+}, {
+  "$ref": "175"
+}, {
+  "$ref": "177"
+}, {
+  "$ref": "179"
+}, {
+  "$ref": "181"
+}, {
+  "$ref": "183"
+}, {
+  "$ref": "185"
+}, {
+  "$ref": "187"
+}, {
+  "$ref": "189"
+}, {
+  "$ref": "191"
+}, {
+  "$ref": "193"
+}, {
+  "$ref": "195"
+}, {
+  "$ref": "197"
+}, {
+  "$ref": "199"
+}, {
+  "$ref": "201"
+}, {
+  "$ref": "203"
+}, {
+  "$ref": "205"
+}, {
+  "$ref": "207"
+}, {
+  "$ref": "209"
+}, {
+  "$ref": "211"
+}, {
+  "$ref": "213"
+}, {
+  "$ref": "215"
+}, {
+  "$ref": "217"
+}, {
+  "$ref": "219"
+}, {
+  "$ref": "221"
+}, {
+  "$ref": "223"
+}, {
+  "$ref": "225"
+}, {
+  "$ref": "227"
+}, {
+  "$ref": "229"
+}, {
+  "$ref": "231"
+}, {
+  "$ref": "233"
+}, {
+  "$ref": "235"
+}, {
+  "$ref": "237"
+}, {
+  "$ref": "239"
+}, {
+  "$ref": "241"
+}, {
+  "$ref": "243"
+}, {
+  "$ref": "245"
+}, {
+  "$ref": "247"
+}, {
+  "$ref": "249"
+}, {
+  "$ref": "251"
+}, {
+  "$ref": "253"
+}, {
+  "$ref": "255"
+}, {
+  "$ref": "257"
+}, {
+  "$ref": "259"
+}, {
+  "$ref": "261"
+}, {
+  "$ref": "263"
+}, {
+  "$ref": "265"
+}, {
+  "$ref": "267"
+}, {
+  "$ref": "269"
+}, {
+  "$ref": "271"
+}, {
+  "$ref": "273"
+}, {
+  "$ref": "275"
+}, {
+  "$ref": "277"
+}, {
+  "$ref": "279"
+}, {
+  "$ref": "281"
+}, {
+  "$ref": "283"
+}, {
+  "$ref": "285"
+}, {
+  "$ref": "287"
+}, {
+  "$ref": "289"
+}, {
+  "$ref": "291"
+}, {
+  "$ref": "293"
+}, {
+  "$ref": "295"
+}, {
+  "$ref": "297"
+}, {
+  "$ref": "299"
+}, {
+  "$ref": "301"
+}, {
+  "$ref": "303"
+}, {
+  "$ref": "305"
+}, {
+  "$ref": "307"
+}, {
+  "$ref": "309"
+}, {
+  "$ref": "311"
+}, {
+  "$ref": "313"
+}, {
+  "$ref": "315"
+}, {
+  "$ref": "317"
+}, {
+  "$ref": "319"
+}, {
   "$ref": "4"
 }, {
   "$ref": "5"
@@ -633,89 +1488,9 @@
 }, {
   "$ref": "40"
 }, {
-  "$ref": "42"
+  "$ref": "320"
 }, {
-  "$ref": "44"
-}, {
-  "$ref": "46"
-}, {
-  "$ref": "48"
-}, {
-  "$ref": "50"
-}, {
-  "$ref": "52"
-}, {
-  "$ref": "54"
-}, {
-  "$ref": "56"
-}, {
-  "$ref": "58"
-}, {
-  "$ref": "60"
-}, {
-  "$ref": "62"
-}, {
-  "$ref": "64"
-}, {
-  "$ref": "66"
-}, {
-  "$ref": "68"
-}, {
-  "$ref": "70"
-}, {
-  "$ref": "72"
-}, {
-  "$ref": "74"
-}, {
-  "$ref": "76"
-}, {
-  "$ref": "78"
-}, {
-  "$ref": "80"
-}, {
-  "$ref": "82"
-}, {
-  "$ref": "84"
-}, {
-  "$ref": "86"
-}, {
-  "$ref": "88"
-}, {
-  "$ref": "90"
-}, {
-  "$ref": "92"
-}, {
-  "$ref": "94"
-}, {
-  "$ref": "96"
-}, {
-  "$ref": "98"
-}, {
-  "$ref": "100"
-}, {
-  "$ref": "102"
-}, {
-  "$ref": "104"
-}, {
-  "$ref": "106"
-}, {
-  "$ref": "108"
-}, {
-  "$ref": "110"
-}, {
-  "$ref": "112"
-}, {
-  "$ref": "114"
-}, {
-  "$ref": "116"
-}, {
-  "$ref": "118"
-}, {
-  "$ref": "120"
-}, {
-  "$ref": "122"
-}, {
-  "$ref": "124"
+  "$ref": "321"
 }, {
   "$ref": "126"
 }, {
@@ -725,7 +1500,7 @@
 }, {
   "$ref": "129"
 }, {
-  "$ref": "130"
+  "$ref": "322"
 }, {
   "$ref": "132"
 }, {
@@ -734,12 +1509,6 @@
   "$ref": "136"
 }, {
   "$ref": "138"
-}, {
-  "$ref": "140"
-}, {
-  "$ref": "141"
-}, {
-  "$ref": "142"
 }, {
   "$ref": "143"
 }, {
@@ -777,6 +1546,76 @@
   "type": "function"
 }
 },
+  "300": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:mojo)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "301": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "300"
+},
+  "syntax": ".mojo",
+  "type": "string"
+}
+},
+  "302": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:graphql|gql)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "303": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "302"
+},
+  "syntax": ".graphql",
+  "type": "string"
+}
+},
+  "304": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:protobuf|proto)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "305": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "304"
+},
+  "syntax": ".proto",
+  "type": "string"
+}
+},
+  "306": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:latex|tex)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "307": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "306"
+},
+  "syntax": ".tex",
+  "type": "string"
+}
+},
+  "308": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:diff|patch)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "309": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "308"
+},
+  "syntax": ".diff",
+  "type": "string"
+}
+},
   "31": {
   "kind": "object",
   "values": {
@@ -786,9 +1625,98 @@
 }
 }
 },
+  "310": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:jinja|jinja2|j2)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "311": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "310"
+},
+  "syntax": ".j2",
+  "type": "string"
+}
+},
+  "312": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:starlark|bazel|bzl)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "313": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "312"
+},
+  "syntax": ".bzl",
+  "type": "string"
+}
+},
+  "314": {
+  "kind": "array",
+  "values": ["^[ \\t]*```[ \\t]*(?:ninja)(?![\\w+#-])", "^[ \\t]*```+[ \\t]*$"]
+},
+  "315": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "314"
+},
+  "syntax": ".ninja",
+  "type": "string"
+}
+},
+  "316": {
+  "kind": "array",
+  "values": ["^[ \\t]*```", "^[ \\t]*```+[ \\t]*$"]
+},
+  "317": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "316"
+},
+  "type": "string"
+}
+},
+  "318": {
+  "kind": "array",
+  "values": ["^[ \\t]*~~~", "^[ \\t]*~~~+[ \\t]*$"]
+},
+  "319": {
+  "kind": "object",
+  "values": {
+  "regex": {
+  "$ref": "318"
+},
+  "type": "string"
+}
+},
   "32": {
   "kind": "array",
   "values": ["keyword", "operator", "string"]
+},
+  "320": {
+  "kind": "object",
+  "values": {
+  "regex": "``[^`](?:.*?[^`])?``(?!`)",
+  "type": "string"
+}
+},
+  "321": {
+  "kind": "object",
+  "values": {
+  "regex": "`[^`\\n]+`",
+  "type": "string"
+}
+},
+  "322": {
+  "kind": "object",
+  "values": {
+  "regex": "(?<!~)~~(?=[^\\s~])(?:[^~]|~(?!~))*?(?<=\\S)~~(?!~)",
+  "type": "keyword2"
+}
 },
   "33": {
   "kind": "object",
@@ -847,7 +1775,7 @@
   "40": {
   "kind": "object",
   "values": {
-  "pattern": {
+  "regex": {
   "$ref": "41"
 },
   "syntax": ".tex",
@@ -856,63 +1784,7 @@
 },
   "41": {
   "kind": "array",
-  "values": ["%$[%S]", "%$", "\\"]
-},
-  "42": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "43"
-},
-  "syntax": "Caddyfile",
-  "type": "string"
-}
-},
-  "43": {
-  "kind": "array",
-  "values": ["```caddyfile", "```"]
-},
-  "44": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "45"
-},
-  "syntax": ".cpp",
-  "type": "string"
-}
-},
-  "45": {
-  "kind": "array",
-  "values": ["```c%+%+", "```"]
-},
-  "46": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "47"
-},
-  "syntax": ".cpp",
-  "type": "string"
-}
-},
-  "47": {
-  "kind": "array",
-  "values": ["```cpp", "```"]
-},
-  "48": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "49"
-},
-  "syntax": ".py",
-  "type": "string"
-}
-},
-  "49": {
-  "kind": "array",
-  "values": ["```python", "```"]
+  "values": ["\\$(?=[^\\s$](?:[^$\\\\]|\\\\.)*?(?<=[^\\s\\\\])\\$(?!\\d))", "\\$", "\\"]
 },
   "5": {
   "kind": "object",
@@ -921,152 +1793,12 @@
   "type": "number"
 }
 },
-  "50": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "51"
-},
-  "syntax": ".rb",
-  "type": "string"
-}
-},
-  "51": {
-  "kind": "array",
-  "values": ["```ruby", "```"]
-},
-  "52": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "53"
-},
-  "syntax": ".pl",
-  "type": "string"
-}
-},
-  "53": {
-  "kind": "array",
-  "values": ["```perl", "```"]
-},
-  "54": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "55"
-},
-  "syntax": ".php",
-  "type": "string"
-}
-},
-  "55": {
-  "kind": "array",
-  "values": ["```php", "```"]
-},
-  "56": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "57"
-},
-  "syntax": ".js",
-  "type": "string"
-}
-},
-  "57": {
-  "kind": "array",
-  "values": ["```javascript", "```"]
-},
-  "58": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "59"
-},
-  "syntax": ".js",
-  "type": "string"
-}
-},
-  "59": {
-  "kind": "array",
-  "values": ["```json", "```"]
-},
   "6": {
   "kind": "object",
   "values": {
   "pattern": "^%s*%+%s",
   "type": "number"
 }
-},
-  "60": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "61"
-},
-  "syntax": ".html",
-  "type": "string"
-}
-},
-  "61": {
-  "kind": "array",
-  "values": ["```html", "```"]
-},
-  "62": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "63"
-},
-  "syntax": ".env",
-  "type": "string"
-}
-},
-  "63": {
-  "kind": "array",
-  "values": ["```env", "```"]
-},
-  "64": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "65"
-},
-  "syntax": ".ini",
-  "type": "string"
-}
-},
-  "65": {
-  "kind": "array",
-  "values": ["```ini", "```"]
-},
-  "66": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "67"
-},
-  "syntax": ".xml",
-  "type": "string"
-}
-},
-  "67": {
-  "kind": "array",
-  "values": ["```xml", "```"]
-},
-  "68": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "69"
-},
-  "syntax": ".css",
-  "type": "string"
-}
-},
-  "69": {
-  "kind": "array",
-  "values": ["```css", "```"]
 },
   "7": {
   "kind": "object",
@@ -1075,76 +1807,6 @@
   "type": "number"
 }
 },
-  "70": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "71"
-},
-  "syntax": ".lua",
-  "type": "string"
-}
-},
-  "71": {
-  "kind": "array",
-  "values": ["```lua", "```"]
-},
-  "72": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "73"
-},
-  "syntax": ".sh",
-  "type": "string"
-}
-},
-  "73": {
-  "kind": "array",
-  "values": ["```bash", "```"]
-},
-  "74": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "75"
-},
-  "syntax": ".sh",
-  "type": "string"
-}
-},
-  "75": {
-  "kind": "array",
-  "values": ["```sh", "```"]
-},
-  "76": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "77"
-},
-  "syntax": ".sh",
-  "type": "string"
-}
-},
-  "77": {
-  "kind": "array",
-  "values": ["```zsh", "```"]
-},
-  "78": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "79"
-},
-  "syntax": ".java",
-  "type": "string"
-}
-},
-  "79": {
-  "kind": "array",
-  "values": ["```java", "```"]
-},
   "8": {
   "kind": "object",
   "values": {
@@ -1152,152 +1814,12 @@
   "type": "string"
 }
 },
-  "80": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "81"
-},
-  "syntax": ".cs",
-  "type": "string"
-}
-},
-  "81": {
-  "kind": "array",
-  "values": ["```c#", "```"]
-},
-  "82": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "83"
-},
-  "syntax": ".cmake",
-  "type": "string"
-}
-},
-  "83": {
-  "kind": "array",
-  "values": ["```cmake", "```"]
-},
-  "84": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "85"
-},
-  "syntax": ".d",
-  "type": "string"
-}
-},
-  "85": {
-  "kind": "array",
-  "values": ["```d", "```"]
-},
-  "86": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "87"
-},
-  "syntax": ".glsl",
-  "type": "string"
-}
-},
-  "87": {
-  "kind": "array",
-  "values": ["```glsl", "```"]
-},
-  "88": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "89"
-},
-  "syntax": ".c",
-  "type": "string"
-}
-},
-  "89": {
-  "kind": "array",
-  "values": ["```c", "```"]
-},
   "9": {
   "kind": "object",
   "values": {
   "regex": "(?<!\\w)___(?=\\S)(?:[^_]|_(?!__))*?(?<=\\S)___(?!\\w)",
   "type": "markdown_bold_italic"
 }
-},
-  "90": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "91"
-},
-  "syntax": ".jl",
-  "type": "string"
-}
-},
-  "91": {
-  "kind": "array",
-  "values": ["```julia", "```"]
-},
-  "92": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "93"
-},
-  "syntax": ".rs",
-  "type": "string"
-}
-},
-  "93": {
-  "kind": "array",
-  "values": ["```rust", "```"]
-},
-  "94": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "95"
-},
-  "syntax": ".dart",
-  "type": "string"
-}
-},
-  "95": {
-  "kind": "array",
-  "values": ["```dart", "```"]
-},
-  "96": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "97"
-},
-  "syntax": ".v",
-  "type": "string"
-}
-},
-  "97": {
-  "kind": "array",
-  "values": ["```v", "```"]
-},
-  "98": {
-  "kind": "object",
-  "values": {
-  "pattern": {
-  "$ref": "99"
-},
-  "syntax": ".toml",
-  "type": "string"
-}
-},
-  "99": {
-  "kind": "array",
-  "values": ["```toml", "```"]
 }
 }
 },

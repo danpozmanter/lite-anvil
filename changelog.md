@@ -1,5 +1,14 @@
 # Change Log
 
+## [2.16.11] - 2026-10-01 - Syntax highlighting fixes
+
+* A dollar amount like `$100` in Markdown no longer opens inline math that colored the rest of the file; inline math needs its closing `$` on the same line.
+* Markdown code fences open only at the start of a line, match the whole language name (```` ```gossamer ```` is no longer Go), highlight `sql` and every bundled language, and accept `~~~`; an unclosed backtick or `~~` stays on its line.
+* SQL, PostgreSQL, Ada, Visual Basic, PowerShell, and assembly keywords highlight in any case, and the SQL keyword lists cover window functions and common clauses.
+* Python and Mojo brackets, braces, and `if`/`for`/`def` headers highlight at any nesting depth, and a `:` or `]` inside a string no longer ends them.
+* Grammar patterns follow Lua semantics for `%x`, `%b`, line-edge frontiers, `\`, and a mid-pattern `$`, fixing CSS hex colors, CMake `${VAR}`, PowerShell variables, Rust and Gossamer byte literals, and HTML text at the start of a line.
+* Fixed runaway or missing highlighting in Perl strings and `s///`, LaTeX accents, Bash quotes inside `$(...)`, YAML apostrophes, TypeScript/JSX regex literals and apostrophes, C++ raw strings, Julia's `'` operator, F# chars, PowerShell and Racket/Scheme block comments, and escaped quotes after non-ASCII text.
+
 ## [2.16.10] - 2026-09-30 - Unsaved-changes warning when opening a file, and Gossamer 0.65.1 highlighting.
 
 * Opening a file while an untitled buffer still holds unsaved edits now shows the same unsaved-changes warning quitting shows, instead of discarding the buffer silently: cancelling keeps the edits, confirming proceeds with the open, and nothing prompts when nothing is unsaved.

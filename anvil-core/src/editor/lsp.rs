@@ -986,7 +986,7 @@ mod tests {
         let mut buffer = [first.as_bytes(), &second.as_bytes()[..second.len() / 2]].concat();
         parse_messages(&mut buffer, &tx);
         assert_eq!(rx.try_recv().unwrap()["id"], 1);
-        assert_eq!(buffer, second[..second.len() / 2].as_bytes());
+        assert_eq!(buffer, &second.as_bytes()[..second.len() / 2]);
 
         // The next read completes the frame and empties the buffer.
         buffer.extend_from_slice(&second.as_bytes()[second.len() / 2..]);

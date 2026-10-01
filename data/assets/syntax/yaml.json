@@ -21,8 +21,8 @@
   "10": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "11"
+  "regex": {
+  "$ref": "27"
 },
   "type": "string"
 }
@@ -140,6 +140,14 @@
   "type": "symbol"
 }
 },
+  "26": {
+  "kind": "array",
+  "values": ["(?<![^\\s\\[{,])\"", "\"", "\\"]
+},
+  "27": {
+  "kind": "array",
+  "values": ["(?<![^\\s\\[{,])'", "'"]
+},
   "3": {
   "kind": "array",
   "values": ["%.yaml$", "%.yml$"]
@@ -206,8 +214,8 @@
   "8": {
   "kind": "object",
   "values": {
-  "pattern": {
-  "$ref": "9"
+  "regex": {
+  "$ref": "26"
 },
   "type": "string"
 }
