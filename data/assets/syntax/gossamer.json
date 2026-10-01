@@ -32,7 +32,7 @@
 },
   "11": {
   "kind": "array",
-  "values": ["b?\"", "\"", "\\"]
+  "values": ["f?b?\"", "\"", "\\"]
 },
   "12": {
   "kind": "object",
@@ -130,6 +130,8 @@
   "char": "keyword2",
   "const": "keyword",
   "continue": "keyword",
+  "cohort": "keyword",
+  "comptime": "keyword",
   "crate": "keyword",
   "defer": "keyword",
   "else": "keyword",
@@ -155,7 +157,9 @@
   "match": "keyword",
   "mod": "keyword",
   "mut": "keyword",
+  "newtype": "keyword",
   "package": "keyword",
+  "packed": "keyword",
   "pub": "keyword",
   "return": "keyword",
   "select": "keyword",
@@ -226,6 +230,26 @@
   "type": "keyword"
 }
 },
+  "27": {
+  "kind": "object",
+  "values": {
+  "pattern": {
+  "$ref": "28"
+},
+  "type": "string"
+}
+},
+  "28": {
+  "kind": "array",
+  "values": ["f?\"\"\"", "\"\"\"", "\\"]
+},
+  "29": {
+  "kind": "object",
+  "values": {
+  "pattern": "[%+%-%*%%]%%=?",
+  "type": "operator"
+}
+},
   "3": {
   "kind": "array",
   "values": ["/*", "*/"]
@@ -245,6 +269,8 @@
 }, {
   "$ref": "24"
 }, {
+  "$ref": "27"
+}, {
   "$ref": "10"
 }, {
   "$ref": "12"
@@ -262,6 +288,8 @@
   "$ref": "17"
 }, {
   "$ref": "18"
+}, {
+  "$ref": "29"
 }, {
   "$ref": "19"
 }, {

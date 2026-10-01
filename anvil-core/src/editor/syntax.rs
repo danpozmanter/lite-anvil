@@ -864,14 +864,24 @@ mod tests {
     }
 
     #[test]
-    fn gossamer_covers_0_12_surface() {
-        // Gossamer 0.12.0: `arena` blocks, `package` reserved, Rc/Weak
-        // transparency, spawn JoinHandles, Fn-trait types, attributes,
-        // and raw strings. Rust-only `dyn`/`ref`/`str` must be gone.
+    fn gossamer_covers_0_65_surface() {
+        // Gossamer 0.65.1 (see the 0.65.0 changelog entry): `arena` blocks,
+        // `package` reserved, `cohort`/`comptime`/`newtype`/`packed`
+        // keywords, interpolated and triple-quoted strings, wrapping
+        // arithmetic (`+%`, `-%`, `*%`), attributes, and raw strings.
+        // Rust-only `dyn`/`ref`/`str` must be gone.
         let entries = load_syntax_index(&data_dir());
         let entry = match_syntax_entry("mem.gos", &entries).expect("gossamer entry");
         let def = entry.load_full().expect("load_full");
         for kw in ["arena", "package"] {
+            assert_eq!(
+                def.symbols.get(kw).map(String::as_str),
+                Some("keyword"),
+                "{kw} must be a keyword"
+            );
+        }
+        // 0.65.0 contextual keywords (SPEC.md §2.4).
+        for kw in ["cohort", "comptime", "newtype", "packed"] {
             assert_eq!(
                 def.symbols.get(kw).map(String::as_str),
                 Some("keyword"),
@@ -912,6 +922,52 @@ mod tests {
         );
         let joined: String = toks.iter().map(|t| t.text.as_str()).collect();
         assert_eq!(joined, attr_line);
+        // 0.65.0 interpolated strings tokenize whole, `f"..."` like `b"..."`.
+        let fstr_line = r#"let s = f"hi {name}!" + b"x""#;
+        let toks = crate::editor::tokenizer::tokenize_line(&compiled, fstr_line);
+        let strings: Vec<_> = toks
+            .iter()
+            .filter(|t| t.token_type.as_ref() == "string")
+            .map(|t| t.text.trim_start())
+            .collect();
+        assert_eq!(
+            strings,
+            vec!["f\"hi {name}!\"", r#"b"x""#],
+            "f-strings should tokenize whole, got {toks:?}"
+        );
+        // 0.65.0 triple-quoted strings (plain and interpolated) tokenize
+        // whole, like `b"..."` and the raw strings do. (Each on its own
+        // line: the editor tokenizes line-by-line, and a second pair
+        // later on a line that already closed one pair hits a pre-existing
+        // pair-state quirk in the tokenizer, not the grammar — `f"""a"""`
+        // alone tokenizes whole.)
+        let toks: Vec<_> = ["let t = \"\"\"inline\"\"\"", "let u = f\"\"\"n = {n}\"\"\""]
+            .iter()
+            .flat_map(|l| crate::editor::tokenizer::tokenize_line(&compiled, l))
+            .collect();
+        let strings: Vec<_> = toks
+            .iter()
+            .filter(|t| t.token_type.as_ref() == "string")
+            .map(|t| t.text.trim_start())
+            .collect();
+        assert_eq!(
+            strings,
+            vec!["\"\"\"inline\"\"\"", "f\"\"\"n = {n}\"\"\""],
+            "triple-quoted strings should tokenize whole, got {toks:?}"
+        );
+        // 0.65.0 wrapping arithmetic: `+%`/`-%`/`*%` are operators, and
+        // plain `+`/`-` still are.
+        let wrap_line = "let w = a +% b -% c *% d + e - f";
+        let toks = crate::editor::tokenizer::tokenize_line(&compiled, wrap_line);
+        for op in ["+%", "-%", "*%", "+", "-"] {
+            assert!(
+                toks.iter()
+                    .any(|t| t.token_type.as_ref() == "operator" && t.text.trim_start() == op),
+                "`{op}` should tokenize as operator, got {toks:?}"
+            );
+        }
+        let joined: String = toks.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(joined, wrap_line);
         let raw_line = r##"let p = r"C:\no\escape" + r#"has "quotes""#"##;
         let toks = crate::editor::tokenizer::tokenize_line(&compiled, raw_line);
         // Leading whitespace folds into the following token's text.

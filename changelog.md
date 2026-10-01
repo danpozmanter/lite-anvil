@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.16.10] - 2026-09-30 - Unsaved-changes warning when opening a file, and Gossamer 0.65.1 highlighting.
+
+* Opening a file while an untitled buffer still holds unsaved edits now shows the same unsaved-changes warning quitting shows, instead of discarding the buffer silently: cancelling keeps the edits, confirming proceeds with the open, and nothing prompts when nothing is unsaved.
+* Gossamer highlighting covers 0.65.1: interpolated and triple-quoted strings, the wrapping arithmetic operators `+%`, `-%`, and `*%` (and their `=` forms), and the `cohort`, `comptime`, `newtype`, and `packed` keywords.
+
 ## [2.16.9] - 2026-09-29 - Terminal links, single-edit comment toggles, and faster relexing.
 
 * Typing in very large files re-lexes only the lines that changed, so editing stays fast instead of re-tokenizing the rest of the file.

@@ -898,7 +898,7 @@ pub fn run(
     // Open files from CLI args. Per-tab state and session/file I/O live
     // in `crate::editor::open_doc`.
     use crate::editor::open_doc::{
-        OpenDoc, check_file_size_limit, doc_is_modified, nag_msg_close, nag_msg_quit,
+        OpenDoc, check_file_size_limit, doc_is_modified, nag_msg_close, nag_msg_open, nag_msg_quit,
         open_file_into, project_session_key, restore_project_session, save_project_session,
         scroll_new_doc_to_line, split_path_line,
     };
@@ -1362,6 +1362,11 @@ pub fn run(
         }
     }
     let mut nag = Nag::None;
+    // A user-requested file open parked while the unsaved-changes nag is
+    // up: the path (and optional goto-line) to open once the user
+    // confirms. Only interactive open paths set this, so session restore
+    // and LSP auto-open keep opening without prompting.
+    let mut pending_open: Option<(String, Option<usize>)> = None;
     // Set by the KeyDown-side nag handlers so the immediately-following
     // SDL_TEXTINPUT event (which fires on every printable keystroke,
     // including Y / N) doesn't leak into the active document.
@@ -3110,6 +3115,19 @@ pub fn run(
                                         let ap = std::path::Path::new(&actual);
                                         if ap.is_file() {
                                             cmdview_active = false;
+                                            // Opening can discard an unsaved
+                                            // buffer (single-file mode replaces
+                                            // the current doc outright), so warn
+                                            // first, the same way quitting does.
+                                            if docs.iter().any(doc_is_modified) {
+                                                pending_open = Some((actual.clone(), line));
+                                                nag = Nag::UnsavedChanges {
+                                                    message: nag_msg_open(&docs),
+                                                    tab_to_close: None,
+                                                };
+                                                redraw = true;
+                                                continue;
+                                            }
                                             if single_file_mode {
                                                 // Replace current doc.
                                                 for d in &docs { autoreload.unwatch(&d.path); }
@@ -3232,6 +3250,15 @@ pub fn run(
                                     CmdViewMode::OpenRecent => {
                                         cmdview_active = false;
                                         if p.is_file() {
+                                            if docs.iter().any(doc_is_modified) {
+                                                pending_open = Some((path.clone(), None));
+                                                nag = Nag::UnsavedChanges {
+                                                    message: nag_msg_open(&docs),
+                                                    tab_to_close: None,
+                                                };
+                                                redraw = true;
+                                                continue;
+                                            }
                                             if open_file_into(&path, &mut docs, use_git()) {
                                                 active_tab = docs.len() - 1;
                                                 autoreload.watch(&path);
@@ -4714,6 +4741,33 @@ pub fn run(
                                     } else if idx <= active_tab {
                                         active_tab = active_tab.saturating_sub(1);
                                     }
+                                } else if let Some((path, goto_line)) = pending_open.take() {
+                                    // The nag came from a parked file open:
+                                    // complete it now, discarding the unsaved
+                                    // state the user just confirmed away.
+                                    if single_file_mode {
+                                        for d in &docs {
+                                            autoreload.unwatch(&d.path);
+                                        }
+                                        docs.clear();
+                                        active_tab = 0;
+                                    }
+                                    if open_file_into(&path, &mut docs, use_git()) {
+                                        active_tab = docs.len() - 1;
+                                        autoreload.watch(&path);
+                                        remember_recent_file(
+                                            &mut recent_files,
+                                            &path,
+                                            userdir_path,
+                                        );
+                                        if let Some(ln) = goto_line {
+                                            scroll_new_doc_to_line(
+                                                &mut docs,
+                                                ln,
+                                                style.code_font_height * 1.2,
+                                            );
+                                        }
+                                    }
                                 } else {
                                     quit = true;
                                 }
@@ -4723,6 +4777,7 @@ pub fn run(
                             }
                             "n" | "N" | "escape" => {
                                 // No / Cancel: leave everything as-is.
+                                pending_open = None;
                                 nag = Nag::None;
                                 redraw = true;
                                 continue;
@@ -4857,6 +4912,15 @@ pub fn run(
                                     // If the selected item is a file path, open it.
                                     if cmd.starts_with('/') && std::path::Path::new(&cmd).is_file()
                                     {
+                                        if docs.iter().any(doc_is_modified) {
+                                            pending_open = Some((cmd.clone(), None));
+                                            nag = Nag::UnsavedChanges {
+                                                message: nag_msg_open(&docs),
+                                                tab_to_close: None,
+                                            };
+                                            redraw = true;
+                                            continue;
+                                        }
                                         if open_file_into(&cmd, &mut docs, use_git()) {
                                             active_tab = docs.len() - 1;
                                             autoreload.watch(&cmd);
@@ -6157,11 +6221,40 @@ pub fn run(
                                                 if active_tab >= docs.len() && !docs.is_empty() {
                                                     active_tab = docs.len() - 1;
                                                 }
+                                            } else if let Some((path, goto_line)) =
+                                                pending_open.take()
+                                            {
+                                                // The nag came from a parked file
+                                                // open: complete it now.
+                                                if single_file_mode {
+                                                    for d in &docs {
+                                                        autoreload.unwatch(&d.path);
+                                                    }
+                                                    docs.clear();
+                                                    active_tab = 0;
+                                                }
+                                                if open_file_into(&path, &mut docs, use_git()) {
+                                                    active_tab = docs.len() - 1;
+                                                    autoreload.watch(&path);
+                                                    remember_recent_file(
+                                                        &mut recent_files,
+                                                        &path,
+                                                        userdir_path,
+                                                    );
+                                                    if let Some(ln) = goto_line {
+                                                        scroll_new_doc_to_line(
+                                                            &mut docs,
+                                                            ln,
+                                                            style.code_font_height * 1.2,
+                                                        );
+                                                    }
+                                                }
                                             } else {
                                                 quit = true;
                                             }
                                         }
                                         // No (i == 1): just dismiss the nag.
+                                        pending_open = None;
                                         nag = Nag::None;
                                         #[allow(unused_assignments)]
                                         {
@@ -7071,6 +7164,14 @@ pub fn run(
                                 let already = docs.iter().position(|d| d.path == entry_path);
                                 if let Some(idx) = already {
                                     active_tab = idx;
+                                } else if docs.iter().any(doc_is_modified) {
+                                    pending_open = Some((entry_path.clone(), None));
+                                    nag = Nag::UnsavedChanges {
+                                        message: nag_msg_open(&docs),
+                                        tab_to_close: None,
+                                    };
+                                    redraw = true;
+                                    continue;
                                 } else {
                                     // Notes mode is single-note-at-a-time —
                                     // close any other notes before opening

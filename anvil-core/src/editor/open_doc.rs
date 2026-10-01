@@ -457,11 +457,12 @@ pub(crate) fn doc_is_modified(doc: &OpenDoc) -> bool {
     .unwrap_or(false)
 }
 
-/// Builds the "X has unsaved changes, quit anyway?" prompt. If more than
-/// one modified doc exists, the subject becomes "Multiple files".
-pub(crate) fn nag_msg_quit(docs: &[OpenDoc]) -> String {
+/// Subject of the unsaved-changes prompts: the single modified doc's
+/// name (or "untitled"), or "Multiple files" when more than one doc is
+/// modified.
+fn nag_subject(docs: &[OpenDoc]) -> String {
     let modified: Vec<&OpenDoc> = docs.iter().filter(|d| doc_is_modified(d)).collect();
-    let label = if modified.len() == 1 {
+    if modified.len() == 1 {
         let name = &modified[0].name;
         if name.is_empty() {
             "untitled".to_string()
@@ -470,8 +471,19 @@ pub(crate) fn nag_msg_quit(docs: &[OpenDoc]) -> String {
         }
     } else {
         "Multiple files".to_string()
-    };
-    format!("{label} has unsaved changes, quit anyway?")
+    }
+}
+
+/// Builds the "X has unsaved changes, quit anyway?" prompt.
+pub(crate) fn nag_msg_quit(docs: &[OpenDoc]) -> String {
+    format!("{} has unsaved changes, quit anyway?", nag_subject(docs))
+}
+
+/// Builds the "X has unsaved changes, open anyway?" prompt shown when a
+/// user-requested file open would proceed while a buffer still holds
+/// unsaved edits.
+pub(crate) fn nag_msg_open(docs: &[OpenDoc]) -> String {
+    format!("{} has unsaved changes, open anyway?", nag_subject(docs))
 }
 
 /// Builds the "X has unsaved changes, close anyway?" prompt for a single

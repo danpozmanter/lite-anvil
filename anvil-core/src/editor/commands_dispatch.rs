@@ -699,7 +699,13 @@ match cmd.as_str() {
     if !std::path::Path::new(&settings_path).exists() {
         let _ = std::fs::write(&settings_path, NativeConfig::default_toml_template());
     }
-    if open_file_into(&settings_path, &mut docs, use_git()) {
+    if docs.iter().any(doc_is_modified) {
+        pending_open = Some((settings_path.clone(), None));
+        nag = Nag::UnsavedChanges {
+            message: nag_msg_open(&docs),
+            tab_to_close: None,
+        };
+    } else if open_file_into(&settings_path, &mut docs, use_git()) {
         active_tab = docs.len() - 1;
     }
 }
