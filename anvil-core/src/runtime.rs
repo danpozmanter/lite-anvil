@@ -259,7 +259,10 @@ mod tests {
         let root = std::env::temp_dir().join("lite-anvil-portable-legacy-test");
         let exe_dir = root.join("app");
         std::fs::create_dir_all(exe_dir.join("user")).unwrap();
-        assert_eq!(bundled_user_dir(&exe_dir, "lite-anvil"), Some(exe_dir.join("user")));
+        assert_eq!(
+            bundled_user_dir(&exe_dir, "lite-anvil"),
+            Some(exe_dir.join("user"))
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 
