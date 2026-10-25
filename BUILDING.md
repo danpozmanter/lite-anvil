@@ -161,3 +161,7 @@ The binary locates `data/` by walking up from its own path until it finds a
 directory containing `data/fonts/Lilex-Regular.ttf`. In release installs the
 data is copied to the platform-appropriate location and the binary finds it
 there.
+
+Bundled fonts are also embedded in each executable and used if the default font
+files cannot be loaded, so copying an executable without `data/` does not prevent
+startup. Keep `data/` alongside portable builds for themes and syntax grammars.

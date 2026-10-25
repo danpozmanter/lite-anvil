@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.16.13] - 2026-10-25 - Embedded font fallback.
+
+* The editors now fall back to embedded copies of their bundled fonts when the default font files are missing or unreadable. Copying an executable without its `data/` directory no longer prevents startup. Custom font failures still trigger the default-font fallback.
+
 ## [2.16.12] - 2026-10-24 - Portable mode and a Windows portable release.
 
 * A `user/` directory next to the executable now enables portable mode (as in LiteXL): all config and state goes into that directory instead of the per-user config location, one subdirectory per app (`user/lite-anvil/`, `user/nano-anvil/`, `user/note-anvil/`). Existing installs using a single shared `user/` directory keep working unchanged.

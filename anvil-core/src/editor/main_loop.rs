@@ -780,7 +780,7 @@ pub fn run(
     }
 
     let mut font_warning: Option<String> = None;
-    let mut draw_ctx = match load_fonts(&config) {
+    let mut draw_ctx = match load_fonts(&config, datadir) {
         Ok(ctx) => ctx,
         Err(e) => {
             // Font loading failed (custom path or missing data dir). Try
@@ -790,7 +790,7 @@ pub fn run(
             font_warning = Some(msg);
             config.fonts = crate::editor::config::FontsConfig::default();
             config.resolve_font_paths(datadir);
-            match load_fonts(&config) {
+            match load_fonts(&config, datadir) {
                 Ok(ctx) => ctx,
                 Err(e2) => {
                     log::error!("Default font loading also failed: {e2}");
@@ -5506,7 +5506,7 @@ pub fn run(
                             let mut new_config = config.clone();
                             new_config.fonts.ui.size = new_logical as u32;
                             new_config.fonts.code.size = new_logical as u32;
-                            if let Ok(new_ctx) = load_fonts(&new_config) {
+                            if let Ok(new_ctx) = load_fonts(&new_config, datadir) {
                                 config = new_config.clone();
                                 draw_ctx = new_ctx;
                                 style = build_style(&config, &draw_ctx);
@@ -16260,6 +16260,7 @@ fn apply_theme_to_style(style: &mut StyleContext, palette: &crate::editor::style
 /// Load fonts from NativeConfig into a draw context.
 fn load_fonts(
     config: &NativeConfig,
+    datadir: &str,
 ) -> Result<crate::editor::draw_context::NativeDrawContext, String> {
     use crate::renderer::{Antialiasing, FontInner, Hinting};
 
@@ -16301,7 +16302,7 @@ fn load_fonts(
         let mut refs = Vec::new();
         for path in paths {
             let scaled_size = spec.size as f32 * scale as f32;
-            let inner = FontInner::load(path, scaled_size, aa, hint)?;
+            let inner = FontInner::load_with_bundled_fallback(path, datadir, scaled_size, aa, hint)?;
             let arc = std::sync::Arc::new(parking_lot::Mutex::new(inner));
             crate::renderer::font::register_font(&arc);
             refs.push(arc);
@@ -16367,7 +16368,7 @@ fn load_fonts(
                     dir.join("seti.ttf").to_string_lossy().to_string()
                 })
                 .unwrap_or_default();
-            if std::path::Path::new(&seti_path).exists() {
+            if !seti_path.is_empty() {
                 let spec = crate::editor::config::FontSpec {
                     path: Some(seti_path),
                     // Seti glyphs are designed small; scale to 150% of UI font

@@ -1,9 +1,9 @@
 use freetype_sys::{
     FT_Done_Face, FT_FACE_FLAG_SCALABLE, FT_Get_Char_Index, FT_GlyphSlot, FT_Init_FreeType,
     FT_Int32, FT_LOAD_FORCE_AUTOHINT, FT_LOAD_NO_HINTING, FT_LOAD_TARGET_LCD, FT_LOAD_TARGET_LIGHT,
-    FT_LOAD_TARGET_MONO, FT_Library, FT_Load_Char, FT_Load_Glyph, FT_New_Face, FT_RENDER_MODE_LCD,
-    FT_RENDER_MODE_LIGHT, FT_RENDER_MODE_MONO, FT_RENDER_MODE_NORMAL, FT_Render_Glyph,
-    FT_Render_Mode, FT_Set_Pixel_Sizes, FT_UInt, FT_ULong,
+    FT_LOAD_TARGET_MONO, FT_Library, FT_Load_Char, FT_Load_Glyph, FT_New_Face, FT_New_Memory_Face,
+    FT_RENDER_MODE_LCD, FT_RENDER_MODE_LIGHT, FT_RENDER_MODE_MONO, FT_RENDER_MODE_NORMAL,
+    FT_Render_Glyph, FT_Render_Mode, FT_Set_Pixel_Sizes, FT_UInt, FT_ULong,
 };
 use parking_lot::Mutex;
 use std::cell::Cell;
@@ -208,6 +208,53 @@ impl FontInner {
         if err != 0 {
             return Err(format!("FT_New_Face failed ({path}): error {err}"));
         }
+        Self::from_face(face, path, size, antialiasing, hinting)
+    }
+
+    /// Prefer files on disk, with embedded defaults as a fallback only for
+    /// paths in the runtime data directory. Custom font errors still propagate.
+    pub(crate) fn load_with_bundled_fallback(
+        path: &str,
+        datadir: &str,
+        size: f32,
+        antialiasing: Antialiasing,
+        hinting: Hinting,
+    ) -> Result<Self, String> {
+        Self::load(path, size, antialiasing, hinting).or_else(|error| {
+            let font_path = std::path::Path::new(path);
+            if font_path.parent() != Some(std::path::Path::new(datadir).join("fonts").as_path()) {
+                return Err(error);
+            }
+            let bytes: &'static [u8] = match font_path.file_name().and_then(|name| name.to_str()) {
+                Some("Lilex-Regular.ttf") => {
+                    include_bytes!("../../../data/fonts/Lilex-Regular.ttf")
+                }
+                Some("Lilex-Medium.ttf") => include_bytes!("../../../data/fonts/Lilex-Medium.ttf"),
+                Some("Lilex-Light.ttf") => include_bytes!("../../../data/fonts/Lilex-Light.ttf"),
+                Some("icons.ttf") => include_bytes!("../../../data/fonts/icons.ttf"),
+                Some("seti.ttf") => include_bytes!("../../../data/fonts/seti.ttf"),
+                _ => return Err(error),
+            };
+            let lib = ft_lib()?;
+            let mut face = std::ptr::null_mut();
+            // SAFETY: the embedded bytes have static lifetime, so they outlive
+            // the face, including through FT_Done_Face. The library is valid.
+            let err =
+                unsafe { FT_New_Memory_Face(lib, bytes.as_ptr(), bytes.len() as _, 0, &mut face) };
+            if err != 0 {
+                return Err(format!("FT_New_Memory_Face failed ({path}): error {err}"));
+            }
+            Self::from_face(face, path, size, antialiasing, hinting)
+        })
+    }
+
+    fn from_face(
+        face: *mut freetype_sys::FT_FaceRec,
+        path: &str,
+        size: f32,
+        antialiasing: Antialiasing,
+        hinting: Hinting,
+    ) -> Result<Self, String> {
         let mut inner = FontInner {
             face: face as FT_Library,
             owner_thread: thread::current().id(),
@@ -466,6 +513,80 @@ mod font_tests {
         );
         FontInner::load(&path, 15.0, Antialiasing::Grayscale, Hinting::Slight)
             .expect("bundled font loads")
+    }
+
+    #[test]
+    fn bundled_fonts_render_without_a_data_directory() {
+        let datadir =
+            std::env::temp_dir().join(format!("anvil-missing-fonts-{}", std::process::id()));
+        assert!(!datadir.exists());
+        let datadir = datadir.to_str().unwrap();
+        for (name, glyph) in [
+            ("Lilex-Regular.ttf", 'M'),
+            ("Lilex-Medium.ttf", 'M'),
+            ("Lilex-Light.ttf", 'M'),
+            ("icons.ttf", 'M'),
+            ("seti.ttf", '\u{e001}'),
+        ] {
+            let path = crate::editor::config::join_font_path(datadir, name);
+            let mut font = FontInner::load_with_bundled_fallback(
+                &path,
+                datadir,
+                15.0,
+                Antialiasing::Grayscale,
+                Hinting::Slight,
+            )
+            .expect("embedded font loads without external files");
+            assert!(font.height > 0, "{name} has metrics");
+            let glyph = font.get_glyph(glyph as u32);
+            assert!(glyph.defined, "{name} maps its glyph");
+            assert!(glyph.bitmap.is_some(), "{name} renders its glyph");
+        }
+    }
+
+    #[test]
+    fn custom_font_errors_do_not_use_embedded_fonts() {
+        let datadir = "/missing-anvil-data";
+        for path in [
+            "/custom/fonts/Lilex-Regular.ttf",
+            "/missing-anvil-data/fonts/custom.ttf",
+        ] {
+            assert!(
+                FontInner::load_with_bundled_fallback(
+                    path,
+                    datadir,
+                    15.0,
+                    Antialiasing::Grayscale,
+                    Hinting::Slight,
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn default_font_files_take_precedence_and_corrupt_files_fall_back() {
+        let root = std::env::temp_dir().join(format!("anvil-font-fallback-{}", std::process::id()));
+        let fonts = root.join("fonts");
+        std::fs::create_dir_all(&fonts).unwrap();
+        let path = fonts.join("Lilex-Regular.ttf");
+        let load = || {
+            FontInner::load_with_bundled_fallback(
+                path.to_str().unwrap(),
+                root.to_str().unwrap(),
+                15.0,
+                Antialiasing::Grayscale,
+                Hinting::Slight,
+            )
+            .unwrap()
+        };
+        // A valid external icon font under the default name must win over
+        // the embedded text font. It does not define the letter M.
+        std::fs::write(&path, include_bytes!("../../../data/fonts/seti.ttf")).unwrap();
+        assert!(!load().get_glyph('M' as u32).defined);
+        std::fs::write(&path, b"invalid font").unwrap();
+        assert!(load().get_glyph('M' as u32).defined);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
