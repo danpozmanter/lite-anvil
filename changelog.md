@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.16.12] - 2026-10-24 - Portable mode and a Windows portable release.
+
+* A `user/` directory next to the executable now enables portable mode (as in LiteXL): all config and state goes into that directory instead of the per-user config location, one subdirectory per app (`user/lite-anvil/`, `user/nano-anvil/`, `user/note-anvil/`). Existing installs using a single shared `user/` directory keep working unchanged.
+* Windows releases now ship a portable zip alongside the installer: `lite-anvil-*-windows-x86_64-portable.zip` contains `lite-anvil.exe`, `nano-anvil.exe`, `note-anvil.exe`, and a `user/` directory with per-app subfolders, so the extracted folder is portable out of the box.
+
 ## [2.16.11] - 2026-10-01 - Syntax highlighting fixes
 
 * A dollar amount like `$100` in Markdown no longer opens inline math that colored the rest of the file; inline math needs its closing `$` on the same line.

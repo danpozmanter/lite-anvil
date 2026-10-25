@@ -210,6 +210,8 @@ Lite Anvil is configured via a TOML file. Open it from the sidebar settings icon
 | macOS | `~/Library/Application Support/lite-anvil/config.toml` |
 | Windows | `%APPDATA%\lite-anvil\config.toml` |
 
+**Portable mode:** a `user/` directory next to the executable replaces the per-user location above -- all config and state then lives inside it (under `user/lite-anvil/`, `user/nano-anvil/`, or `user/note-anvil/`). See [Installation -- Portable mode](installation.md#portable-mode).
+
 ### Key options
 
 ```toml

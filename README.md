@@ -40,6 +40,7 @@ I do not intend to maintain or support this in any way, but wanted to share the 
 - **Language-aware line comments** -- Ctrl+/ picks the correct marker for 51 languages
 - **51 built-in syntax grammars** including Rust, Go, Python, TypeScript, C, C++, Java, and more
 - **Session restore** -- open files, active tab, font scale persist across restarts
+- **Portable mode** -- a `user/` folder next to the executable keeps all config and state alongside it, one subdirectory per app
 - **Native file watching** via inotify for external-change detection
 - **JSON-backed color themes** (`data/assets/themes/*.json`) with runtime cycling (Ctrl+Shift+P)
 - **Keyboard-navigated file/folder open** with filesystem autocomplete and `:N` line support

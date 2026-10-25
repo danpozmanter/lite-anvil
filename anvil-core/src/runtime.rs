@@ -135,15 +135,6 @@ fn find_data_dir(exe_file: &Path, exe_dir: &Path) -> PathBuf {
 }
 
 fn find_user_dir(exe_file: &Path, exe_dir: &Path, _path_sep: char) -> PathBuf {
-    let bundled = exe_dir.join("user");
-    if bundled.exists() {
-        return bundled;
-    }
-
-    if let Some(user_dir) = std::env::var_os("LITE_USERDIR") {
-        return PathBuf::from(user_dir);
-    }
-
     // Per-app subdirectory so nano-anvil and note-anvil keep their own
     // session / recent-files / project state and don't pollute
     // lite-anvil's. Lite-anvil keeps the historical "lite-anvil" name
@@ -153,6 +144,18 @@ fn find_user_dir(exe_file: &Path, exe_dir: &Path, _path_sep: char) -> PathBuf {
         Some("note-anvil") => "note-anvil",
         _ => "lite-anvil",
     };
+
+    // Portable mode, as in LiteXL: a `user/` directory next to the
+    // executable holds all user config and state, one subdirectory per
+    // app. Installs made before per-app separation (a bare `user/` with
+    // no app subdirectories) keep using `user/` directly.
+    if let Some(user_dir) = bundled_user_dir(exe_dir, app_dir) {
+        return user_dir;
+    }
+
+    if let Some(user_dir) = std::env::var_os("LITE_USERDIR") {
+        return PathBuf::from(user_dir);
+    }
 
     // Windows: use %APPDATA% (`C:\Users\<user>\AppData\Roaming`) per
     // Microsoft's user-data guidance, rather than dropping a folder
@@ -178,7 +181,27 @@ fn find_user_dir(exe_file: &Path, exe_dir: &Path, _path_sep: char) -> PathBuf {
         return PathBuf::from(home).join(".config").join(app_dir);
     }
 
-    bundled
+    // Last resort: a user/ directory next to the executable, whether or
+    // not it exists yet.
+    exe_dir.join("user")
+}
+
+/// Portable mode detection, LiteXL-style: a `user/` directory next to the
+/// executable becomes the user config/state root. Returns the per-app
+/// subdirectory when it exists, the shared `user/` itself for installs made
+/// before per-app separation, and `None` when there is no adjacent `user/`
+/// directory at all.
+fn bundled_user_dir(exe_dir: &Path, app_dir: &str) -> Option<PathBuf> {
+    let user = exe_dir.join("user");
+    if !user.exists() {
+        return None;
+    }
+    let per_app = user.join(app_dir);
+    if per_app.exists() {
+        Some(per_app)
+    } else {
+        Some(user)
+    }
 }
 
 /// Strip the Windows `\\?\` extended-length path prefix, if present.
@@ -212,5 +235,40 @@ fn platform_name() -> &'static str {
         "NetBSD"
     } else {
         "Unknown"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_subdirectory_wins_over_shared_user_dir() {
+        let root = std::env::temp_dir().join("lite-anvil-portable-app-test");
+        let exe_dir = root.join("app");
+        std::fs::create_dir_all(exe_dir.join("user").join("lite-anvil")).unwrap();
+        assert_eq!(
+            bundled_user_dir(&exe_dir, "lite-anvil"),
+            Some(exe_dir.join("user").join("lite-anvil"))
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn bare_user_dir_stays_shared_for_existing_installs() {
+        let root = std::env::temp_dir().join("lite-anvil-portable-legacy-test");
+        let exe_dir = root.join("app");
+        std::fs::create_dir_all(exe_dir.join("user")).unwrap();
+        assert_eq!(bundled_user_dir(&exe_dir, "lite-anvil"), Some(exe_dir.join("user")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn no_adjacent_user_dir_is_not_portable() {
+        let root = std::env::temp_dir().join("lite-anvil-not-portable-test");
+        let exe_dir = root.join("app");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        assert_eq!(bundled_user_dir(&exe_dir, "lite-anvil"), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

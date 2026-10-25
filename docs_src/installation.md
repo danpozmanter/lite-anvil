@@ -48,6 +48,8 @@ Running the script via `bash` is what lets the quarantine clear actually take ef
 
 Download `LiteAnvil-*-x86_64-setup.exe` and run it. The installer bundles `lite-anvil.exe`, `nano-anvil.exe`, and `note-anvil.exe`, creates Start Menu shortcuts, and offers optional file-association and *Add to PATH* tasks. A SmartScreen warning appears the first time (the build is unsigned) — click *More info* → *Run anyway*.
 
+For an install that travels (a USB stick, a synced folder, a directory you can delete without leaving settings behind), download `lite-anvil-*-windows-x86_64-portable.zip` instead and extract it anywhere. It contains the same three binaries plus a `user/` directory — see [Portable mode](#portable-mode).
+
 ## Building from Source
 
 ### Requirements
@@ -96,6 +98,10 @@ User config location:
 | Linux | `~/.config/lite-anvil/` |
 | macOS | `~/Library/Application Support/lite-anvil/` |
 | Windows | `%APPDATA%\lite-anvil\` |
+
+### Portable mode
+
+If a `user/` directory sits next to the executable (the LiteXL convention), the editor runs in portable mode: all config and state goes into that directory instead of the per-user location above, and nothing is written to your profile. Each app keeps its own subdirectory there (`user/lite-anvil/`, `user/nano-anvil/`, `user/note-anvil/`); installs made with a single shared `user/` directory keep working unchanged. The Windows portable zip above ships exactly this layout, so the extracted folder can be moved or deleted freely. A bundled `user/` directory takes precedence over an explicit `LITE_USERDIR`.
 
 Key files:
 

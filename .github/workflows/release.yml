@@ -286,11 +286,30 @@ jobs:
 
           Move-Item scripts\innosetup\LiteAnvil-*-setup.exe . -Force
 
+      # A zip with all 3 binaries and a user/ directory next to them. A
+      # user/ directory beside the executable puts the editor in portable
+      # mode (as in LiteXL): all config and state stays inside the
+      # extracted folder, one subdirectory per app, so it runs from
+      # anywhere (e.g. a USB stick) with nothing written to the profile.
+      - name: Package portable zip
+        run: |
+          $zipBase = "lite-anvil-$env:APP_VERSION-windows-x86_64-portable"
+          New-Item -ItemType Directory -Force -Path "$zipBase\user\lite-anvil", "$zipBase\user\nano-anvil", "$zipBase\user\note-anvil" | Out-Null
+          Copy-Item target\release\lite-anvil.exe "$zipBase\"
+          Copy-Item target\release\nano-anvil.exe "$zipBase\"
+          Copy-Item target\release\note-anvil.exe "$zipBase\"
+          # ZipFile.CreateFromDirectory keeps the empty per-app user/
+          # subdirectories; Compress-Archive drops them.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory("$PWD\$zipBase", "$PWD\$zipBase.zip")
+
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: lite-anvil-windows-x86_64
-          path: LiteAnvil-*-setup.exe
+          path: |
+            LiteAnvil-*-setup.exe
+            lite-anvil-*-windows-x86_64-portable.zip
 
   build-macos-intel:
     name: macOS Intel (x86_64)
