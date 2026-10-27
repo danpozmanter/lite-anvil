@@ -1,5 +1,9 @@
 # Change Log
 
+## [2.16.14] - 2026-10-27 - Numpad Enter creates a new line.
+
+* The Enter key on the numeric keypad now inserts a new line in the editor like the main Enter key, and submits the command palette, context menu, and dialogs; Shift, Ctrl, and Ctrl+Shift variants match their `return` counterparts.
+
 ## [2.16.13] - 2026-10-25 - Embedded font fallback.
 
 * The editors now fall back to embedded copies of their bundled fonts when the default font files are missing or unreadable. Copying an executable without its `data/` directory no longer prevents startup. Custom font failures still trigger the default-font fallback.

@@ -236,8 +236,28 @@ const DEFAULT_BINDINGS: &[(&str, &[&str])] = &[
             "dialog:select",
         ],
     ),
+    (
+        "keypad enter",
+        &[
+            "command:submit",
+            "context-menu:submit",
+            "doc:newline",
+            "dialog:select",
+        ],
+    ),
+    (
+        "shift+keypad enter",
+        &[
+            "command:submit",
+            "context-menu:submit",
+            "doc:newline",
+            "dialog:select",
+        ],
+    ),
     ("ctrl+return", &["doc:newline-below"]),
+    ("ctrl+keypad enter", &["doc:newline-below"]),
     ("ctrl+shift+return", &["doc:newline-above"]),
+    ("ctrl+shift+keypad enter", &["doc:newline-above"]),
     ("ctrl+j", &["doc:join-lines"]),
     ("ctrl+a", &["doc:select-all"]),
     (
@@ -451,6 +471,33 @@ mod tests {
         let km = NativeKeymap::with_defaults();
         assert!(km.map.contains_key("ctrl+q"));
         assert!(km.map.contains_key("ctrl+s"));
+    }
+
+    #[test]
+    fn keypad_enter_resolves_like_return() {
+        let km = NativeKeymap::with_defaults();
+        let plain = Modifiers::default();
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            km.commands_for("keypad enter", plain),
+            km.commands_for("return", plain)
+        );
+        assert_eq!(
+            km.commands_for("keypad enter", ctrl),
+            km.commands_for("return", ctrl)
+        );
+        assert_eq!(
+            km.commands_for("keypad enter", ctrl_shift),
+            km.commands_for("return", ctrl_shift)
+        );
     }
 
     #[test]
