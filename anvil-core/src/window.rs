@@ -149,10 +149,12 @@ pub fn init() -> Result<()> {
     //    on the plain software-framebuffer path (X11-SHM / wl_shm)
     //    instead of silently spinning up an OpenGL SDL_Renderer that
     //    dlopens libGL + libGLX_nvidia + libnvidia-glcore and
-    //    balloons RSS from ~18 MB to ~70 MB. Not set on macOS: SDL3's
-    //    Cocoa unaccelerated framebuffer path presents a blank
-    //    NSView on recent macOS versions; Metal/D3D don't carry the
-    //    libGL bloat problem that motivated the hint.
+    //    balloons RSS from ~18 MB to ~70 MB. Not set on macOS, where
+    //    frames reach the window through IOSurfaces on a layer
+    //    (`renderer/layer.rs`) and SDL's window surface is never
+    //    fetched. The SDL surface that `LITE_ANVIL_SDL_SURFACE` keeps
+    //    stays accelerated there: SDL3's unaccelerated Cocoa
+    //    framebuffer presents a blank NSView on recent macOS versions.
     //  * RENDER_DRIVER=software — belt-and-braces for the same goal.
     //  * VIDEO_DRIVER=x11,wayland — X11 first (presents via MIT-SHM
     //    with no GL), falling back to Wayland if X11 is absent.
@@ -188,6 +190,7 @@ pub fn init() -> Result<()> {
     if !ok {
         return Err(anyhow::anyhow!("SDL3 init failed: {}", sdl_error()));
     }
+    live_redraw::install();
     SDL.with(|s| {
         *s.borrow_mut() = Some(SdlState {
             window: None,
@@ -206,6 +209,7 @@ pub fn shutdown() {
     SDL.with(|s| {
         if let Some(mut state) = s.borrow_mut().take() {
             if let Some(w) = state.window.take() {
+                crate::renderer::release_window_frames();
                 // SAFETY: w.raw is valid; ownership is consumed here.
                 unsafe { SDL_DestroyWindow(w.raw) };
             }
@@ -833,12 +837,19 @@ fn poll_raw(state: &mut SdlState) -> Option<SDL_Event> {
         return Some(e);
     }
     let mut e = SDL_Event::default();
+    // Only `wait_event_redrawing` pumps the platform's events, so a live
+    // resize, which runs inside a pump, always starts where a redraw is lent.
     // SAFETY: SDL is initialized; e is a valid mutable SDL_Event.
-    if unsafe { SDL_PollEvent(&mut e) } {
-        Some(e)
-    } else {
-        None
-    }
+    let taken = unsafe {
+        SDL_PeepEvents(
+            &mut e,
+            1,
+            SDL_GETEVENT,
+            SDL_EVENT_FIRST.into(),
+            SDL_EVENT_LAST.into(),
+        )
+    };
+    (taken == 1).then_some(e)
 }
 
 pub fn poll_event() -> PollResult {
@@ -1040,31 +1051,128 @@ fn translate_event_native(
     None
 }
 
-/// Block until an event arrives or `timeout_secs` elapses.
-/// Returns `true` if an event is now pending.
-pub fn wait_event(timeout_secs: Option<f64>) -> bool {
-    SDL.with(|s| {
-        let mut guard = s.borrow_mut();
-        let Some(ref mut state) = *guard else {
-            return false;
-        };
-        if state.pending_event.is_some() {
+/// Block until an event arrives or `timeout_secs` elapses, calling `redraw`
+/// meanwhile for each frame a live resize asks for: the platform runs its own
+/// loop inside the wait until the drag ends. Returns `true` if an event is
+/// now pending.
+pub fn wait_event_redrawing(timeout_secs: Option<f64>, redraw: &mut dyn FnMut()) -> bool {
+    let pending = SDL.with(|s| s.borrow().as_ref().map(|st| st.pending_event.is_some()));
+    match pending {
+        None => return false,
+        Some(true) => return true,
+        Some(false) => {}
+    }
+    let mut e = SDL_Event::default();
+    // The SDL state stays unborrowed through the wait: a redraw inside it
+    // reads the window.
+    let got = live_redraw::scoped(redraw, || match timeout_secs {
+        Some(t) => {
+            let ms = (t * 1000.0).clamp(1.0, i32::MAX as f64) as i32;
+            // SAFETY: SDL is initialized; e is a valid mutable SDL_Event.
+            unsafe { SDL_WaitEventTimeout(&mut e, ms) }
+        }
+        // SAFETY: SDL is initialized; e is a valid mutable SDL_Event.
+        None => unsafe { SDL_WaitEvent(&mut e) },
+    });
+    if got {
+        SDL.with(|s| {
+            if let Some(state) = s.borrow_mut().as_mut() {
+                state.pending_event = Some(e);
+            }
+        });
+    }
+    got
+}
+
+/// The redraw `wait_event_redrawing` lends the event watch for its wait.
+mod live_redraw {
+    use std::cell::Cell;
+    use std::ffi::c_void;
+    use std::ptr::NonNull;
+
+    use sdl3_sys::everything::*;
+
+    type Redraw = dyn FnMut();
+
+    thread_local! {
+        static SLOT: Cell<Option<NonNull<Redraw>>> = const { Cell::new(None) };
+        // A redraw is running; a pump inside it must not start another.
+        static RUNNING: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Runs `wait` with `redraw` answering the frames a live resize asks for.
+    pub(super) fn scoped<R>(redraw: &mut dyn FnMut(), wait: impl FnOnce() -> R) -> R {
+        struct Restore(Option<NonNull<Redraw>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                SLOT.set(self.0);
+            }
+        }
+        let borrowed: NonNull<dyn FnMut() + '_> = NonNull::from(redraw);
+        // SAFETY: only the lifetime changes. The slot holds the pointer until
+        // `Restore` drops at the end of this call, while `redraw` stays borrowed.
+        let erased: NonNull<Redraw> = unsafe { std::mem::transmute(borrowed) };
+        let _restore = Restore(SLOT.replace(Some(erased)));
+        wait()
+    }
+
+    /// Installs the watch that serves `scoped`; quitting SDL removes it.
+    pub(super) fn install() {
+        // SAFETY: the watch takes no context.
+        if !unsafe { SDL_AddEventWatch(Some(entry), std::ptr::null_mut()) } {
+            log::error!("installing the live-resize redraw failed");
+        }
+    }
+
+    // Whether `e` asks for a frame the platform's resize loop gives no other
+    // chance to draw: the expose a live resize sends while that loop blocks
+    // the wait, or a size change while frames reach the window through the
+    // macOS layer. Cocoa delivers a size change inside the resize's own Core
+    // Animation transaction, so a frame drawn at once shows together with the
+    // new size. SDL replaces its own window surface only after its watches
+    // run, so a size change does not ask on that path.
+    fn asks(e: &SDL_WindowEvent) -> bool {
+        if e.r#type == SDL_EVENT_WINDOW_EXPOSED {
+            return e.data1 != 0;
+        }
+        (e.r#type == SDL_EVENT_WINDOW_RESIZED || e.r#type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+            && draws_on_resize()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draws_on_resize() -> bool {
+        crate::renderer::layer::applies()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn draws_on_resize() -> bool {
+        false
+    }
+
+    // SDL runs event watches for every event, on whatever thread queued it;
+    // the slot is set only on the main thread, for the length of its wait.
+    pub(super) unsafe extern "C" fn entry(_data: *mut c_void, event: *mut SDL_Event) -> bool {
+        if event.is_null() {
             return true;
         }
-        let mut e = SDL_Event::default();
-        // SAFETY: SDL is initialized; e is a valid mutable SDL_Event.
-        let got = match timeout_secs {
-            Some(t) => {
-                let ms = (t * 1000.0).clamp(1.0, i32::MAX as f64) as i32;
-                unsafe { SDL_WaitEventTimeout(&mut e, ms) }
-            }
-            None => unsafe { SDL_WaitEvent(&mut e) },
-        };
-        if got {
-            state.pending_event = Some(e);
+        // SAFETY: event is a complete SDL event; the window member is read
+        // only for a window event type.
+        let e = unsafe { &(*event).window };
+        if !asks(e) {
+            return true;
         }
-        got
-    })
+        let Some(redraw) = SLOT.get() else {
+            return true;
+        };
+        if RUNNING.replace(true) {
+            return true;
+        }
+        // SAFETY: the slot holds an exclusive borrow live for the wait this
+        // event came from, and RUNNING keeps this the only call into it.
+        unsafe { (*redraw.as_ptr())() };
+        RUNNING.set(false);
+        true
+    }
 }
 
 // SAFETY for all union accesses below: the event type is checked before accessing
@@ -1335,5 +1443,46 @@ mod tests {
         assert!(mods.shift);
         assert!(mods.gui);
         assert!(!mods.alt);
+    }
+
+    fn window_event(kind: SDL_EventType, data1: i32) -> SDL_Event {
+        let mut e = SDL_Event::default();
+        e.window = SDL_WindowEvent {
+            r#type: kind,
+            data1,
+            ..Default::default()
+        };
+        e
+    }
+
+    // SAFETY (all calls below): `entry` reads a complete event.
+    fn deliver(mut e: SDL_Event) {
+        unsafe { super::live_redraw::entry(std::ptr::null_mut(), &mut e) };
+    }
+
+    #[test]
+    fn live_resize_expose_redraws_only_inside_the_wait() {
+        let mut redraws = 0;
+        deliver(window_event(SDL_EVENT_WINDOW_EXPOSED, 1));
+        super::live_redraw::scoped(&mut || redraws += 1, || {
+            deliver(window_event(SDL_EVENT_WINDOW_EXPOSED, 1));
+            deliver(window_event(SDL_EVENT_WINDOW_EXPOSED, 0));
+            deliver(window_event(SDL_EVENT_KEY_DOWN, 1));
+        });
+        deliver(window_event(SDL_EVENT_WINDOW_EXPOSED, 1));
+        assert_eq!(redraws, 1);
+    }
+
+    #[test]
+    fn a_pump_inside_a_live_redraw_starts_no_second_redraw() {
+        let mut redraws = 0;
+        super::live_redraw::scoped(
+            &mut || {
+                redraws += 1;
+                deliver(window_event(SDL_EVENT_WINDOW_EXPOSED, 1));
+            },
+            || deliver(window_event(SDL_EVENT_WINDOW_EXPOSED, 1)),
+        );
+        assert_eq!(redraws, 1);
     }
 }

@@ -1,5 +1,10 @@
 # Change Log
 
+## [2.17.0] - 2026-10-29 - Lighter macOS window.
+
+* macOS: the window shows its frames through IOSurfaces on a Core Animation layer instead of SDL's Metal renderer, so the window keeps two or three copies of its pixels instead of four or five, and a hidden or minimized window releases its frame entirely. Set `LITE_ANVIL_SDL_SURFACE=1` to use SDL's window surface instead.
+* macOS: the editor redraws while the window is being resized, so growing it no longer flashes black.
+
 ## [2.16.14] - 2026-10-27 - Numpad Enter creates a new line.
 
 * The Enter key on the numeric keypad now inserts a new line in the editor like the main Enter key, and submits the command palette, context menu, and dialogs; Shift, Ctrl, and Ctrl+Shift variants match their `return` counterparts.

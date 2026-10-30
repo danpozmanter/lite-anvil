@@ -8,7 +8,14 @@ description = "Shared core library for Lite Anvil and Nano Anvil editors"
 
 [features]
 default = ["sdl"]
-sdl = ["dep:sdl3-sys"]
+sdl = [
+    "dep:sdl3-sys",
+    "dep:objc2",
+    "dep:objc2-app-kit",
+    "dep:objc2-core-foundation",
+    "dep:objc2-quartz-core",
+    "dep:objc2-io-surface",
+]
 
 [dependencies]
 # Build SDL3 from vendored source, statically, as part of this crate's
@@ -68,5 +75,21 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"
 toml = "0.8"
 
+# macOS shows the software frame through IOSurfaces set as a layer's
+# contents (`renderer/layer.rs`), so SDL never builds its Metal renderer
+# and window texture.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSWindow", "NSResponder", "objc2-core-foundation", "objc2-quartz-core"], optional = true }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFBase", "CFCGTypes", "CFDictionary", "CFNumber", "CFString"], optional = true }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"], optional = true }
+objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "libc", "objc2-core-foundation"], optional = true }
+
 [build-dependencies]
 cc = "1"
+
+# Cocoa windows need the main thread, which libtest's harness does not give.
+[[test]]
+name = "macos_layer"
+harness = false
+required-features = ["sdl"]

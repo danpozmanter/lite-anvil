@@ -2367,9 +2367,13 @@ pub fn run(
                     crate::window::force_invalidate();
                     redraw = true;
                 }
-                EditorEvent::Occluded | EditorEvent::Hidden => {
+                EditorEvent::Occluded => {
                     window_hidden = true;
                     crate::renderer::drop_caches();
+                }
+                EditorEvent::Hidden => {
+                    window_hidden = true;
+                    crate::renderer::drop_hidden_caches();
                 }
                 EditorEvent::KeyReleased { key, .. } => {
                     let k = key.as_str();
@@ -10308,7 +10312,24 @@ pub fn run(
             }
         }
 
+        if quit {
+            break;
+        }
+
+        // Periodic memory telemetry, off unless ANVIL_PERF is set.
+        if crate::editor::perf::enabled()
+            && last_memory_report.elapsed().as_secs() >= MEMORY_REPORT_INTERVAL_SECS
         {
+            crate::editor::perf::report_memory(&docs);
+            last_memory_report = Instant::now();
+        }
+
+        // Lays out and draws a frame, answering whether the editor is busy
+        // enough to wake at the frame interval. `live` draws for a live resize.
+        let mut frame = |live: bool| -> bool {
+            if live {
+                redraw = true;
+            }
             // Layout + render.
             let (w, h, _, _) = crate::window::get_window_size();
             let width = w as f64;
@@ -14191,37 +14212,30 @@ pub fn run(
                 redraw = syntax_pending_after_frame;
                 last_draw = Instant::now();
             }
-        }
-
-        if quit {
-            break;
-        }
+            last_draw.elapsed().as_secs_f64() < 0.3
+                || terminal.visible
+                || load_job.is_some()
+                || replace_job.is_some()
+                || git_status_job.is_some()
+                || git_blame_job.is_some()
+                || git_log_job.is_some()
+                || update_check_job.is_some()
+                || !lsp_state.pending_did_open.is_empty()
+        };
 
         // Block until the next event. While there is recent on-screen motion, a
         // terminal panel open (its PTY is polled here), or a background job
         // running, poll at the frame interval so output and animation stay
         // smooth. Otherwise sleep longer: input and worker-pushed wake-up
         // events return from the blocked wait immediately, so only idle CPU is
-        // affected, never responsiveness.
-        // Periodic memory telemetry, off unless ANVIL_PERF is set.
-        if crate::editor::perf::enabled()
-            && last_memory_report.elapsed().as_secs() >= MEMORY_REPORT_INTERVAL_SECS
-        {
-            crate::editor::perf::report_memory(&docs);
-            last_memory_report = Instant::now();
-        }
-
-        let busy = last_draw.elapsed().as_secs_f64() < 0.3
-            || terminal.visible
-            || load_job.is_some()
-            || replace_job.is_some()
-            || git_status_job.is_some()
-            || git_blame_job.is_some()
-            || git_log_job.is_some()
-            || update_check_job.is_some()
-            || !lsp_state.pending_did_open.is_empty();
+        // affected, never responsiveness. A live resize holds the wait inside
+        // the platform's own loop until the drag ends, so the frame is drawn
+        // from inside the wait meanwhile.
+        let busy = frame(false);
         let timeout = if busy { frame_interval } else { idle_wait };
-        crate::window::wait_event(Some(timeout));
+        crate::window::wait_event_redrawing(Some(timeout), &mut || {
+            frame(true);
+        });
     }
 
     // Persist recent files: add all currently open docs to recent_files.

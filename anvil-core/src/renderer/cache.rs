@@ -18,7 +18,7 @@ pub struct RenColor {
     pub a: u8,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenRect {
     pub x: i32,
     pub y: i32,

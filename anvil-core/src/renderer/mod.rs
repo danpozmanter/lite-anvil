@@ -1,10 +1,14 @@
 mod cache;
 mod fallback;
 pub(crate) mod font;
+#[cfg(target_os = "macos")]
+pub(crate) mod layer;
 
 pub(crate) use cache::{RenColor, RenRect, group_text_width};
 pub(crate) use fallback::take_uncovered;
 pub(crate) use font::{Antialiasing, FontInner, FontRef, Hinting};
+#[cfg(target_os = "macos")]
+pub use layer::{Captured, LayerError};
 
 use cache::RenCache;
 use sdl3_sys::everything::*;
@@ -60,7 +64,7 @@ pub fn native_begin_frame() {
     });
 }
 
-/// Native end_frame: compute dirty rects and render to the SDL surface.
+/// Native end_frame: compute dirty rects and render them to the window.
 pub fn native_end_frame() {
     CACHE.with(|cell| {
         let mut borrow = cell.borrow_mut();
@@ -71,30 +75,58 @@ pub fn native_end_frame() {
         }
         let commands = &cache.commands;
         let arena = &cache.text_arena;
-        crate::window::with_window_surface(|surface, window| {
-            // SAFETY: surface is valid for this call; we're on the main thread.
-            unsafe {
-                cache::render_dirty_rects(surface, commands, arena, &dirty);
+        #[cfg(target_os = "macos")]
+        if layer::applies() {
+            let window = crate::window::get_raw_window();
+            let (w, h) = (cache.screen.w, cache.screen.h);
+            let shown = layer::present(window, w, h, &dirty, |surface, damage| {
+                // SAFETY: the surface wraps a buffer locked for this call; we're
+                // on the main thread.
+                unsafe { cache::render_dirty_rects(surface, commands, arena, damage) };
+            });
+            match shown {
+                Ok(()) => {
+                    crate::window::show_if_hidden();
+                    return;
+                }
+                Err(err) => {
+                    // SDL's surface starts empty, so the frame repaints whole.
+                    layer::abandon(&err);
+                    let whole = [cache.screen];
+                    present_window_surface(commands, arena, &whole);
+                    return;
+                }
             }
-            let sdl_rects: Vec<SDL_Rect> = dirty
-                .iter()
-                .map(|r| SDL_Rect {
-                    x: r.x,
-                    y: r.y,
-                    w: r.w,
-                    h: r.h,
-                })
-                .collect();
-            // SAFETY: window is valid; sdl_rects is a valid slice.
-            unsafe {
-                SDL_UpdateWindowSurfaceRects(
-                    window,
-                    sdl_rects.as_ptr(),
-                    sdl_rects.len() as libc::c_int,
-                );
-            }
-            crate::window::show_if_hidden();
-        });
+        }
+        present_window_surface(commands, arena, &dirty);
+    });
+}
+
+// Renders `dirty` into SDL's window surface and shows those rectangles.
+fn present_window_surface(commands: &[cache::Command], arena: &str, dirty: &[RenRect]) {
+    crate::window::with_window_surface(|surface, window| {
+        // SAFETY: surface is valid for this call; we're on the main thread.
+        unsafe {
+            cache::render_dirty_rects(surface, commands, arena, dirty);
+        }
+        let sdl_rects: Vec<SDL_Rect> = dirty
+            .iter()
+            .map(|r| SDL_Rect {
+                x: r.x,
+                y: r.y,
+                w: r.w,
+                h: r.h,
+            })
+            .collect();
+        // SAFETY: window is valid; sdl_rects is a valid slice.
+        unsafe {
+            SDL_UpdateWindowSurfaceRects(
+                window,
+                sdl_rects.as_ptr(),
+                sdl_rects.len() as libc::c_int,
+            );
+        }
+        crate::window::show_if_hidden();
     });
 }
 
@@ -107,6 +139,29 @@ pub fn drop_caches() {
         *c.borrow_mut() = None;
     });
     font::clear_glyph_caches();
+    #[cfg(target_os = "macos")]
+    layer::trim();
+}
+
+/// `drop_caches`, and also release the frame the window shows, for a window
+/// that is hidden or minimized. The next frame repaints the whole window.
+pub fn drop_hidden_caches() {
+    drop_caches();
+    #[cfg(target_os = "macos")]
+    layer::clear();
+}
+
+/// Take the window's frame buffers away before the window is destroyed.
+pub(crate) fn release_window_frames() {
+    #[cfg(target_os = "macos")]
+    layer::release();
+}
+
+/// A copy of what the window's layer shows on macOS, or `None` before the
+/// first frame or when frames go through SDL's window surface.
+#[cfg(target_os = "macos")]
+pub fn capture_window() -> Result<Option<Captured>, LayerError> {
+    layer::capture()
 }
 
 /// macOS memory-pressure level.  `Some(0)` normal, `Some(1)` warn,

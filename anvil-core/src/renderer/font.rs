@@ -2,7 +2,7 @@ use freetype_sys::{
     FT_Done_Face, FT_FACE_FLAG_SCALABLE, FT_Get_Char_Index, FT_GlyphSlot, FT_Init_FreeType,
     FT_Int32, FT_LOAD_FORCE_AUTOHINT, FT_LOAD_NO_HINTING, FT_LOAD_TARGET_LCD, FT_LOAD_TARGET_LIGHT,
     FT_LOAD_TARGET_MONO, FT_Library, FT_Load_Char, FT_Load_Glyph, FT_New_Face, FT_New_Memory_Face,
-    FT_RENDER_MODE_LCD, FT_RENDER_MODE_LIGHT, FT_RENDER_MODE_MONO, FT_RENDER_MODE_NORMAL,
+    FT_Pos, FT_RENDER_MODE_LCD, FT_RENDER_MODE_LIGHT, FT_RENDER_MODE_MONO, FT_RENDER_MODE_NORMAL,
     FT_Render_Glyph, FT_Render_Mode, FT_Set_Pixel_Sizes, FT_UInt, FT_ULong,
 };
 use parking_lot::Mutex;
@@ -296,8 +296,11 @@ impl FontInner {
                 self.baseline = ((fr.ascender as f32 / fr.units_per_EM as f32) * self.size) as i32;
             } else {
                 let m = &(*fr.size).metrics;
-                self.height = (m.height >> 6) as i32;
-                self.baseline = (m.ascender >> 6) as i32;
+                // FT_Pos is a C long: 64 bits on Unix, 32 on Windows.
+                let height: FT_Pos = m.height >> 6;
+                let ascender: FT_Pos = m.ascender >> 6;
+                self.height = height as i32;
+                self.baseline = ascender as i32;
             }
         }
         // Space advance — load without hinting for accurate measurement.
