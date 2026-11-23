@@ -172,7 +172,7 @@ jobs:
           build_appimage note-anvil data Note-Anvil
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: lite-anvil-linux-x86_64
           path: |
@@ -304,7 +304,7 @@ jobs:
           [System.IO.Compression.ZipFile]::CreateFromDirectory("$PWD\$zipBase", "$PWD\$zipBase.zip")
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: lite-anvil-windows-x86_64
           path: |
@@ -582,7 +582,7 @@ jobs:
           zip -r "lite-anvil-${APP_VERSION}-macos-x86_64.zip" LiteAnvil.app NanoAnvil.app NoteAnvil.app install-mac.sh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: lite-anvil-macos-x86_64
           path: lite-anvil-*-macos-x86_64.zip
@@ -871,7 +871,7 @@ jobs:
           zip -r "lite-anvil-${APP_VERSION}-macos-aarch64.zip" LiteAnvil.app NanoAnvil.app NoteAnvil.app install-mac.sh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: lite-anvil-macos-aarch64
           path: lite-anvil-*-macos-aarch64.zip
@@ -884,7 +884,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts/
 
@@ -895,7 +895,7 @@ jobs:
                -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.exe' \) \
             -exec mv {} artifacts/ \;
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
